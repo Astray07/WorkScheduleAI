@@ -1,0 +1,142 @@
+{
+  "schedule_run_id": "run_p0_week_001",
+  "status": "succeeded",
+  "solution_quality": "feasible_not_proven_optimal",
+  "current_attempt_no": 2,
+  "recalculation_count": 1,
+  "read_only": false,
+  "publication": null,
+  "slots": [
+    {
+      "id": "slot_2026_07_06_day",
+      "local_date": "2026-07-06",
+      "label": "주간 근무",
+      "starts_at": "2026-07-06T09:00:00+09:00",
+      "ends_at": "2026-07-06T18:00:00+09:00"
+    },
+    {
+      "id": "slot_2026_07_07_day",
+      "local_date": "2026-07-07",
+      "label": "주간 근무",
+      "starts_at": "2026-07-07T09:00:00+09:00",
+      "ends_at": "2026-07-07T18:00:00+09:00"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "req_2026_07_06_senior",
+      "slot_id": "slot_2026_07_06_day",
+      "role_id": "role_senior",
+      "role_name": "사수",
+      "required_count": 1
+    },
+    {
+      "id": "req_2026_07_06_assistant",
+      "slot_id": "slot_2026_07_06_day",
+      "role_id": "role_assistant",
+      "role_name": "부사수",
+      "required_count": 1
+    },
+    {
+      "id": "req_2026_07_07_senior",
+      "slot_id": "slot_2026_07_07_day",
+      "role_id": "role_senior",
+      "role_name": "사수",
+      "required_count": 1
+    },
+    {
+      "id": "req_2026_07_07_assistant",
+      "slot_id": "slot_2026_07_07_day",
+      "role_id": "role_assistant",
+      "role_name": "부사수",
+      "required_count": 1
+    }
+  ],
+  "assignments": [
+    {
+      "id": "assign_2026_07_06_senior",
+      "slot_id": "slot_2026_07_06_day",
+      "role_id": "role_senior",
+      "employee_id": "emp_001",
+      "employee_name": "김민수",
+      "source": "solver",
+      "locked_by_user": false,
+      "warning_state": "none",
+      "warning_message": null,
+      "attempt_no": 2
+    },
+    {
+      "id": "assign_2026_07_06_assistant",
+      "slot_id": "slot_2026_07_06_day",
+      "role_id": "role_assistant",
+      "employee_id": "emp_003",
+      "employee_name": "박지훈",
+      "source": "solver",
+      "locked_by_user": false,
+      "warning_state": "none",
+      "warning_message": null,
+      "attempt_no": 2
+    },
+    {
+      "id": "assign_2026_07_07_senior",
+      "slot_id": "slot_2026_07_07_day",
+      "role_id": "role_senior",
+      "employee_id": "emp_002",
+      "employee_name": "이서연",
+      "source": "solver",
+      "locked_by_user": false,
+      "warning_state": "none",
+      "warning_message": null,
+      "attempt_no": 2
+    },
+    {
+      "id": "assign_2026_07_07_assistant_override",
+      "slot_id": "slot_2026_07_07_day",
+      "role_id": "role_assistant",
+      "employee_id": "emp_004",
+      "employee_name": "최유진",
+      "source": "override",
+      "locked_by_user": false,
+      "warning_state": "approved_override",
+      "warning_message": "관리자가 조합 제한 1회 완화를 승인했습니다.",
+      "attempt_no": 2
+    }
+  ],
+  "issues": [],
+  "proposals": [
+    {
+      "id": "proposal_pair_override_2026_07_07",
+      "group_id": null,
+      "requires_proposal_ids": [],
+      "type": "approve_pair_constraint_override",
+      "severity": "high",
+      "affected_slot_id": "slot_2026_07_07_day",
+      "display_summary": "승인된 조합 제한 완화가 재계산 결과에 반영되었습니다.",
+      "impact_preview": {
+        "resolved_issue_ids": [
+          "issue_2026_07_07_assistant_unfilled"
+        ],
+        "new_warning_count": 1
+      },
+      "status": "approved",
+      "attempt_no": 1,
+      "llm_explanation": {
+        "status": "fallback",
+        "text": "승인된 예외가 반영되어 미배정이 해소되었습니다.",
+        "source": "server_template"
+      }
+    }
+  ],
+  "score_summary": {
+    "hard": 0,
+    "approvable": 1,
+    "soft": 8,
+    "severity_label": "medium"
+  },
+  "llm_explanation": {
+    "status": "fallback",
+    "text": "재계산 결과 모든 필수 역할이 배정되었습니다. 승인된 예외는 경고로 표시됩니다.",
+    "source": "server_template"
+  }
+}
+

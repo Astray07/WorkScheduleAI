@@ -1,0 +1,180 @@
+{
+  "schedule_run_id": "run_p0_week_001",
+  "status": "infeasible",
+  "solution_quality": "feasible_not_proven_optimal",
+  "current_attempt_no": 1,
+  "recalculation_count": 0,
+  "read_only": false,
+  "publication": null,
+  "slots": [
+    {
+      "id": "slot_2026_07_06_day",
+      "local_date": "2026-07-06",
+      "label": "주간 근무",
+      "starts_at": "2026-07-06T09:00:00+09:00",
+      "ends_at": "2026-07-06T18:00:00+09:00"
+    },
+    {
+      "id": "slot_2026_07_07_day",
+      "local_date": "2026-07-07",
+      "label": "주간 근무",
+      "starts_at": "2026-07-07T09:00:00+09:00",
+      "ends_at": "2026-07-07T18:00:00+09:00"
+    },
+    {
+      "id": "slot_2026_07_08_day",
+      "local_date": "2026-07-08",
+      "label": "주간 근무",
+      "starts_at": "2026-07-08T09:00:00+09:00",
+      "ends_at": "2026-07-08T18:00:00+09:00"
+    },
+    {
+      "id": "slot_2026_07_09_day",
+      "local_date": "2026-07-09",
+      "label": "주간 근무",
+      "starts_at": "2026-07-09T09:00:00+09:00",
+      "ends_at": "2026-07-09T18:00:00+09:00"
+    },
+    {
+      "id": "slot_2026_07_10_day",
+      "local_date": "2026-07-10",
+      "label": "주간 근무",
+      "starts_at": "2026-07-10T09:00:00+09:00",
+      "ends_at": "2026-07-10T18:00:00+09:00"
+    },
+    {
+      "id": "slot_2026_07_11_day",
+      "local_date": "2026-07-11",
+      "label": "주말 당직",
+      "starts_at": "2026-07-11T09:00:00+09:00",
+      "ends_at": "2026-07-11T18:00:00+09:00"
+    },
+    {
+      "id": "slot_2026_07_12_day",
+      "local_date": "2026-07-12",
+      "label": "주말 당직",
+      "starts_at": "2026-07-12T09:00:00+09:00",
+      "ends_at": "2026-07-12T18:00:00+09:00"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "req_2026_07_06_senior",
+      "slot_id": "slot_2026_07_06_day",
+      "role_id": "role_senior",
+      "role_name": "사수",
+      "required_count": 1
+    },
+    {
+      "id": "req_2026_07_06_assistant",
+      "slot_id": "slot_2026_07_06_day",
+      "role_id": "role_assistant",
+      "role_name": "부사수",
+      "required_count": 1
+    },
+    {
+      "id": "req_2026_07_07_senior",
+      "slot_id": "slot_2026_07_07_day",
+      "role_id": "role_senior",
+      "role_name": "사수",
+      "required_count": 1
+    },
+    {
+      "id": "req_2026_07_07_assistant",
+      "slot_id": "slot_2026_07_07_day",
+      "role_id": "role_assistant",
+      "role_name": "부사수",
+      "required_count": 1
+    }
+  ],
+  "assignments": [
+    {
+      "id": "assign_2026_07_06_senior",
+      "slot_id": "slot_2026_07_06_day",
+      "role_id": "role_senior",
+      "employee_id": "emp_001",
+      "employee_name": "김민수",
+      "source": "solver",
+      "locked_by_user": false,
+      "warning_state": "none",
+      "warning_message": null,
+      "attempt_no": 1
+    },
+    {
+      "id": "assign_2026_07_06_assistant",
+      "slot_id": "slot_2026_07_06_day",
+      "role_id": "role_assistant",
+      "employee_id": "emp_003",
+      "employee_name": "박지훈",
+      "source": "solver",
+      "locked_by_user": false,
+      "warning_state": "none",
+      "warning_message": null,
+      "attempt_no": 1
+    },
+    {
+      "id": "assign_2026_07_07_senior",
+      "slot_id": "slot_2026_07_07_day",
+      "role_id": "role_senior",
+      "employee_id": "emp_002",
+      "employee_name": "이서연",
+      "source": "solver",
+      "locked_by_user": false,
+      "warning_state": "none",
+      "warning_message": null,
+      "attempt_no": 1
+    }
+  ],
+  "issues": [
+    {
+      "id": "issue_2026_07_07_assistant_unfilled",
+      "slot_id": "slot_2026_07_07_day",
+      "role_id": "role_assistant",
+      "type": "unfilled_requirement",
+      "missing_count": 1,
+      "severity": "high",
+      "reason_code": "PAIR_CONSTRAINT_CONFLICT",
+      "display_message": "부사수 1명이 미배정입니다. 가능한 후보는 휴가 또는 조합 제한과 충돌합니다.",
+      "attempt_no": 1,
+      "related_proposal_ids": [
+        "proposal_pair_override_2026_07_07"
+      ]
+    }
+  ],
+  "proposals": [
+    {
+      "id": "proposal_pair_override_2026_07_07",
+      "group_id": null,
+      "requires_proposal_ids": [],
+      "type": "approve_pair_constraint_override",
+      "severity": "high",
+      "affected_slot_id": "slot_2026_07_07_day",
+      "display_summary": "2026-07-07 주간 근무에서 조합 제한을 1회 승인하면 부사수 미배정을 해소할 수 있습니다.",
+      "impact_preview": {
+        "resolved_issue_ids": [
+          "issue_2026_07_07_assistant_unfilled"
+        ],
+        "new_warning_count": 1
+      },
+      "status": "suggested",
+      "attempt_no": 1,
+      "llm_explanation": {
+        "status": "fallback",
+        "text": "서버 진단 기준으로 조합 제한 승인 후보가 있습니다. 승인 전 영향 범위를 확인해 주세요.",
+        "source": "server_template"
+      }
+    }
+  ],
+  "score_summary": {
+    "hard": 0,
+    "approvable": 1,
+    "soft": 35,
+    "severity_label": "high"
+  },
+  "llm_explanation": {
+    "status": "fallback",
+    "text": "일부 슬롯에 미배정이 남아 있습니다. 표시된 완화안을 승인하거나 수동 조정해 주세요.",
+    "source": "server_template"
+  }
+}
+
