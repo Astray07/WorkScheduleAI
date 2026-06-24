@@ -1,4 +1,5 @@
 from datetime import date
+from contextlib import nullcontext
 
 import pytest
 from sqlalchemy import create_engine
@@ -6,6 +7,8 @@ from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.db.models import Base, Organization, ScheduleRun
+from work_schedule_ai.worker import schedule_worker as schedule_worker_module
+from work_schedule_ai.worker.queue import InMemoryScheduleRunQueue
 from work_schedule_ai.worker.schedule_worker import (
     cancel_schedule_run,
     execute_schedule_run,
@@ -96,6 +99,47 @@ def test_cancel_schedule_run_rejects_terminal_status(session: Session):
 
     with pytest.raises(InvalidRequestError, match="Cannot cancel"):
         cancel_schedule_run(session, "run_1")
+
+
+def test_process_next_schedule_run_consumes_queue_and_executes_run(
+    session: Session,
+):
+    run = _queued_run()
+    queue = InMemoryScheduleRunQueue()
+    queue.enqueue(run.id)
+    session.add(run)
+    session.commit()
+
+    def executor(db_session: Session, schedule_run: ScheduleRun) -> None:
+        schedule_run.solver_status = "cp_sat_optimal"
+        schedule_run.solution_quality = "optimal"
+        db_session.flush()
+
+    processed = schedule_worker_module.process_next_schedule_run(
+        queue=queue,
+        db_session_factory=lambda: nullcontext(session),
+        executor=executor,
+        dequeue_timeout_seconds=0,
+    )
+
+    assert processed is True
+    assert run.status == "succeeded"
+    assert run.solver_status == "cp_sat_optimal"
+    assert queue.dequeue(timeout_seconds=0) is None
+
+
+def test_process_next_schedule_run_returns_false_when_queue_is_empty(
+    session: Session,
+):
+    queue = InMemoryScheduleRunQueue()
+
+    processed = schedule_worker_module.process_next_schedule_run(
+        queue=queue,
+        db_session_factory=lambda: nullcontext(session),
+        dequeue_timeout_seconds=0,
+    )
+
+    assert processed is False
 
 
 def _queued_run(status: str = "queued") -> ScheduleRun:

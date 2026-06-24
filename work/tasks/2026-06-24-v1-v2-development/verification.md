@@ -1,0 +1,65 @@
+# V1/V2 Development Verification
+
+## 초기 상태 확인
+
+- `git status --short --branch`
+  - 결과: `feature/m1-scaffold-contract-tests`
+  - 기존 unstaged 변경:
+    - `docs/.bkit-memory.json`
+    - `work/tasks/2026-06-24-product-plan-review/feedback.md`
+    - `work/tasks/2026-06-24-product-plan-review/handoff.md`
+    - `work/tasks/2026-06-24-product-plan-review/verification.md`
+- `git log -1 --oneline`
+  - 결과: `dfb414a Complete first release hardening gates`
+- `rg --files -g 'AGENTS.md'`
+  - 결과: 저장소 내 `AGENTS.md` 파일 없음
+
+## 읽은 문서
+
+- `docs/superpowers/specs/work-schedule-ai-product-plan.md`
+- `docs/release/first-release-checklist.md`
+- `work/tasks/2026-06-24-first-release-completion/brief.md`
+- `work/tasks/2026-06-24-first-release-completion/plan.md`
+- `work/tasks/2026-06-24-first-release-completion/decisions.md`
+- `work/tasks/2026-06-24-first-release-completion/verification.md`
+- `work/tasks/2026-06-24-first-release-completion/handoff.md`
+- `docs/deployment/railway.md`
+- worker/API 관련 코드와 테스트:
+  - `src/work_schedule_ai/worker/schedule_worker.py`
+  - `src/work_schedule_ai/api/routes/schedule_runs.py`
+  - `tests/worker/test_schedule_worker.py`
+  - `pyproject.toml`
+
+## 아직 실행하지 않은 검증
+
+- `frontend` build와 `git diff --check`는 Redis worker 구현 문서화 후 실행 예정입니다.
+
+## Redis Worker RED/GREEN
+
+- RED: `python -m pytest tests\api\test_schedule_runs_api.py::test_create_schedule_run_enqueues_without_inline_solver_execution -q`
+  - 결과: 실패
+  - 이유: API route가 `execute_schedule_run(..., executor=...)`를 직접 호출함
+- GREEN: 같은 테스트 재실행
+  - 결과: 1 passed
+- RED: `python -m pytest tests\worker\test_schedule_worker.py::test_process_next_schedule_run_consumes_queue_and_executes_run tests\worker\test_schedule_worker.py::test_process_next_schedule_run_returns_false_when_queue_is_empty -q`
+  - 결과: 실패
+  - 이유: `process_next_schedule_run`이 아직 없음
+- GREEN: 같은 테스트 재실행
+  - 결과: 2 passed
+- RED: `python -m pytest tests\worker\test_queue_worker.py -q`
+  - 결과: 실패
+  - 이유: `work_schedule_ai.worker.queue_worker` 모듈이 아직 없음
+- GREEN: 같은 테스트 재실행
+  - 결과: 2 passed
+
+## Redis Worker 회귀 검증
+
+- `python -m pytest tests\worker\test_schedule_worker.py tests\worker\test_queue_worker.py tests\api\test_schedule_runs_api.py tests\api\test_p0_vertical_slice_api.py -q`
+  - 결과: 42 passed
+- `python -m pytest -q`
+  - 결과: 114 passed, 1 skipped
+- `cd frontend; npm run build`
+  - 결과: 성공
+- `git diff --check`
+  - 결과: 통과
+  - 참고: 기존 unstaged 파일과 수정 파일의 LF/CRLF warning만 출력됨

@@ -1,0 +1,25 @@
+# V1/V2 Development Decisions
+
+## 1. Redis worker부터 진행
+
+릴리즈 체크리스트와 이전 handoff 모두 Redis queue 기반 별도 solver worker를 후속 hardening의 첫 항목으로 둡니다. 현재 API가 request path에서 `execute_schedule_run(..., executor=...)`를 직접 호출하므로, CPU-bound solver 분리와 Railway API/worker 분리가 가장 먼저 필요합니다.
+
+## 2. 기존 worker-compatible 경계를 재사용
+
+`src/work_schedule_ai/worker/schedule_worker.py`의 `execute_schedule_run` 함수는 ScheduleRun 상태 전이와 executor callback 경계를 이미 갖고 있습니다. Redis 작업은 새 solver를 만들지 않고 이 경계를 queue consumer에서 호출하는 방향으로 진행합니다.
+
+## 3. 테스트에서는 fake queue를 우선 사용
+
+로컬 기본 검증을 안정적으로 유지하기 위해 API enqueue와 worker consume은 fake/in-memory queue adapter로 먼저 고정합니다. 실제 Redis 연결 검증은 adapter 단위 또는 환경 변수가 있는 integration test로 분리합니다.
+
+## 4. AGENTS.md는 사용자 제공 지침으로 대체
+
+저장소 루트에서 `AGENTS.md` 파일은 발견되지 않았습니다. 사용자 메시지의 AGENTS 지침을 현재 작업의 authoritative instruction으로 적용합니다.
+
+## 5. API 기본 동작은 queued 응답으로 변경
+
+기존 1차 릴리즈 후보는 API 요청 안에서 ScheduleRun을 즉시 실행했습니다. Redis worker 분리 이후 `POST /schedule-runs`는 `queued` 상태를 반환하고, 테스트에서 결과가 필요한 경우 fake queue를 명시적으로 consume합니다.
+
+## 6. Worker entrypoint는 기존 artifact executor를 재사용
+
+`python -m work_schedule_ai.worker.queue_worker`는 Redis 또는 fake queue에서 run id를 소비하고 `execute_schedule_run`을 호출합니다. artifact 생성 로직은 현재 `schedule_runs` route의 기존 `_execute_schedule_run_artifacts` 경계를 재사용해 범위 확장을 피했습니다.

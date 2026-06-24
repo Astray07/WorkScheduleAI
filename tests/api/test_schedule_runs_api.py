@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from contextlib import nullcontext
 from datetime import date
 from io import BytesIO
 import json
@@ -12,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from work_schedule_ai.api.app import create_app
 from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api.routes import schedule_runs as schedule_runs_module
 from work_schedule_ai.db.models import (
     Base,
     Employee,
@@ -30,6 +32,12 @@ from work_schedule_ai.db.models import (
     ShiftRequirement,
     ShiftType,
 )
+from work_schedule_ai.worker.queue import (
+    InMemoryScheduleRunQueue,
+    get_schedule_run_queue,
+    set_schedule_run_queue,
+)
+from work_schedule_ai.worker.schedule_worker import process_next_schedule_run
 
 
 @pytest.fixture
@@ -47,8 +55,20 @@ def db_session() -> Generator[Session, None, None]:
 
 
 @pytest.fixture
-def client(db_session: Session) -> Generator[TestClient, None, None]:
+def schedule_queue() -> Generator[InMemoryScheduleRunQueue, None, None]:
+    queue = InMemoryScheduleRunQueue()
+    set_schedule_run_queue(queue)
+    yield queue
+    set_schedule_run_queue(None)
+
+
+@pytest.fixture
+def client(
+    db_session: Session,
+    schedule_queue: InMemoryScheduleRunQueue,
+) -> Generator[TestClient, None, None]:
     app = create_app()
+    app.state.test_db_session = db_session
 
     def override_session() -> Generator[Session, None, None]:
         yield db_session
@@ -80,13 +100,15 @@ def test_create_schedule_run_persists_run_and_snapshot(
     assert payload["organization_id"] == "org_1"
     assert payload["period_start"] == "2026-07-01"
     assert payload["period_end"] == "2026-07-07"
-    assert payload["status"] == "succeeded"
-    assert payload["solver_status"] == "not_started"
-    assert payload["solution_quality"] == "feasible_not_proven_optimal"
+    assert payload["status"] == "queued"
+    assert payload["solver_status"] is None
+    assert payload["solution_quality"] == "unknown"
     assert payload["current_attempt_no"] == 1
     assert payload["recalculation_count"] == 0
     assert payload["input_snapshot_hash"]
-    assert payload["progress"]["phase"] == "completed"
+    assert payload["progress"]["phase"] == "queued"
+    assert payload["issues"] == []
+    assert payload["proposals"] == []
     assert payload["llm_explanation"] == {
         "status": "fallback",
             "text": "서버 템플릿으로 근무표 설명을 생성했습니다.",
@@ -96,9 +118,46 @@ def test_create_schedule_run_persists_run_and_snapshot(
     assert db_session.query(ScheduleInputSnapshot).count() == 1
 
 
+def test_create_schedule_run_enqueues_without_inline_solver_execution(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    enqueued_run_ids: list[str] = []
+
+    def fail_inline_execution(*args, **kwargs):
+        raise AssertionError("ScheduleRun must not execute in the API process")
+
+    def record_enqueue(schedule_run_id: str) -> None:
+        enqueued_run_ids.append(schedule_run_id)
+
+    monkeypatch.setattr(
+        schedule_runs_module,
+        "execute_schedule_run",
+        fail_inline_execution,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        schedule_runs_module,
+        "enqueue_schedule_run",
+        record_enqueue,
+        raising=False,
+    )
+
+    response = client.post(
+        "/organizations/org_1/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["status"] == "queued"
+    assert enqueued_run_ids == [payload["id"]]
+
+
 def test_create_schedule_run_is_idempotent_with_same_key(
     client: TestClient,
     db_session: Session,
+    schedule_queue: InMemoryScheduleRunQueue,
 ):
     headers = {"Idempotency-Key": "schedule-run-key-1"}
     first_response = client.post(
@@ -117,6 +176,10 @@ def test_create_schedule_run_is_idempotent_with_same_key(
     assert second_response.json()["id"] == first_response.json()["id"]
     assert db_session.query(ScheduleRun).count() == 1
     assert db_session.query(ScheduleInputSnapshot).count() == 1
+    assert schedule_queue.dequeue(timeout_seconds=0).schedule_run_id == (
+        first_response.json()["id"]
+    )
+    assert schedule_queue.dequeue(timeout_seconds=0) is None
 
 
 def test_create_schedule_run_rejects_same_idempotency_key_with_different_snapshot(
@@ -167,7 +230,7 @@ def test_get_schedule_run_returns_persisted_status(client: TestClient):
 
     assert response.status_code == 200
     assert response.json()["id"] == run_id
-    assert response.json()["status"] == "succeeded"
+    assert response.json()["status"] == "queued"
 
 
 def test_cancel_queued_schedule_run_marks_canceled(
@@ -206,6 +269,7 @@ def test_cancel_succeeded_schedule_run_returns_conflict(client: TestClient):
         json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
     )
     run_id = create_response.json()["id"]
+    _process_next_schedule_run(client)
 
     response = client.post(f"/organizations/org_1/schedule-runs/{run_id}/cancel")
 
@@ -219,6 +283,7 @@ def test_get_schedule_run_result_returns_one_week_mock_grid(client: TestClient):
         json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
     )
     run_id = create_response.json()["id"]
+    _process_next_schedule_run(client)
 
     response = client.get(f"/organizations/org_1/schedule-runs/{run_id}/result")
 
@@ -264,6 +329,7 @@ def test_approve_relaxation_proposal_records_override_without_recalculation(
         json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
     )
     run_id = create_response.json()["id"]
+    _process_next_schedule_run(client)
 
     response = client.post(
         f"/organizations/org_1/schedule-runs/{run_id}/relaxation-proposals/proposal_mock_time_off_1/approve",
@@ -293,6 +359,7 @@ def test_approved_relaxation_proposal_is_marked_approved_in_result(
         json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
     )
     run_id = create_response.json()["id"]
+    _process_next_schedule_run(client)
     client.post(
         f"/organizations/org_1/schedule-runs/{run_id}/relaxation-proposals/proposal_mock_time_off_1/approve",
         json={
@@ -316,6 +383,7 @@ def test_approve_relaxation_proposal_rejects_duplicate_approval(
         json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
     )
     run_id = create_response.json()["id"]
+    _process_next_schedule_run(client)
     url = (
         f"/organizations/org_1/schedule-runs/{run_id}"
         "/relaxation-proposals/proposal_mock_time_off_1/approve"
@@ -528,6 +596,7 @@ def test_time_off_override_applies_only_to_approved_employee_slot(
         json={"period_start": "2026-07-01", "period_end": "2026-07-02"},
     )
     run_id = run_response.json()["id"]
+    _process_next_schedule_run(client)
     initial_result = client.get(
         f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
     ).json()
@@ -575,8 +644,10 @@ def test_schedule_run_result_uses_shift_template_solver_path(
         json={"period_start": "2026-07-01", "period_end": "2026-07-01"},
     )
     run_id = create_response.json()["id"]
+    _process_next_schedule_run(client)
 
-    assert create_response.json()["solver_status"].startswith("cp_sat_")
+    run = db_session.get(ScheduleRun, run_id)
+    assert run.solver_status.startswith("cp_sat_")
     assert db_session.query(ShiftSlot).count() == 1
     assert db_session.query(Assignment).count() == 2
     assert db_session.query(ScheduleIssue).count() == 0
@@ -643,6 +714,7 @@ def test_schedule_run_result_maps_solver_unfilled_issue(client: TestClient):
         json={"period_start": "2026-07-01", "period_end": "2026-07-01"},
     )
     run_id = run_response.json()["id"]
+    _process_next_schedule_run(client)
 
     response = client.get(
         f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
@@ -709,6 +781,7 @@ def test_solver_unfilled_issue_persists_diagnostic_events(
         json={"period_start": "2026-07-01", "period_end": "2026-07-01"},
     )
     run_id = run_response.json()["id"]
+    _process_next_schedule_run(client)
 
     events = (
         db_session.query(SolverDiagnosticEvent)
@@ -774,6 +847,7 @@ def test_manual_edit_validation_rejects_ineligible_employee(client: TestClient):
         json={"period_start": "2026-07-01", "period_end": "2026-07-01"},
     )
     run_id = run_response.json()["id"]
+    _process_next_schedule_run(client)
     result = client.get(
         f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
     ).json()
@@ -1020,6 +1094,7 @@ def _create_run_and_approve_mock_proposal(client: TestClient) -> str:
         json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
     )
     run_id = create_response.json()["id"]
+    _process_next_schedule_run(client)
     approval_response = client.post(
         f"/organizations/org_1/schedule-runs/{run_id}/relaxation-proposals/proposal_mock_time_off_1/approve",
         json={
@@ -1095,6 +1170,16 @@ def _create_role_scoped_organization(client: TestClient, name: str) -> dict:
             for employee in employee_response.json()["employees"]
         },
     }
+
+
+def _process_next_schedule_run(client: TestClient) -> None:
+    processed = process_next_schedule_run(
+        queue=get_schedule_run_queue(),
+        db_session_factory=lambda: nullcontext(client.app.state.test_db_session),
+        executor=schedule_runs_module._execute_schedule_run_artifacts,
+        dequeue_timeout_seconds=0,
+    )
+    assert processed is True
 
 
 def _create_day_shift_type(session: Session) -> None:
