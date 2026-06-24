@@ -18,6 +18,7 @@ from work_schedule_ai.db.models import (
     ScheduleRecalculationRequest,
     ScheduleRun,
     ScheduleInputSnapshot,
+    SolverDiagnosticEvent,
     Unavailability,
     User,
     normalize_pair_employee_ids,
@@ -581,6 +582,39 @@ def test_shift_requirement_rejects_non_positive_required_count(session):
 
     with pytest.raises(IntegrityError):
         session.commit()
+
+
+def test_solver_diagnostic_event_persists_structured_context(session):
+    org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
+    role = Role(id="role_junior", organization_id="org_1", name="부사수")
+    run = _schedule_run()
+    event_record = SolverDiagnosticEvent(
+        id="diag_1",
+        organization_id="org_1",
+        schedule_run_id="run_1",
+        event_type="infeasibility_core",
+        shift_slot_id=None,
+        role_id="role_junior",
+        employee_id=None,
+        related_employee_ids_json="[]",
+        constraint_type="unfilled_requirement",
+        constraint_id="issue_1",
+        metadata_json='{"missing_count":1}',
+        attempt_no=1,
+    )
+
+    session.add(org)
+    session.commit()
+    session.add_all([role, run])
+    session.commit()
+    session.add(event_record)
+    session.commit()
+
+    persisted = session.query(SolverDiagnosticEvent).one()
+    assert persisted.event_type == "infeasibility_core"
+    assert persisted.role_id == "role_junior"
+    assert persisted.constraint_type == "unfilled_requirement"
+    assert persisted.metadata_json == '{"missing_count":1}'
 
 
 def _organization_with_two_employees():

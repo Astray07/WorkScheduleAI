@@ -25,6 +25,7 @@ from work_schedule_ai.db.models import (
     ScheduleInputSnapshot,
     RelaxationProposal,
     ScheduleRun,
+    SolverDiagnosticEvent,
     ShiftSlot,
     ShiftRequirement,
     ShiftType,
@@ -655,6 +656,75 @@ def test_schedule_run_result_maps_solver_unfilled_issue(client: TestClient):
     assert payload["issues"][0]["missing_count"] == 1
     assert payload["proposals"][0]["type"] == "mark_manual_review"
     assert "휴가" not in payload["proposals"][0]["display_summary"]
+
+
+def test_solver_unfilled_issue_persists_diagnostic_events(
+    client: TestClient,
+    db_session: Session,
+):
+    create_response = client.post(
+        "/organizations",
+        json={"name": "Diagnostic Clinic", "timezone": "Asia/Seoul"},
+    )
+    organization = create_response.json()
+    organization_id = organization["id"]
+    senior_role_id = next(
+        role["id"] for role in organization["default_roles"] if role["name"] == "사수"
+    )
+    junior_role_id = next(
+        role["id"] for role in organization["default_roles"] if role["name"] == "부사수"
+    )
+    employee_response = client.post(
+        f"/organizations/{organization_id}/employees/bulk-paste",
+        json={
+            "mode": "upsert",
+            "rows": [
+                {
+                    "row_no": 1,
+                    "employee_code": "E001",
+                    "name": "Only Senior",
+                    "role_names": ["사수"],
+                }
+            ],
+        },
+    )
+    assert employee_response.status_code == 200
+    shift_type_response = client.post(
+        f"/organizations/{organization_id}/shift-types",
+        json={
+            "name": "주간 근무",
+            "local_start_time": "09:00",
+            "local_end_time": "18:00",
+            "timezone": "Asia/Seoul",
+            "requirements": [
+                {"role_id": senior_role_id, "required_count": 1},
+                {"role_id": junior_role_id, "required_count": 1},
+            ],
+        },
+    )
+    assert shift_type_response.status_code == 201
+
+    run_response = client.post(
+        f"/organizations/{organization_id}/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-01"},
+    )
+    run_id = run_response.json()["id"]
+
+    events = (
+        db_session.query(SolverDiagnosticEvent)
+        .filter_by(schedule_run_id=run_id)
+        .order_by(SolverDiagnosticEvent.event_type)
+        .all()
+    )
+
+    assert [event.event_type for event in events] == [
+        "infeasibility_core",
+        "manual_review",
+    ]
+    assert events[0].role_id == junior_role_id
+    assert events[0].constraint_type == "unfilled_requirement"
+    assert json.loads(events[0].metadata_json)["missing_count"] == 1
+    assert events[1].constraint_type == "no_relaxation_candidate"
 
 
 def test_manual_edit_validation_rejects_ineligible_employee(client: TestClient):

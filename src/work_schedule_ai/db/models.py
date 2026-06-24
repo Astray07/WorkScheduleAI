@@ -713,6 +713,53 @@ class RelaxationProposal(Base):
     )
 
 
+class SolverDiagnosticEvent(Base):
+    __tablename__ = "solver_diagnostic_events"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    schedule_run_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("schedule_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    shift_slot_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("shift_slots.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    role_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("roles.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    employee_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    related_employee_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    constraint_type: Mapped[str] = mapped_column(Text, nullable=False)
+    constraint_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False)
+    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
 class OverrideApproval(Base):
     __tablename__ = "override_approvals"
     __table_args__ = (

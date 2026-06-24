@@ -32,6 +32,7 @@ from work_schedule_ai.db.models import (
     ScheduleRequirement as ScheduleRequirementRecord,
     ScheduleRun,
     ShiftSlot as ShiftSlotRecord,
+    SolverDiagnosticEvent as SolverDiagnosticEventRecord,
     ShiftRequirement,
     ShiftType,
     Unavailability,
@@ -852,6 +853,7 @@ def _replace_persisted_artifacts(
 ) -> None:
     for model in (
         RelaxationProposalRecord,
+        SolverDiagnosticEventRecord,
         ScheduleIssueRecord,
         AssignmentRecord,
         ScheduleRequirementRecord,
@@ -974,7 +976,98 @@ def _replace_persisted_artifacts(
             for proposal in artifacts.proposals
         ]
     )
+    db_session.add_all(_diagnostic_events_for_artifacts(run, artifacts))
     db_session.flush()
+
+
+def _diagnostic_events_for_artifacts(
+    run: ScheduleRun,
+    artifacts: _MockArtifacts,
+) -> list[SolverDiagnosticEventRecord]:
+    events: list[SolverDiagnosticEventRecord] = []
+    for issue in artifacts.issues:
+        events.append(
+            SolverDiagnosticEventRecord(
+                id=_stored_artifact_id(run.id, f"diag_issue_{issue.id}"),
+                organization_id=run.organization_id,
+                schedule_run_id=run.id,
+                event_type="infeasibility_core",
+                shift_slot_id=(
+                    _stored_artifact_id(run.id, issue.slot_id)
+                    if issue.slot_id is not None
+                    else None
+                ),
+                role_id=issue.role_id,
+                employee_id=None,
+                related_employee_ids_json="[]",
+                constraint_type=issue.type,
+                constraint_id=issue.id,
+                metadata_json=json.dumps(
+                    {
+                        "reason_code": issue.reason_code,
+                        "missing_count": issue.missing_count,
+                        "related_proposal_ids": issue.related_proposal_ids,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                attempt_no=issue.attempt_no,
+            )
+        )
+
+    for proposal in artifacts.proposals:
+        parsed_time_off = _parse_time_off_proposal_id(proposal.id)
+        if parsed_time_off is not None:
+            employee_id, _slot_id = parsed_time_off
+            event_type = "unary_exclusion"
+            constraint_type = "unavailability"
+            related_employee_ids = [employee_id]
+        elif proposal.type == "mark_manual_review":
+            employee_id = None
+            event_type = "manual_review"
+            constraint_type = "no_relaxation_candidate"
+            related_employee_ids = []
+        else:
+            employee_id = None
+            event_type = "relational_conflict"
+            constraint_type = proposal.type
+            related_employee_ids = []
+
+        events.append(
+            SolverDiagnosticEventRecord(
+                id=_stored_artifact_id(run.id, f"diag_proposal_{proposal.id}"),
+                organization_id=run.organization_id,
+                schedule_run_id=run.id,
+                event_type=event_type,
+                shift_slot_id=(
+                    _stored_artifact_id(run.id, proposal.affected_slot_id)
+                    if proposal.affected_slot_id is not None
+                    else None
+                ),
+                role_id=None,
+                employee_id=employee_id,
+                related_employee_ids_json=json.dumps(
+                    related_employee_ids,
+                    ensure_ascii=False,
+                ),
+                constraint_type=constraint_type,
+                constraint_id=proposal.id,
+                metadata_json=json.dumps(
+                    {
+                        "proposal_type": proposal.type,
+                        "proposal_status": proposal.status,
+                        "display_summary": proposal.display_summary,
+                        "resolved_issue_ids": (
+                            proposal.impact_preview.resolved_issue_ids
+                        ),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                attempt_no=proposal.attempt_no,
+            )
+        )
+    return events
 
 
 def _load_persisted_artifacts(

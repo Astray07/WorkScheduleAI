@@ -25,6 +25,9 @@ def set_tenant_context(session: Session, organization_id: str) -> None:
     if bind.dialect.name != "postgresql":
         return
     session.execute(
-        text("SET LOCAL app.current_organization_id = :organization_id"),
+        text(
+            "SELECT set_config("
+            "'app.current_organization_id', :organization_id, true)"
+        ),
         {"organization_id": organization_id},
     )
