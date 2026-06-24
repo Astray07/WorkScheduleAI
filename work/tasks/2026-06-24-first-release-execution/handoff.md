@@ -10,8 +10,8 @@
 - SchedulePublication과 Excel export API
 - P0 vertical slice API 통합 테스트
 - P0 운영형 React UI와 브라우저 검증
+- LLM 설명 fallback/privacy 테스트
 
 ## 다음 단계
 
-1. LLM 설명 fallback/privacy 테스트를 구현합니다.
-2. Railway 배포 산출물과 데모 seed를 준비합니다.
+1. Railway 배포 산출물과 데모 seed를 준비합니다.

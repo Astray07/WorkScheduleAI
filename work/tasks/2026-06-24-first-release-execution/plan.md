@@ -6,7 +6,7 @@
 - [x] OR-Tools solver MVP를 구현합니다.
 - [x] ScheduleRun worker 상태 전이를 보강합니다.
 - [x] P0 운영형 프론트엔드를 구현합니다.
-- [ ] LLM 설명 fallback/privacy 테스트를 구현합니다.
+- [x] LLM 설명 fallback/privacy 테스트를 구현합니다.
 - [ ] Railway 배포 산출물과 데모 seed를 준비합니다.
 
 ## 검증 방법
