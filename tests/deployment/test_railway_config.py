@@ -27,7 +27,10 @@ def test_railway_frontend_service_uses_frontend_commands():
     )
 
     assert frontend_config["build"]["builder"] == "RAILPACK"
-    assert frontend_config["build"]["buildCommand"] == "npm ci && npm run build"
+    assert (
+        frontend_config["build"]["buildCommand"]
+        == "npm install --include=dev && npm run build"
+    )
     assert (
         frontend_config["deploy"]["startCommand"]
         == "sh -c 'npm run preview -- --host 0.0.0.0 --port ${PORT:-4173}'"
