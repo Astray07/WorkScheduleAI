@@ -320,7 +320,7 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260624_0011"
+    assert version == "20260624_0012"
 
 
 def test_postgresql_rls_migration_defines_tenant_policies():
@@ -340,6 +340,19 @@ def test_postgresql_rls_migration_defines_tenant_policies():
         "relaxation_proposals",
     ):
         assert f'"{table_name}"' in content
+
+
+def test_schedule_runs_canceled_at_repair_migration_is_idempotent():
+    migration = Path("alembic/versions/20260624_0012_repair_schedule_runs_canceled_at.py")
+
+    content = migration.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260624_0012"' in content
+    assert 'down_revision: str | None = "20260624_0011"' in content
+    assert 'table_name = "schedule_runs"' in content
+    assert '"canceled_at"' in content
+    assert "op.add_column" in content
+    assert "if _has_column" in content
 
 
 def _upgrade_head(db_path: Path) -> None:
