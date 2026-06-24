@@ -83,12 +83,18 @@ After the frontend domain is issued, set the same origin in the API service `COR
 
 ### Worker service
 
-ScheduleRun solver execution runs outside the API request path. Create a separate Railway worker service from the same repository and override the start command.
+ScheduleRun solver execution runs outside the API request path. Create a separate Railway worker service from the same repository. The root `railway.json` is intentionally API-only; do not reuse its API start command for the worker service.
 
 Start:
 
 ```powershell
 python -m work_schedule_ai.worker.queue_worker
+```
+
+The same command is captured in `railway.worker.json` for copy/paste or service-level config import:
+
+```json
+"startCommand": "sh -c 'python -m work_schedule_ai.worker.queue_worker'"
 ```
 
 Required variables:

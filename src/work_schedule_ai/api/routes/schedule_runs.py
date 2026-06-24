@@ -679,6 +679,16 @@ def recalculate_schedule_run(
         if existing_request is not None:
             return _schedule_run_response(run, db_session)
 
+    if run.status in {"queued", "running"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "SCHEDULE_RUN_NOT_READY",
+                "message": "ScheduleRun must finish before it can be recalculated again.",
+                "field": "schedule_run_id",
+            },
+        )
+
     approved_override_count = db_session.execute(
         select(OverrideApproval.id).where(
             OverrideApproval.organization_id == organization_id,
@@ -706,11 +716,13 @@ def recalculate_schedule_run(
         )
 
     run.recalculation_count += 1
-    run.updated_at = utc_now()
-    run.status = "running"
-    _execute_schedule_run_artifacts(db_session, run)
-    if run.status == "running":
-        run.status = "succeeded"
+    now = utc_now()
+    run.updated_at = now
+    run.status = "queued"
+    run.solver_status = None
+    run.solution_quality = "unknown"
+    run.started_at = None
+    run.finished_at = None
     recalculation_request = ScheduleRecalculationRequest(
         id=_new_id("recalc"),
         organization_id=organization_id,
@@ -721,6 +733,7 @@ def recalculate_schedule_run(
     )
     db_session.add(recalculation_request)
     db_session.commit()
+    enqueue_schedule_run(run.id)
 
     return _schedule_run_response(run, db_session)
 

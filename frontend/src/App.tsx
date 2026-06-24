@@ -13,6 +13,10 @@ import {
 import { useMemo, useState } from "react";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const TERMINAL_RUN_STATUSES = new Set(["succeeded", "infeasible"]);
+const FAILED_RUN_STATUSES = new Set(["failed", "canceled"]);
+const RESULT_POLL_INTERVAL_MS = 1000;
+const RESULT_POLL_ATTEMPTS = 60;
 
 type Employee = {
   id: string;
@@ -193,8 +197,8 @@ export function App() {
           timeout_seconds: 30,
         },
       });
-      const nextResult = await fetchResult(organization.id, run.id);
       setDemo({ organizationId: organization.id, runId: run.id, employees: employeePayload.employees });
+      const nextResult = await waitForCompletedResult(organization.id, run.id);
       setResult(nextResult);
     } catch (caught) {
       setError(messageFromError(caught));
@@ -232,7 +236,7 @@ export function App() {
         method: "POST",
         body: { reason: "승인된 완화안을 반영합니다." },
       });
-      setResult(await fetchResult(demo.organizationId, demo.runId));
+      setResult(await waitForCompletedResult(demo.organizationId, demo.runId));
     } catch (caught) {
       setError(messageFromError(caught));
     } finally {
@@ -501,6 +505,24 @@ function employeeRow(row_no: number, employee_code: string, name: string, role_n
 
 async function fetchResult(organizationId: string, runId: string) {
   return api<ScheduleResult>(`/organizations/${organizationId}/schedule-runs/${runId}/result`);
+}
+
+async function waitForCompletedResult(organizationId: string, runId: string) {
+  for (let attempt = 0; attempt < RESULT_POLL_ATTEMPTS; attempt += 1) {
+    const result = await fetchResult(organizationId, runId);
+    if (TERMINAL_RUN_STATUSES.has(result.status)) {
+      return result;
+    }
+    if (FAILED_RUN_STATUSES.has(result.status)) {
+      throw new Error(`근무표 생성이 ${result.status} 상태로 종료되었습니다.`);
+    }
+    await delay(RESULT_POLL_INTERVAL_MS);
+  }
+  throw new Error("근무표 생성이 제한 시간 안에 완료되지 않았습니다. worker 서비스를 확인해주세요.");
+}
+
+function delay(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 async function api<T>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {

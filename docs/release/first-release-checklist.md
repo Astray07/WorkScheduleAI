@@ -8,7 +8,7 @@
 
 - 지원 규모: 직원 2-50명, 생성 기간 최대 31일
 - P0 vertical slice: 조직 생성 -> 직원 4명 -> 휴가 1건 -> 상극 조합 1건 -> 1주 근무표 생성 -> 완화안 승인 -> 재계산 -> 발행 -> 엑셀 다운로드
-- 최종 목표 100명 지원과 100명/31일 안정 성능 최적화는 후속 hardening 범위입니다.
+- 직원 100명/31일 저제약 synthetic 회귀 baseline은 포함합니다. 고제약 운영 데이터 안정 성능 최적화는 후속 hardening 범위입니다.
 
 ## 완료된 기능 기준
 
@@ -18,6 +18,8 @@
 - 상극 조합 등록
 - 근무 유형 템플릿과 역할별 필요 인원 설정
 - OR-Tools 기반 ScheduleRun 생성
+- Redis queue 기반 별도 worker 실행과 frontend 완료 polling
+- worker executor 실패 시 ScheduleRun `failed` terminal 상태 기록
 - ScheduleRun 입력 snapshot과 결과 artifact 영속화
 - ScheduleIssue, RelaxationProposal, SolverDiagnosticEvent 저장
 - 휴가 override 후보가 있는 경우 employee/slot 단위 완화안 제안
@@ -25,10 +27,13 @@
 - 완화안 승인 기록과 최대 3회 재계산 제한
 - 발행된 ScheduleRun 읽기 전용 잠금
 - SchedulePublication snapshot 보존과 Excel 다운로드
-- manual edit validation API
+- manual edit validation/save API와 AuditLog 기록
 - LLM 개인정보 익명화, schema validation, fallback explanation
 - PostgreSQL RLS migration과 tenant context hook
 - Railway API/frontend 배포 자산과 demo seed
+- Railway worker service start command reference
+- 운영 metrics/readiness endpoint
+- 직원 100명/31일 저제약 synthetic 성능 회귀 baseline
 - GitHub Actions CI workflow
 
 ## 검증 게이트
@@ -49,15 +54,22 @@ CI 게이트:
 
 PostgreSQL RLS integration은 `TEST_POSTGRES_URL`이 설정된 환경에서 실행됩니다. 로컬 SQLite 환경에서는 skip됩니다.
 
+Staging 게이트:
+
+- API service, worker service, PostgreSQL, Redis가 분리된 Railway 구성으로 떠 있어야 합니다.
+- worker service start command는 `python -m work_schedule_ai.worker.queue_worker`여야 합니다.
+- 실제 Redis queue를 통과하는 P0 happy path와 infeasible/relaxation path를 브라우저에서 1회 이상 관통해야 합니다.
+- 공개 URL 또는 실사용 파일럿이면 관리자 인증, 요청 조직 컨텍스트, tenant 접근 제어가 릴리즈 전 필수입니다.
+
 ## 명시적 후속 범위
 
-- Redis queue 기반 별도 solver worker 완성
-- 직원 100명/31일 성능 hardening
+- 직원 100명/31일 고제약 운영 데이터 성능 hardening
+- 관리자 회원가입/로그인, JWT/session, 요청 조직 컨텍스트 연결
 - assumption literal 기반 고급 CP-SAT 진단 모델 전체
-- 수동 편집 저장 API/UI와 편집 이력 비교
-- AuditLog/FairnessLedger/ImportBatch 고도화
+- 수동 편집 UI와 편집 이력 비교
+- FairnessLedger/ImportBatch 고도화
 - 실제 Railway/운영 PostgreSQL 배포 smoke와 모니터링
 
 ## 릴리즈 판정
 
-현재 코드는 1차 릴리즈 후보로 판정합니다. 이유는 P0 흐름과 데이터 불변성, tenant 방어계층, CI 검증 게이트가 코드와 테스트로 고정되어 있기 때문입니다. 후속 범위는 제품 확장성과 운영 hardening 항목으로 분리합니다.
+현재 코드는 로컬 통합 후보로 판정합니다. P0 흐름, 데이터 불변성, worker 분리, 수동 편집 저장, 운영 metric은 코드와 테스트로 고정되어 있습니다. 단, 공개 URL 또는 실사용 1차 릴리즈로 판정하려면 인증/요청 조직 컨텍스트와 Railway API+worker+Redis staging P0 수동 검증을 추가로 통과해야 합니다.
