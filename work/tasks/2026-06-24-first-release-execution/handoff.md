@@ -9,9 +9,9 @@
 - P0 backend API 흐름
 - SchedulePublication과 Excel export API
 - P0 vertical slice API 통합 테스트
+- P0 운영형 React UI와 브라우저 검증
 
 ## 다음 단계
 
-1. 프론트엔드 P0 운영형 UI를 구현합니다.
-2. 결과 그리드, 이슈/완화안 패널, 승인/재계산/발행/다운로드 흐름을 브라우저에서 검증합니다.
-3. 전체 테스트 후 커밋합니다.
+1. LLM 설명 fallback/privacy 테스트를 구현합니다.
+2. Railway 배포 산출물과 데모 seed를 준비합니다.
