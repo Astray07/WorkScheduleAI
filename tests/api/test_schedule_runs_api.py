@@ -727,7 +727,89 @@ def test_schedule_run_result_maps_solver_unfilled_issue(client: TestClient):
     assert payload["issues"][0]["role_id"] == junior_role_id
     assert payload["issues"][0]["missing_count"] == 1
     assert payload["proposals"][0]["type"] == "mark_manual_review"
+    assert payload["proposals"][0]["impact_preview"]["unavailable_reasons"] == [
+        "NO_TIME_OFF_OVERRIDE_CANDIDATE"
+    ]
     assert "휴가" not in payload["proposals"][0]["display_summary"]
+
+
+def test_solver_proposes_multiple_time_off_override_candidates(client: TestClient):
+    create_response = client.post(
+        "/organizations",
+        json={"name": "Multi Candidate Clinic", "timezone": "Asia/Seoul"},
+    )
+    organization = create_response.json()
+    organization_id = organization["id"]
+    senior_role_id = next(
+        role["id"] for role in organization["default_roles"] if role["name"] == "사수"
+    )
+    junior_role_id = next(
+        role["id"] for role in organization["default_roles"] if role["name"] == "부사수"
+    )
+    employee_response = client.post(
+        f"/organizations/{organization_id}/employees/bulk-paste",
+        json={
+            "mode": "upsert",
+            "rows": [
+                _employee_row(1, "E001", "Senior", ["사수"]),
+                _employee_row(2, "E002", "Junior A", ["부사수"]),
+                _employee_row(3, "E003", "Junior B", ["부사수"]),
+            ],
+        },
+    )
+    employees_by_code = {
+        employee["employee_code"]: employee
+        for employee in employee_response.json()["employees"]
+    }
+    for employee_code in ("E002", "E003"):
+        response = client.post(
+            f"/organizations/{organization_id}/unavailabilities",
+            json={
+                "employee_id": employees_by_code[employee_code]["id"],
+                "type": "vacation",
+                "starts_at": "2026-07-01T00:00:00+09:00",
+                "ends_at": "2026-07-02T00:00:00+09:00",
+                "override_allowed": True,
+            },
+        )
+        assert response.status_code == 201
+    shift_type_response = client.post(
+        f"/organizations/{organization_id}/shift-types",
+        json={
+            "name": "주간 근무",
+            "local_start_time": "09:00",
+            "local_end_time": "18:00",
+            "timezone": "Asia/Seoul",
+            "requirements": [
+                {"role_id": senior_role_id, "required_count": 1},
+                {"role_id": junior_role_id, "required_count": 1},
+            ],
+        },
+    )
+    assert shift_type_response.status_code == 201
+    run_response = client.post(
+        f"/organizations/{organization_id}/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-01"},
+    )
+    run_id = run_response.json()["id"]
+    _process_next_schedule_run(client)
+
+    payload = client.get(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
+    ).json()
+
+    assert [proposal["type"] for proposal in payload["proposals"]] == [
+        "approve_time_off_override",
+        "approve_time_off_override",
+    ]
+    assert {
+        proposal["impact_preview"]["resolved_issue_ids"][0]
+        for proposal in payload["proposals"]
+    } == {payload["issues"][0]["id"]}
+    assert all(
+        proposal["impact_preview"]["unavailable_reasons"] == []
+        for proposal in payload["proposals"]
+    )
 
 
 def test_solver_unfilled_issue_persists_diagnostic_events(
@@ -798,6 +880,9 @@ def test_solver_unfilled_issue_persists_diagnostic_events(
     assert events[0].constraint_type == "unfilled_requirement"
     assert json.loads(events[0].metadata_json)["missing_count"] == 1
     assert events[1].constraint_type == "no_relaxation_candidate"
+    assert json.loads(events[1].metadata_json)["unavailable_reasons"] == [
+        "NO_TIME_OFF_OVERRIDE_CANDIDATE"
+    ]
 
 
 def test_manual_edit_validation_rejects_ineligible_employee(client: TestClient):
@@ -1169,6 +1254,20 @@ def _create_role_scoped_organization(client: TestClient, name: str) -> dict:
             employee["employee_code"]: employee
             for employee in employee_response.json()["employees"]
         },
+    }
+
+
+def _employee_row(
+    row_no: int,
+    employee_code: str,
+    name: str,
+    role_names: list[str],
+) -> dict:
+    return {
+        "row_no": row_no,
+        "employee_code": employee_code,
+        "name": name,
+        "role_names": role_names,
     }
 
 
