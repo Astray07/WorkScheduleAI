@@ -31,7 +31,5 @@ def test_railway_frontend_service_uses_frontend_commands():
         frontend_config["build"]["buildCommand"]
         == "npm install --include=dev && npm run build"
     )
-    assert (
-        frontend_config["deploy"]["startCommand"]
-        == "sh -c 'npm run preview -- --host 0.0.0.0 --port ${PORT:-4173}'"
-    )
+    assert "startCommand" not in frontend_config["deploy"]
+    assert frontend_config["deploy"]["healthcheckPath"] == "/"
