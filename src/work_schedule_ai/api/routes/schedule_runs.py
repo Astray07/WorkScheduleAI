@@ -17,15 +17,28 @@ from sqlalchemy.orm import Session
 from work_schedule_ai.api.dependencies import get_db_session
 from work_schedule_ai.db.models import (
     Employee,
+    EmployeeRole,
     Organization,
     OverrideApproval,
+    PairConstraint,
     Role,
     ScheduleRecalculationRequest,
     ScheduleInputSnapshot,
     SchedulePublication,
     ScheduleRun,
+    ShiftRequirement,
+    ShiftType,
+    Unavailability,
     utc_now,
 )
+from work_schedule_ai.solver.models import (
+    BlockedPair,
+    EmployeeInput,
+    ScheduleRequirementInput,
+    ScheduleSlotInput,
+    SolveScheduleRequest,
+)
+from work_schedule_ai.solver.ortools_solver import solve_schedule
 
 
 router = APIRouter(prefix="/organizations", tags=["schedule-runs"])
@@ -695,6 +708,17 @@ def _mock_result_artifacts(
     run: ScheduleRun,
     db_session: Session,
 ) -> _MockArtifacts:
+    shift_types = list(
+        db_session.execute(
+            select(ShiftType).where(
+                ShiftType.organization_id == run.organization_id,
+                ShiftType.active.is_(True),
+            )
+        ).scalars()
+    )
+    if shift_types:
+        return _solver_result_artifacts(run, db_session, shift_types)
+
     roles = list(
         db_session.execute(
             select(Role).where(Role.organization_id == run.organization_id)
@@ -773,6 +797,279 @@ def _mock_result_artifacts(
         proposals=proposals,
         score_summary=score_summary,
     )
+
+
+def _solver_result_artifacts(
+    run: ScheduleRun,
+    db_session: Session,
+    shift_types: list[ShiftType],
+) -> _MockArtifacts:
+    shift_types.sort(key=lambda shift_type: shift_type.name)
+    roles = list(
+        db_session.execute(
+            select(Role).where(Role.organization_id == run.organization_id)
+        ).scalars()
+    )
+    role_by_id = {role.id: role for role in roles}
+    shift_type_ids = [shift_type.id for shift_type in shift_types]
+    db_requirements = list(
+        db_session.execute(
+            select(ShiftRequirement).where(
+                ShiftRequirement.organization_id == run.organization_id,
+                ShiftRequirement.shift_type_id.in_(shift_type_ids),
+            )
+        ).scalars()
+    )
+    requirements_by_shift_type: dict[str, list[ShiftRequirement]] = {
+        shift_type.id: [] for shift_type in shift_types
+    }
+    for requirement in db_requirements:
+        requirements_by_shift_type[requirement.shift_type_id].append(requirement)
+    for requirements in requirements_by_shift_type.values():
+        requirements.sort(key=lambda requirement: role_by_id[requirement.role_id].name)
+
+    slots = _solver_slots(run, shift_types)
+    shift_type_by_slot_id = {
+        slot.id: shift_type
+        for slot, shift_type in _solver_slot_pairs(run, shift_types)
+    }
+    response_requirements: list[ShiftRequirementResponse] = []
+    solver_requirements: list[ScheduleRequirementInput] = []
+    for slot in slots:
+        shift_type = shift_type_by_slot_id[slot.id]
+        for requirement in requirements_by_shift_type[shift_type.id]:
+            response_requirement = ShiftRequirementResponse(
+                id=f"req_{slot.id}_{requirement.id}",
+                slot_id=slot.id,
+                role_id=requirement.role_id,
+                role_name=role_by_id[requirement.role_id].name,
+                required_count=requirement.required_count,
+            )
+            response_requirements.append(response_requirement)
+            solver_requirements.append(
+                ScheduleRequirementInput(
+                    id=response_requirement.id,
+                    slot_id=slot.id,
+                    role_id=requirement.role_id,
+                    required_count=requirement.required_count,
+                    unfilled_weight=requirement.unfilled_weight_override or 100,
+                )
+            )
+
+    employees = list(
+        db_session.execute(
+            select(Employee).where(
+                Employee.organization_id == run.organization_id,
+                Employee.active.is_(True),
+            )
+        ).scalars()
+    )
+    employees.sort(key=lambda employee: employee.employee_code)
+    role_ids_by_employee = _role_ids_by_employee(run.organization_id, db_session)
+    unavailable_slot_ids_by_employee = _unavailable_slot_ids_by_employee(
+        run.organization_id,
+        slots,
+        db_session,
+    )
+    solver_employees = [
+        EmployeeInput(
+            id=employee.id,
+            role_ids=frozenset(role_ids_by_employee.get(employee.id, set())),
+            unavailable_slot_ids=frozenset(
+                unavailable_slot_ids_by_employee.get(employee.id, set())
+            ),
+        )
+        for employee in employees
+    ]
+    solver_slots = [
+        ScheduleSlotInput(id=slot.id, local_date=slot.local_date.isoformat())
+        for slot in slots
+    ]
+    solver_result = solve_schedule(
+        SolveScheduleRequest(
+            employees=solver_employees,
+            slots=solver_slots,
+            requirements=solver_requirements,
+            blocked_pairs=_blocked_pairs(run.organization_id, db_session),
+            timeout_seconds=run.timeout_seconds,
+            random_seed=1,
+        )
+    )
+    employee_by_id = {employee.id: employee for employee in employees}
+    assignments = [
+        AssignmentResponse(
+            id=f"assign_solver_{index}",
+            slot_id=assignment.slot_id,
+            role_id=assignment.role_id,
+            employee_id=assignment.employee_id,
+            employee_name=employee_by_id[assignment.employee_id].name,
+            source="solver",
+            locked_by_user=False,
+            warning_state="none",
+            warning_message=None,
+            attempt_no=run.current_attempt_no,
+        )
+        for index, assignment in enumerate(solver_result.assignments, start=1)
+    ]
+    requirement_by_id = {
+        requirement.id: requirement for requirement in response_requirements
+    }
+    issues = [
+        _solver_issue_response(
+            run=run,
+            issue_no=index,
+            issue=issue,
+            requirement_by_id=requirement_by_id,
+        )
+        for index, issue in enumerate(solver_result.issues, start=1)
+    ]
+    approved_proposal_ids = set(
+        db_session.execute(
+            select(OverrideApproval.relaxation_proposal_id).where(
+                OverrideApproval.organization_id == run.organization_id,
+                OverrideApproval.schedule_run_id == run.id,
+            )
+        ).scalars()
+    )
+    proposals = _mock_proposals(run, issues, approved_proposal_ids)
+    return _MockArtifacts(
+        slots=slots,
+        requirements=response_requirements,
+        assignments=assignments,
+        issues=issues,
+        proposals=proposals,
+        score_summary=ScoreSummary(
+            hard=0,
+            approvable=0,
+            soft=sum(issue.missing_count * 100 for issue in issues),
+            severity_label="high" if issues else "none",
+        ),
+    )
+
+
+def _solver_issue_response(
+    *,
+    run: ScheduleRun,
+    issue_no: int,
+    issue: dict[str, object],
+    requirement_by_id: dict[str, ShiftRequirementResponse],
+) -> ScheduleIssueResponse:
+    requirement = requirement_by_id[str(issue["requirement_id"])]
+    missing_count = int(issue["missing_count"])
+    return ScheduleIssueResponse(
+        id=f"issue_solver_unfilled_{issue_no}",
+        slot_id=requirement.slot_id,
+        role_id=requirement.role_id,
+        type="unfilled_requirement",
+        missing_count=missing_count,
+        severity=str(issue["severity"]),
+        reason_code="NO_AVAILABLE_CANDIDATE",
+        display_message=f"{requirement.role_name} {missing_count}명이 미배정입니다.",
+        attempt_no=run.current_attempt_no,
+        related_proposal_ids=["proposal_mock_time_off_1"],
+    )
+
+
+def _solver_slots(
+    run: ScheduleRun,
+    shift_types: list[ShiftType],
+) -> list[ShiftSlotResponse]:
+    return [slot for slot, _shift_type in _solver_slot_pairs(run, shift_types)]
+
+
+def _solver_slot_pairs(
+    run: ScheduleRun,
+    shift_types: list[ShiftType],
+) -> list[tuple[ShiftSlotResponse, ShiftType]]:
+    slot_pairs: list[tuple[ShiftSlotResponse, ShiftType]] = []
+    current_date = run.period_start
+    while current_date <= run.period_end:
+        date_token = current_date.isoformat().replace("-", "_")
+        for shift_type in shift_types:
+            slot = ShiftSlotResponse(
+                id=f"slot_{date_token}_{shift_type.id}",
+                local_date=current_date,
+                label=shift_type.name,
+                starts_at=_local_datetime(current_date, shift_type.local_start_time),
+                ends_at=_local_datetime(current_date, shift_type.local_end_time),
+            )
+            slot_pairs.append((slot, shift_type))
+        current_date += timedelta(days=1)
+    return slot_pairs
+
+
+def _local_datetime(local_date: date, local_time: str) -> str:
+    hour_minute = local_time if len(local_time) == 5 else local_time[:5]
+    return f"{local_date.isoformat()}T{hour_minute}:00+09:00"
+
+
+def _role_ids_by_employee(
+    organization_id: str,
+    db_session: Session,
+) -> dict[str, set[str]]:
+    role_links = db_session.execute(
+        select(EmployeeRole).where(
+            EmployeeRole.organization_id == organization_id,
+            EmployeeRole.active.is_(True),
+        )
+    ).scalars()
+    role_ids_by_employee: dict[str, set[str]] = {}
+    for role_link in role_links:
+        role_ids_by_employee.setdefault(role_link.employee_id, set()).add(
+            role_link.role_id
+        )
+    return role_ids_by_employee
+
+
+def _unavailable_slot_ids_by_employee(
+    organization_id: str,
+    slots: list[ShiftSlotResponse],
+    db_session: Session,
+) -> dict[str, set[str]]:
+    unavailabilities = list(
+        db_session.execute(
+            select(Unavailability).where(Unavailability.organization_id == organization_id)
+        ).scalars()
+    )
+    slot_ids_by_employee: dict[str, set[str]] = {}
+    for unavailability in unavailabilities:
+        for slot in slots:
+            if _unavailability_overlaps_date(unavailability, slot.local_date):
+                slot_ids_by_employee.setdefault(unavailability.employee_id, set()).add(
+                    slot.id
+                )
+    return slot_ids_by_employee
+
+
+def _unavailability_overlaps_date(
+    unavailability: Unavailability,
+    local_date: date,
+) -> bool:
+    start_date = unavailability.starts_at.date()
+    end_date = unavailability.ends_at.date()
+    if unavailability.ends_at.time().isoformat() == "00:00:00":
+        return start_date <= local_date < end_date
+    return start_date <= local_date <= end_date
+
+
+def _blocked_pairs(
+    organization_id: str,
+    db_session: Session,
+) -> list[BlockedPair]:
+    pair_constraints = db_session.execute(
+        select(PairConstraint).where(
+            PairConstraint.organization_id == organization_id,
+            PairConstraint.type == "blocked",
+            PairConstraint.active.is_(True),
+        )
+    ).scalars()
+    return [
+        BlockedPair(
+            pair_constraint.normalized_employee_a_id,
+            pair_constraint.normalized_employee_b_id,
+        )
+        for pair_constraint in pair_constraints
+    ]
 
 
 def _should_resolve_mock_unfilled(
