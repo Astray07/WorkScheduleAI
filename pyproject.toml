@@ -11,7 +11,7 @@ dependencies = ["fastapi>=0.128,<1", "ortools>=9.14,<10", "SQLAlchemy>=2.0,<3"]
 
 [project.optional-dependencies]
 deploy = ["alembic>=1.16,<2", "psycopg[binary]>=3.2,<4", "uvicorn[standard]>=0.40,<1"]
-dev = ["alembic>=1.16,<2", "httpx>=0.28", "pytest>=8", "uvicorn[standard]>=0.40,<1"]
+dev = ["alembic>=1.16,<2", "httpx>=0.28", "psycopg[binary]>=3.2,<4", "pytest>=8", "uvicorn[standard]>=0.40,<1"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

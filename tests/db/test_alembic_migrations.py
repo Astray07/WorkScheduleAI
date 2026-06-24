@@ -27,6 +27,7 @@ EXPECTED_TABLES = {
     "assignments",
     "schedule_issues",
     "relaxation_proposals",
+    "solver_diagnostic_events",
 }
 
 
@@ -271,6 +272,9 @@ def test_alembic_upgrade_head_creates_schedule_result_artifact_indexes(tmp_path)
     proposal_index_names = {
         item["name"] for item in inspector.get_indexes("relaxation_proposals")
     }
+    diagnostic_index_names = {
+        item["name"] for item in inspector.get_indexes("solver_diagnostic_events")
+    }
 
     assert "ix_shift_slots_organization_id" in shift_slot_index_names
     assert "ix_shift_slots_schedule_run_id" in shift_slot_index_names
@@ -283,6 +287,10 @@ def test_alembic_upgrade_head_creates_schedule_result_artifact_indexes(tmp_path)
     assert "uq_assignments_run_slot_employee" in assignment_unique_names
     assert "ix_schedule_issues_schedule_run_id" in issue_index_names
     assert "ix_relaxation_proposals_schedule_run_id" in proposal_index_names
+    assert "ix_solver_diagnostics_organization_id" in diagnostic_index_names
+    assert "ix_solver_diagnostics_schedule_run_id" in diagnostic_index_names
+    assert "ix_solver_diagnostics_shift_slot_id" in diagnostic_index_names
+    assert "ix_solver_diagnostics_employee_id" in diagnostic_index_names
 
 
 def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
@@ -296,7 +304,7 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260624_0009"
+    assert version == "20260624_0010"
 
 
 def test_postgresql_rls_migration_defines_tenant_policies():
