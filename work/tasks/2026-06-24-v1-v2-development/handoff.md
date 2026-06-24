@@ -17,9 +17,12 @@ Redis worker 분리 구현을 커밋했고, Phase 2의 첫 단위로 proposal �
 - 휴가 override 후보가 여러 명이면 `approve_time_off_override` proposal을 여러 개 반환합니다.
 - 같은 이슈를 해결하는 복수 후보 proposal에는 동일한 `group_id`를 부여합니다.
 - 자동 후보가 없으면 manual review proposal과 diagnostic event metadata에 `NO_TIME_OFF_OVERRIDE_CANDIDATE`가 남습니다.
+- `audit_logs` table/model/migration을 추가했습니다.
+- `POST /organizations/{organization_id}/schedule-runs/{schedule_run_id}/manual-edits`가 manual Assignment를 저장하고 audit row를 남깁니다.
+- 재계산 시 locked manual Assignment가 solver 결과를 대체해 유지됩니다.
 
 ## 다음 작업
 
-1. Phase 2 full 검증을 실행합니다.
-2. 고급 진단/완화안 변경을 커밋합니다.
-3. Phase 3 수동 편집 저장/감사 이력을 TDD로 시작합니다.
+1. Phase 3 frontend build와 diff check를 실행합니다.
+2. 수동 편집 저장/감사 이력 변경을 커밋합니다.
+3. Phase 4 100명/31일 성능 hardening을 시작합니다.

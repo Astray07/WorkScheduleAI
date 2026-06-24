@@ -27,3 +27,11 @@
 ## 7. Phase 2 첫 단위는 proposal 후보 이유와 다중 후보 생성으로 제한
 
 전체 assumption literal 진단 모델은 큰 변경이므로 먼저 API 사용자 가치가 바로 드러나는 구조화 이유를 추가했습니다. `ImpactPreview.unavailable_reasons`는 기존 `impact_preview_json`에 저장되어 별도 migration 없이 응답과 diagnostic metadata에 함께 남습니다.
+
+## 8. Manual edit audit는 별도 AuditLog 테이블로 저장
+
+수동 편집은 `Assignment.source="manual"`과 `locked_by_user=true`를 직접 영속화하고, 변경 사실은 `audit_logs`에 별도 row로 남깁니다. AuditLog는 민감 원문을 저장하지 않고 schedule_run_id, slot_id, role_id, employee_id, warning code 정도의 구조화 metadata만 기록합니다.
+
+## 9. 재계산은 locked manual assignment를 solver 결과에 병합
+
+재계산 artifact 교체 시 기존 `source=manual`, `locked_by_user=true` assignment를 먼저 읽어 같은 slot/role 또는 slot/employee solver assignment를 대체합니다. 이 방식은 solver 모델을 즉시 크게 바꾸지 않고도 사용자 수동 잠금을 보존합니다.

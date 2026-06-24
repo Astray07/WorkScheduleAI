@@ -31,11 +31,11 @@
 
 ## Phase 3: Manual Edit Persistence And Audit
 
-- [ ] 기존 manual edit validation API의 통과/실패 케이스를 재확인합니다.
-- [ ] 수동 편집 저장 API가 Assignment source/manual, locked_by_user, warning_state를 영속화하는 테스트를 추가합니다.
-- [ ] 편집 이벤트와 override/manual lock 감사 이력을 별도 audit record로 남깁니다.
-- [ ] 재계산 시 manual lock이 유지되고 recalculation_count 한도와 충돌하지 않는지 검증합니다.
-- [ ] published SchedulePublication 이후 편집 저장이 거부되는지 검증합니다.
+- [x] 기존 manual edit validation API의 통과/실패 케이스를 재확인합니다.
+- [x] 수동 편집 저장 API가 Assignment source/manual, locked_by_user, warning_state를 영속화하는 테스트를 추가합니다.
+- [x] 편집 이벤트와 override/manual lock 감사 이력을 별도 audit record로 남깁니다.
+- [x] 재계산 시 manual lock이 유지되고 recalculation_count 한도와 충돌하지 않는지 검증합니다.
+- [x] published SchedulePublication 이후 편집 저장이 거부되는지 검증합니다.
 
 ## Phase 4: 100 Employees / 31 Days Performance Hardening
 

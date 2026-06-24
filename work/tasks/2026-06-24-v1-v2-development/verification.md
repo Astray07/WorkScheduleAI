@@ -74,6 +74,33 @@
   - 결과: 통과
   - 참고: 기존 unstaged 파일과 수정 파일의 LF/CRLF warning만 출력됨
 
+## Manual Edit Persistence RED/GREEN
+
+- RED: `python -m pytest tests\db\test_alembic_migrations.py::test_alembic_upgrade_head_creates_audit_log_indexes tests\db\test_alembic_migrations.py::test_alembic_upgrade_head_stamps_expected_revision -q`
+  - 결과: 실패
+  - 이유: `audit_logs` migration/table이 아직 없음
+- RED: `python -m pytest tests\api\test_schedule_runs_api.py::test_save_manual_edit_persists_assignment_and_audit_log -q`
+  - 결과: 실패
+  - 이유: `POST /manual-edits` 저장 route가 아직 없음
+- GREEN: 위 migration focused tests 재실행
+  - 결과: 2 passed
+- GREEN: `python -m pytest tests\api\test_schedule_runs_api.py::test_save_manual_edit_persists_assignment_and_audit_log -q`
+  - 결과: 1 passed
+- RED: `python -m pytest tests\api\test_schedule_runs_api.py::test_recalculate_preserves_manual_locked_assignment -q`
+  - 결과: 실패
+  - 이유: 재계산 artifact 교체가 manual locked assignment를 solver assignment로 덮어씀
+- GREEN: 같은 테스트 재실행
+  - 결과: 1 passed
+- Manual edit focused 회귀: `python -m pytest tests\api\test_schedule_runs_api.py::test_save_manual_edit_persists_assignment_and_audit_log tests\api\test_schedule_runs_api.py::test_recalculate_preserves_manual_locked_assignment tests\api\test_schedule_runs_api.py::test_save_manual_edit_rejects_published_schedule_run -q`
+  - 결과: 3 passed
+- 전체 회귀: `python -m pytest -q`
+  - 결과: 119 passed, 1 skipped
+- `cd frontend; npm run build`
+  - 결과: 성공
+- `git diff --check`
+  - 결과: 통과
+  - 참고: 기존 unstaged 파일과 수정 파일의 LF/CRLF warning만 출력됨
+
 ## Advanced Diagnostics RED/GREEN
 
 - RED: `python -m pytest tests\api\test_schedule_runs_api.py::test_schedule_run_result_maps_solver_unfilled_issue tests\api\test_schedule_runs_api.py::test_solver_proposes_multiple_time_off_override_candidates -q`

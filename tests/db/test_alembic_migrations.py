@@ -28,6 +28,7 @@ EXPECTED_TABLES = {
     "schedule_issues",
     "relaxation_proposals",
     "solver_diagnostic_events",
+    "audit_logs",
 }
 
 
@@ -293,6 +294,21 @@ def test_alembic_upgrade_head_creates_schedule_result_artifact_indexes(tmp_path)
     assert "ix_solver_diagnostics_employee_id" in diagnostic_index_names
 
 
+def test_alembic_upgrade_head_creates_audit_log_indexes(tmp_path):
+    db_path = tmp_path / "migration-test.sqlite"
+
+    _upgrade_head(db_path)
+
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    inspector = inspect(engine)
+    audit_index_names = {
+        item["name"] for item in inspector.get_indexes("audit_logs")
+    }
+
+    assert "ix_audit_logs_organization_id" in audit_index_names
+    assert "ix_audit_logs_target" in audit_index_names
+
+
 def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
     db_path = tmp_path / "migration-test.sqlite"
 
@@ -304,7 +320,7 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260624_0010"
+    assert version == "20260624_0011"
 
 
 def test_postgresql_rls_migration_defines_tenant_policies():
