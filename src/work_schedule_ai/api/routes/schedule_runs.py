@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
 from work_schedule_ai.db.models import (
+    AuditLog,
     Assignment as AssignmentRecord,
     Employee,
     EmployeeRole,
@@ -423,6 +424,124 @@ def validate_manual_edit(
         artifacts=artifacts,
         db_session=db_session,
     )
+
+
+@router.post(
+    "/{organization_id}/schedule-runs/{schedule_run_id}/manual-edits",
+    response_model=AssignmentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def save_manual_edit(
+    organization_id: str,
+    schedule_run_id: str,
+    request: ManualEditValidationRequest,
+    db_session: Session = Depends(get_db_session),
+) -> AssignmentResponse:
+    run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
+    publication = _get_publication_for_run(run, db_session)
+    if publication is not None and publication.status == "published":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "SCHEDULE_RUN_ALREADY_PUBLISHED",
+                "message": "Published ScheduleRun results are read-only.",
+                "field": "schedule_run_id",
+            },
+        )
+
+    artifacts = _result_artifacts_for_run(run, db_session)
+    validation = _validate_manual_edit_request(
+        organization_id=organization_id,
+        request=request,
+        artifacts=artifacts,
+        db_session=db_session,
+    )
+    if not validation.valid:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "MANUAL_EDIT_INVALID",
+                "message": "Manual edit has blocking validation errors.",
+                "blocking_errors": [
+                    error.model_dump(mode="json")
+                    for error in validation.blocking_errors
+                ],
+            },
+        )
+
+    employee = db_session.get(Employee, request.employee_id)
+    if employee is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Employee not found",
+        )
+
+    stored_slot_id = _stored_artifact_id(run.id, request.slot_id)
+    assignment_id = _stored_artifact_id(
+        run.id,
+        f"assign_manual_{request.slot_id}_{request.role_id}",
+    )
+    db_session.execute(
+        delete(AssignmentRecord).where(
+            AssignmentRecord.organization_id == organization_id,
+            AssignmentRecord.schedule_run_id == run.id,
+            AssignmentRecord.shift_slot_id == stored_slot_id,
+            AssignmentRecord.role_id == request.role_id,
+        )
+    )
+    warning_codes = [warning.code for warning in validation.warnings]
+    assignment = AssignmentRecord(
+        id=assignment_id,
+        organization_id=organization_id,
+        schedule_run_id=run.id,
+        shift_slot_id=stored_slot_id,
+        role_id=request.role_id,
+        employee_id=request.employee_id,
+        employee_name=employee.name,
+        source="manual",
+        locked_by_user=request.locked_by_user,
+        warning_state="manual_warning" if warning_codes else "none",
+        warning_message=(
+            "Manual assignment saved with validation warnings."
+            if warning_codes
+            else None
+        ),
+        attempt_no=run.current_attempt_no,
+    )
+    db_session.add(assignment)
+    _remove_resolved_manual_edit_issues(
+        organization_id=organization_id,
+        run=run,
+        stored_slot_id=stored_slot_id,
+        role_id=request.role_id,
+        db_session=db_session,
+    )
+    db_session.add(
+        AuditLog(
+            id=_new_id("audit"),
+            organization_id=organization_id,
+            actor_user_id=None,
+            action="manual_assignment_saved",
+            target_type="assignment",
+            target_id=_external_artifact_id(run.id, assignment_id),
+            metadata_json=json.dumps(
+                {
+                    "schedule_run_id": run.id,
+                    "slot_id": request.slot_id,
+                    "role_id": request.role_id,
+                    "employee_id": request.employee_id,
+                    "locked_by_user": request.locked_by_user,
+                    "warning_codes": warning_codes,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            created_at=utc_now(),
+        )
+    )
+    run.updated_at = utc_now()
+    db_session.commit()
+    return _assignment_response_from_record(run, assignment)
 
 
 @router.post(
@@ -845,6 +964,50 @@ def _result_artifacts_for_run(
     return _mock_result_artifacts(run, db_session)
 
 
+def _assignment_response_from_record(
+    run: ScheduleRun,
+    assignment: AssignmentRecord,
+) -> AssignmentResponse:
+    return AssignmentResponse(
+        id=_external_artifact_id(run.id, assignment.id),
+        slot_id=_external_artifact_id(run.id, assignment.shift_slot_id),
+        role_id=assignment.role_id,
+        employee_id=assignment.employee_id,
+        employee_name=assignment.employee_name,
+        source=assignment.source,
+        locked_by_user=assignment.locked_by_user,
+        warning_state=assignment.warning_state,
+        warning_message=assignment.warning_message,
+        attempt_no=assignment.attempt_no,
+    )
+
+
+def _remove_resolved_manual_edit_issues(
+    *,
+    organization_id: str,
+    run: ScheduleRun,
+    stored_slot_id: str,
+    role_id: str,
+    db_session: Session,
+) -> None:
+    db_session.execute(
+        delete(ScheduleIssueRecord).where(
+            ScheduleIssueRecord.organization_id == organization_id,
+            ScheduleIssueRecord.schedule_run_id == run.id,
+            ScheduleIssueRecord.shift_slot_id == stored_slot_id,
+            ScheduleIssueRecord.role_id == role_id,
+            ScheduleIssueRecord.type == "unfilled_requirement",
+        )
+    )
+    db_session.execute(
+        delete(RelaxationProposalRecord).where(
+            RelaxationProposalRecord.organization_id == organization_id,
+            RelaxationProposalRecord.schedule_run_id == run.id,
+            RelaxationProposalRecord.affected_shift_slot_id == stored_slot_id,
+        )
+    )
+
+
 def _schedule_run_progress(run: ScheduleRun) -> ScheduleRunProgress:
     if run.status == "queued":
         return ScheduleRunProgress(
@@ -903,6 +1066,11 @@ def _replace_persisted_artifacts(
     artifacts: _MockArtifacts,
     db_session: Session,
 ) -> None:
+    artifacts = _merge_locked_manual_assignments(
+        run=run,
+        artifacts=artifacts,
+        db_session=db_session,
+    )
     for model in (
         RelaxationProposalRecord,
         SolverDiagnosticEventRecord,
@@ -1030,6 +1198,85 @@ def _replace_persisted_artifacts(
     )
     db_session.add_all(_diagnostic_events_for_artifacts(run, artifacts))
     db_session.flush()
+
+
+def _merge_locked_manual_assignments(
+    *,
+    run: ScheduleRun,
+    artifacts: _MockArtifacts,
+    db_session: Session,
+) -> _MockArtifacts:
+    manual_assignments = [
+        _assignment_response_from_record(run, assignment)
+        for assignment in db_session.execute(
+            select(AssignmentRecord).where(
+                AssignmentRecord.organization_id == run.organization_id,
+                AssignmentRecord.schedule_run_id == run.id,
+                AssignmentRecord.source == "manual",
+                AssignmentRecord.locked_by_user.is_(True),
+            )
+        ).scalars()
+    ]
+    if not manual_assignments:
+        return artifacts
+
+    manual_keys = {
+        (assignment.slot_id, assignment.role_id)
+        for assignment in manual_assignments
+    }
+    manual_employee_slot_keys = {
+        (assignment.slot_id, assignment.employee_id)
+        for assignment in manual_assignments
+    }
+    assignments = [
+        assignment
+        for assignment in artifacts.assignments
+        if (assignment.slot_id, assignment.role_id) not in manual_keys
+        and (assignment.slot_id, assignment.employee_id)
+        not in manual_employee_slot_keys
+    ]
+    assignments.extend(manual_assignments)
+
+    issues = [
+        issue
+        for issue in artifacts.issues
+        if (issue.slot_id, issue.role_id) not in manual_keys
+    ]
+    removed_issue_ids = {
+        issue.id
+        for issue in artifacts.issues
+        if (issue.slot_id, issue.role_id) in manual_keys
+    }
+    manual_slot_ids = {assignment.slot_id for assignment in manual_assignments}
+    proposals = [
+        proposal
+        for proposal in artifacts.proposals
+        if proposal.affected_slot_id not in manual_slot_ids
+        and not set(proposal.impact_preview.resolved_issue_ids).intersection(
+            removed_issue_ids
+        )
+    ]
+    _attach_related_proposal_ids(issues, proposals)
+    return _MockArtifacts(
+        slots=artifacts.slots,
+        requirements=artifacts.requirements,
+        assignments=sorted(
+            assignments,
+            key=lambda assignment: (
+                assignment.slot_id,
+                assignment.role_id,
+                assignment.id,
+            ),
+        ),
+        issues=issues,
+        proposals=proposals,
+        score_summary=ScoreSummary(
+            hard=0,
+            approvable=0,
+            soft=sum(issue.missing_count * 100 for issue in issues),
+            severity_label="high" if issues else "none",
+        ),
+    )
 
 
 def _diagnostic_events_for_artifacts(

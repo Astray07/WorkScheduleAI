@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -964,6 +964,154 @@ def test_manual_edit_validation_rejects_ineligible_employee(client: TestClient):
     assert payload["warnings"] == []
 
 
+def test_save_manual_edit_persists_assignment_and_audit_log(
+    client: TestClient,
+    db_session: Session,
+):
+    organization = _create_role_scoped_organization(client, name="Manual Save Clinic")
+    organization_id = organization["organization_id"]
+    employees_by_code = organization["employees_by_code"]
+    junior_role_id = organization["junior_role_id"]
+    response = client.post(
+        f"/organizations/{organization_id}/unavailabilities",
+        json={
+            "employee_id": employees_by_code["E002"]["id"],
+            "type": "vacation",
+            "starts_at": "2026-07-01T00:00:00+09:00",
+            "ends_at": "2026-07-02T00:00:00+09:00",
+            "override_allowed": True,
+        },
+    )
+    assert response.status_code == 201
+    run_response = client.post(
+        f"/organizations/{organization_id}/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-01"},
+    )
+    run_id = run_response.json()["id"]
+    _process_next_schedule_run(client)
+    result = client.get(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
+    ).json()
+    issue = result["issues"][0]
+
+    response = client.post(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/manual-edits",
+        json={
+            "slot_id": issue["slot_id"],
+            "role_id": junior_role_id,
+            "employee_id": employees_by_code["E002"]["id"],
+            "locked_by_user": True,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["slot_id"] == issue["slot_id"]
+    assert payload["role_id"] == junior_role_id
+    assert payload["employee_id"] == employees_by_code["E002"]["id"]
+    assert payload["source"] == "manual"
+    assert payload["locked_by_user"] is True
+    assert payload["warning_state"] == "manual_warning"
+    refreshed = client.get(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
+    ).json()
+    assert refreshed["issues"] == []
+    assert any(
+        assignment["id"] == payload["id"]
+        and assignment["source"] == "manual"
+        and assignment["locked_by_user"] is True
+        for assignment in refreshed["assignments"]
+    )
+
+    audit_rows = (
+        db_session.execute(
+            text(
+                "select action, target_type, target_id, metadata_json "
+                "from audit_logs"
+            )
+        )
+        .mappings()
+        .all()
+    )
+    assert len(audit_rows) == 1
+    assert audit_rows[0]["action"] == "manual_assignment_saved"
+    assert audit_rows[0]["target_type"] == "assignment"
+    assert audit_rows[0]["target_id"] == payload["id"]
+    audit_metadata = json.loads(audit_rows[0]["metadata_json"])
+    assert audit_metadata["schedule_run_id"] == run_id
+    assert audit_metadata["slot_id"] == issue["slot_id"]
+    assert audit_metadata["warning_codes"] == ["UNAVAILABILITY_CONFLICT"]
+
+
+def test_recalculate_preserves_manual_locked_assignment(client: TestClient):
+    organization = _create_role_scoped_organization(client, name="Manual Lock Clinic")
+    organization_id = organization["organization_id"]
+    employees_by_code = organization["employees_by_code"]
+    junior_role_id = organization["junior_role_id"]
+    response = client.post(
+        f"/organizations/{organization_id}/unavailabilities",
+        json={
+            "employee_id": employees_by_code["E002"]["id"],
+            "type": "vacation",
+            "starts_at": "2026-07-01T00:00:00+09:00",
+            "ends_at": "2026-07-02T00:00:00+09:00",
+            "override_allowed": True,
+        },
+    )
+    assert response.status_code == 201
+    run_response = client.post(
+        f"/organizations/{organization_id}/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-01"},
+    )
+    run_id = run_response.json()["id"]
+    _process_next_schedule_run(client)
+    result = client.get(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
+    ).json()
+    issue = result["issues"][0]
+    proposal_id = result["proposals"][0]["id"]
+    approval_response = client.post(
+        (
+            f"/organizations/{organization_id}/schedule-runs/{run_id}"
+            f"/relaxation-proposals/{proposal_id}/approve"
+        ),
+        json={"reason": "manual lock regression setup", "notification_required": True},
+    )
+    assert approval_response.status_code == 201
+    manual_response = client.post(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/manual-edits",
+        json={
+            "slot_id": issue["slot_id"],
+            "role_id": junior_role_id,
+            "employee_id": employees_by_code["E002"]["id"],
+            "locked_by_user": True,
+        },
+    )
+    assert manual_response.status_code == 201
+
+    recalculate_response = client.post(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/recalculate",
+        json={"reason": "preserve manual lock"},
+    )
+
+    assert recalculate_response.status_code == 202
+    result = client.get(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
+    ).json()
+    matching_assignments = [
+        assignment
+        for assignment in result["assignments"]
+        if assignment["slot_id"] == issue["slot_id"]
+        and assignment["role_id"] == junior_role_id
+    ]
+    assert matching_assignments == [
+        {
+            **manual_response.json(),
+            "attempt_no": 1,
+        }
+    ]
+
+
 def test_manual_edit_validation_rejects_published_schedule_run(client: TestClient):
     run_id, result_payload = _create_recalculated_result(client)
     publish_response = client.post(
@@ -980,6 +1128,34 @@ def test_manual_edit_validation_rejects_published_schedule_run(client: TestClien
 
     response = client.post(
         f"/organizations/org_1/schedule-runs/{run_id}/manual-edits/validate",
+        json={
+            "slot_id": result["slots"][0]["id"],
+            "role_id": "role_senior",
+            "employee_id": "emp_1",
+            "locked_by_user": True,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "SCHEDULE_RUN_ALREADY_PUBLISHED"
+
+
+def test_save_manual_edit_rejects_published_schedule_run(client: TestClient):
+    run_id, result_payload = _create_recalculated_result(client)
+    publish_response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/publications",
+        json={
+            "expected_assignment_snapshot_hash": result_payload[
+                "assignment_snapshot_hash"
+            ],
+            "expected_issue_snapshot_hash": result_payload["issue_snapshot_hash"],
+        },
+    )
+    assert publish_response.status_code == 201
+    result = client.get(f"/organizations/org_1/schedule-runs/{run_id}/result").json()
+
+    response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/manual-edits",
         json={
             "slot_id": result["slots"][0]["id"],
             "role_id": "role_senior",
