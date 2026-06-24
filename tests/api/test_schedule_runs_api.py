@@ -806,6 +806,10 @@ def test_solver_proposes_multiple_time_off_override_candidates(client: TestClien
         proposal["impact_preview"]["resolved_issue_ids"][0]
         for proposal in payload["proposals"]
     } == {payload["issues"][0]["id"]}
+    assert {proposal["group_id"] for proposal in payload["proposals"]} == {
+        f"group_{payload['issues'][0]['id']}"
+    }
+    assert all(proposal["requires_proposal_ids"] == [] for proposal in payload["proposals"])
     assert all(
         proposal["impact_preview"]["unavailable_reasons"] == []
         for proposal in payload["proposals"]

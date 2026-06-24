@@ -15,10 +15,11 @@ Redis worker 분리 구현을 커밋했고, Phase 2의 첫 단위로 proposal �
 - API/P0 테스트는 fake queue를 설치하고 결과가 필요한 시점에 worker consume을 명시적으로 호출합니다.
 - `ImpactPreview.unavailable_reasons`를 추가했습니다.
 - 휴가 override 후보가 여러 명이면 `approve_time_off_override` proposal을 여러 개 반환합니다.
+- 같은 이슈를 해결하는 복수 후보 proposal에는 동일한 `group_id`를 부여합니다.
 - 자동 후보가 없으면 manual review proposal과 diagnostic event metadata에 `NO_TIME_OFF_OVERRIDE_CANDIDATE`가 남습니다.
 
 ## 다음 작업
 
-1. Phase 2 focused/full 검증을 실행합니다.
-2. proposal 후보 이유/다중 후보 변경을 커밋합니다.
-3. grouped proposal/read-only fallback 또는 LLM 설명 회귀 테스트를 다음 단위로 진행합니다.
+1. Phase 2 full 검증을 실행합니다.
+2. 고급 진단/완화안 변경을 커밋합니다.
+3. Phase 3 수동 편집 저장/감사 이력을 TDD로 시작합니다.
