@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import date
 from io import BytesIO
 import zipfile
 
@@ -137,6 +138,49 @@ def test_get_schedule_run_returns_persisted_status(client: TestClient):
     assert response.status_code == 200
     assert response.json()["id"] == run_id
     assert response.json()["status"] == "succeeded"
+
+
+def test_cancel_queued_schedule_run_marks_canceled(
+    client: TestClient,
+    db_session: Session,
+):
+    run = ScheduleRun(
+        id="run_cancel_1",
+        organization_id="org_1",
+        period_start=date(2026, 7, 1),
+        period_end=date(2026, 7, 7),
+        template="one_shift_per_day",
+        deterministic_mode=True,
+        timeout_seconds=30,
+        status="queued",
+        solver_status=None,
+        solution_quality="unknown",
+        current_attempt_no=1,
+        recalculation_count=0,
+    )
+    db_session.add(run)
+    db_session.commit()
+
+    response = client.post("/organizations/org_1/schedule-runs/run_cancel_1/cancel")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "canceled"
+    assert db_session.query(ScheduleRun).filter_by(id="run_cancel_1").one().status == (
+        "canceled"
+    )
+
+
+def test_cancel_succeeded_schedule_run_returns_conflict(client: TestClient):
+    create_response = client.post(
+        "/organizations/org_1/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
+    )
+    run_id = create_response.json()["id"]
+
+    response = client.post(f"/organizations/org_1/schedule-runs/{run_id}/cancel")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "SCHEDULE_RUN_NOT_CANCELABLE"
 
 
 def test_get_schedule_run_result_returns_one_week_mock_grid(client: TestClient):

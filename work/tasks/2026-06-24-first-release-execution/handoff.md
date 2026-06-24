@@ -12,6 +12,6 @@
 
 ## 다음 단계
 
-1. ScheduleRun worker 상태 전이와 cancel/retry 계약을 보강합니다.
-2. 기존 `current_attempt_no`와 `recalculation_count` 분리 규칙을 API 테스트로 고정합니다.
+1. 프론트엔드 P0 운영형 UI를 구현합니다.
+2. 결과 그리드, 이슈/완화안 패널, 승인/재계산/발행/다운로드 흐름을 브라우저에서 검증합니다.
 3. 전체 테스트 후 커밋합니다.
