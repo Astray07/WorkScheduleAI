@@ -32,6 +32,7 @@ from work_schedule_ai.db.models import (
     Unavailability,
     utc_now,
 )
+from work_schedule_ai.llm.explanations import fallback_explanation
 from work_schedule_ai.solver.models import (
     BlockedPair,
     EmployeeInput,
@@ -47,13 +48,6 @@ from work_schedule_ai.worker.schedule_worker import (
 
 
 router = APIRouter(prefix="/organizations", tags=["schedule-runs"])
-
-LLM_FALLBACK = {
-    "status": "fallback",
-    "text": "서버 템플릿으로 mock 근무표 설명을 생성했습니다.",
-    "source": "server_template",
-}
-
 
 class ScheduleRunCreateRequest(BaseModel):
     period_start: date
@@ -1242,7 +1236,7 @@ def _stable_hash(payload: object) -> str:
 
 
 def _llm_explanation() -> LLMExplanation:
-    return LLMExplanation(**LLM_FALLBACK)
+    return LLMExplanation(**fallback_explanation())
 
 
 def _new_id(prefix: str) -> str:
