@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -47,6 +47,13 @@ def db_session() -> Generator[Session, None, None]:
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
         future=True,
+    )
+    event.listen(
+        engine,
+        "connect",
+        lambda dbapi_connection, _connection_record: dbapi_connection.execute(
+            "PRAGMA foreign_keys=ON"
+        ),
     )
     Base.metadata.create_all(engine)
     with Session(engine) as session:
@@ -1549,12 +1556,14 @@ def _create_day_shift_type(session: Session) -> None:
         ),
     ]
     session.add(shift_type)
+    session.flush()
     session.add_all(requirements)
     session.commit()
 
 
 def _seed_p0_organization(session: Session) -> None:
     session.add(Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul"))
+    session.flush()
     session.add_all(
         [
             Role(id="role_senior", organization_id="org_1", name="사수"),

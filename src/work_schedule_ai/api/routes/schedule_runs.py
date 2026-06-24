@@ -333,7 +333,9 @@ def create_schedule_run(
         snapshot_hash=snapshot_hash,
         payload_json=json.dumps(snapshot_payload, ensure_ascii=False, sort_keys=True),
     )
-    db_session.add_all([run, snapshot])
+    db_session.add(run)
+    db_session.flush()
+    db_session.add(snapshot)
     db_session.flush()
     db_session.commit()
     enqueue_schedule_run(run.id)
