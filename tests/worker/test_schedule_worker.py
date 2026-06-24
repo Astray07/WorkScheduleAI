@@ -57,6 +57,23 @@ def test_execute_schedule_run_uses_executor_to_set_solver_status(session: Sessio
     assert result.solution_quality == "optimal"
 
 
+def test_execute_schedule_run_marks_failed_when_executor_raises(session: Session):
+    run = _queued_run()
+    session.add(run)
+    session.commit()
+
+    def executor(db_session: Session, schedule_run: ScheduleRun) -> None:
+        raise RuntimeError("solver unavailable")
+
+    result = execute_schedule_run(session, "run_1", executor=executor)
+
+    assert result.status == "failed"
+    assert result.solver_status == "error"
+    assert result.solution_quality == "unknown"
+    assert result.started_at is not None
+    assert result.finished_at is not None
+
+
 def test_cancel_schedule_run_marks_queued_run_canceled(session: Session):
     run = _queued_run()
     session.add(run)

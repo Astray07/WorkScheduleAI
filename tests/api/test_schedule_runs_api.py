@@ -444,6 +444,8 @@ def test_recalculate_with_approved_override_increments_recalculation_count_only(
     assert response.status_code == 202
     payload = response.json()
     assert payload["id"] == run_id
+    assert payload["status"] == "queued"
+    assert payload["progress"]["phase"] == "queued"
     assert payload["recalculation_count"] == 1
     assert payload["current_attempt_no"] == 1
     assert db_session.query(ScheduleRecalculationRequest).count() == 1
@@ -452,12 +454,43 @@ def test_recalculate_with_approved_override_increments_recalculation_count_only(
     assert run.current_attempt_no == 1
 
 
+def test_recalculate_enqueues_without_inline_solver_execution(
+    client: TestClient,
+    schedule_queue: InMemoryScheduleRunQueue,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    run_id = _create_run_and_approve_mock_proposal(client)
+
+    def reject_inline_execution(db_session: Session, schedule_run: ScheduleRun) -> None:
+        raise AssertionError("recalculation must be processed by the worker")
+
+    monkeypatch.setattr(
+        schedule_runs_module,
+        "_execute_schedule_run_artifacts",
+        reject_inline_execution,
+    )
+
+    response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/recalculate",
+        json={"reason": "승인된 완화안을 큐에서 반영합니다."},
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["status"] == "queued"
+    assert payload["progress"]["phase"] == "queued"
+    assert payload["recalculation_count"] == 1
+    assert schedule_queue.dequeue(timeout_seconds=0).schedule_run_id == run_id
+    assert schedule_queue.dequeue(timeout_seconds=0) is None
+
+
 def test_recalculate_resolves_mock_unfilled_issue_after_approval(client: TestClient):
     run_id = _create_run_and_approve_mock_proposal(client)
     client.post(
         f"/organizations/org_1/schedule-runs/{run_id}/recalculate",
         json={"reason": "승인된 완화안을 반영합니다."},
     )
+    _process_next_schedule_run(client)
 
     response = client.get(f"/organizations/org_1/schedule-runs/{run_id}/result")
 
@@ -527,6 +560,7 @@ def test_recalculate_rejects_fourth_recalculation(
             json={"reason": f"재계산 {round_no}"},
         )
         assert response.status_code == 202
+        _process_next_schedule_run(client)
 
     response = client.post(
         f"/organizations/org_1/schedule-runs/{run_id}/recalculate",
@@ -619,6 +653,7 @@ def test_time_off_override_applies_only_to_approved_employee_slot(
         json={"reason": "승인된 단일 slot 예외 반영"},
     )
     assert recalculate_response.status_code == 202
+    _process_next_schedule_run(client)
 
     result = client.get(
         f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
@@ -1095,6 +1130,7 @@ def test_recalculate_preserves_manual_locked_assignment(client: TestClient):
     )
 
     assert recalculate_response.status_code == 202
+    _process_next_schedule_run(client)
     result = client.get(
         f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
     ).json()
@@ -1345,6 +1381,7 @@ def _create_recalculated_result(client: TestClient) -> tuple[str, dict]:
         json={"reason": "승인된 완화안을 반영합니다."},
     )
     assert recalculate_response.status_code == 202
+    _process_next_schedule_run(client)
     result_response = client.get(f"/organizations/org_1/schedule-runs/{run_id}/result")
     assert result_response.status_code == 200
     result_payload = result_response.json()

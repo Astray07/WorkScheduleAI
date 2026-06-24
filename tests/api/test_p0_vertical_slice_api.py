@@ -150,8 +150,10 @@ def test_p0_vertical_slice_recalculates_publishes_and_downloads_excel(
         json={"reason": "Apply approved relaxation proposal"},
     )
     assert recalculation_response.status_code == 202
+    assert recalculation_response.json()["status"] == "queued"
     assert recalculation_response.json()["recalculation_count"] == 1
     assert recalculation_response.json()["current_attempt_no"] == 1
+    _process_next_schedule_run(client)
 
     recalculated_result_response = client.get(
         f"/organizations/{organization_id}/schedule-runs/{run_id}/result"

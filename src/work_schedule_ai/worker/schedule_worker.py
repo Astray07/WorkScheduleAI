@@ -28,8 +28,22 @@ def execute_schedule_run(
     run.updated_at = now
     db_session.flush()
 
-    if executor is not None:
-        executor(db_session, run)
+    try:
+        if executor is not None:
+            executor(db_session, run)
+    except Exception:
+        db_session.rollback()
+        failed_run = _get_schedule_run(db_session, schedule_run_id)
+        finished_at = utc_now()
+        if failed_run.status != "canceled":
+            failed_run.status = "failed"
+            failed_run.solver_status = "error"
+            failed_run.solution_quality = "unknown"
+            failed_run.started_at = failed_run.started_at or now
+            failed_run.finished_at = finished_at
+            failed_run.updated_at = finished_at
+            db_session.commit()
+        return failed_run
 
     finished_at = utc_now()
     if run.status == "running":
