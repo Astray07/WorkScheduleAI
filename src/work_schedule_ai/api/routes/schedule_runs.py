@@ -1606,12 +1606,15 @@ def _solver_proposals(
                 if len(limited_candidates) > 1
                 else ["NO_ADDITIONAL_TIME_OFF_OVERRIDE_CANDIDATE"]
             )
+            group_id = (
+                f"group_{issue.id}" if len(limited_candidates) > 1 else None
+            )
             for candidate in limited_candidates:
                 proposal_id = _time_off_proposal_id(candidate.id, issue.slot_id)
                 proposals.append(
                     RelaxationProposalResponse(
                         id=proposal_id,
-                        group_id=None,
+                        group_id=group_id,
                         requires_proposal_ids=[],
                         type="approve_time_off_override",
                         severity=issue.severity,
