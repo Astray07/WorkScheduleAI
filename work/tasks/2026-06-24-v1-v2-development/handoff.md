@@ -2,14 +2,15 @@
 
 ## 현재 상태
 
-Redis worker 분리 구현을 커밋했고, Phase 2의 첫 단위로 proposal 후보 부재 이유와 다중 휴가 override 후보 생성을 구현했습니다.
+요청된 v1/v2 순서의 로컬 구현, 테스트, 문서화, 커밋을 완료했습니다. GitHub push, Railway/staging 배포, P0 수동 시나리오 검증은 사용자 지시대로 마지막 통합 점검 전까지 보류했습니다.
 
 ## 중요한 관찰
 
-- 현재 브랜치와 HEAD는 `feature/m1-scaffold-contract-tests` / `dfb414a Complete first release hardening gates`입니다.
+- 현재 브랜치는 `feature/m1-scaffold-contract-tests`입니다.
+- 마지막 작업 커밋은 `6eb1da2 feat: add operational schedule monitoring`입니다.
 - 기존 unstaged review/memory 파일은 사용자 지시대로 건드리지 않았습니다.
 - 저장소에 `AGENTS.md` 파일은 없으며, 사용자 메시지에 포함된 AGENTS 지침을 적용해야 합니다.
-- 현재 `create_schedule_run`은 ScheduleRun과 snapshot을 만든 뒤 같은 요청 안에서 `execute_schedule_run(db_session, run.id, executor=_execute_schedule_run_artifacts)`를 호출합니다.
+- `create_schedule_run`은 ScheduleRun과 snapshot을 만든 뒤 API request path에서 solver를 실행하지 않고 queue에 run id를 enqueue합니다.
 - `src/work_schedule_ai/worker/queue.py`에 in-memory/Redis queue adapter를 추가했습니다.
 - `src/work_schedule_ai/worker/queue_worker.py`에 `python -m work_schedule_ai.worker.queue_worker` entrypoint를 추가했습니다.
 - API/P0 테스트는 fake queue를 설치하고 결과가 필요한 시점에 worker consume을 명시적으로 호출합니다.
@@ -28,5 +29,6 @@ Redis worker 분리 구현을 커밋했고, Phase 2의 첫 단위로 proposal �
 
 ## 다음 작업
 
-1. Phase 5 full 검증과 커밋을 진행합니다.
-2. 완료 전 `superpowers:verification-before-completion`을 적용해 최종 점검합니다.
+1. 마지막 통합 점검 단계에서 GitHub push, Railway/staging 배포, P0 수동 시나리오 검증을 진행합니다.
+2. Railway 환경에서 `GET /health/ready`, `GET /operations/schedule-runs/metrics`, worker queue consume smoke를 확인합니다.
+3. 운영 metrics backend, alert rule, dashboard는 후속 운영 고도화 범위로 남아 있습니다.
