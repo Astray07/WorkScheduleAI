@@ -6,6 +6,7 @@ from work_schedule_ai.db.models import (
     Organization,
     PairConstraint,
     Role,
+    Unavailability,
     User,
     normalize_pair_employee_ids,
 )
@@ -18,7 +19,7 @@ __all__ = [
     "Organization",
     "PairConstraint",
     "Role",
+    "Unavailability",
     "User",
     "normalize_pair_employee_ids",
 ]
-
