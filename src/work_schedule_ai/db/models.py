@@ -163,6 +163,86 @@ class Role(Base):
     )
 
 
+class ShiftType(Base):
+    __tablename__ = "shift_types"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "name",
+            name="uq_shift_types_organization_name",
+        ),
+        CheckConstraint(
+            "local_start_time <> local_end_time",
+            name="ck_shift_types_time_not_equal",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    local_start_time: Mapped[str] = mapped_column(Text, nullable=False)
+    local_end_time: Mapped[str] = mapped_column(Text, nullable=False)
+    timezone: Mapped[str] = mapped_column(Text, nullable=False)
+    crosses_midnight: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
+class ShiftRequirement(Base):
+    __tablename__ = "shift_requirements"
+    __table_args__ = (
+        UniqueConstraint(
+            "shift_type_id",
+            "role_id",
+            name="uq_shift_requirements_shift_type_role",
+        ),
+        CheckConstraint(
+            "required_count >= 1",
+            name="ck_shift_requirements_required_count",
+        ),
+        CheckConstraint(
+            "unfilled_weight_override IS NULL OR unfilled_weight_override >= 0",
+            name="ck_shift_requirements_unfilled_weight_override",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    shift_type_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("shift_types.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("roles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    required_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    unfilled_weight_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
 class EmployeeRole(Base):
     __tablename__ = "employee_roles"
     __table_args__ = (

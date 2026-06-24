@@ -514,6 +514,75 @@ def test_schedule_publication_is_unique_per_schedule_run(session):
         session.commit()
 
 
+def test_shift_type_name_is_unique_within_organization(session):
+    assert hasattr(db_models, "ShiftType")
+    org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
+    shift_type = db_models.ShiftType(
+        id="shift_type_1",
+        organization_id="org_1",
+        name="주간 근무",
+        local_start_time="09:00",
+        local_end_time="18:00",
+        timezone="Asia/Seoul",
+        crosses_midnight=False,
+        active=True,
+    )
+    duplicate = db_models.ShiftType(
+        id="shift_type_2",
+        organization_id="org_1",
+        name="주간 근무",
+        local_start_time="10:00",
+        local_end_time="19:00",
+        timezone="Asia/Seoul",
+        crosses_midnight=False,
+        active=True,
+    )
+    session.add(org)
+    session.commit()
+
+    session.add(shift_type)
+    session.commit()
+
+    session.add(duplicate)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_shift_requirement_rejects_non_positive_required_count(session):
+    assert hasattr(db_models, "ShiftType")
+    assert hasattr(db_models, "ShiftRequirement")
+    org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
+    role = Role(id="role_1", organization_id="org_1", name="사수")
+    shift_type = db_models.ShiftType(
+        id="shift_type_1",
+        organization_id="org_1",
+        name="주간 근무",
+        local_start_time="09:00",
+        local_end_time="18:00",
+        timezone="Asia/Seoul",
+        crosses_midnight=False,
+        active=True,
+    )
+    requirement = db_models.ShiftRequirement(
+        id="shift_requirement_1",
+        organization_id="org_1",
+        shift_type_id="shift_type_1",
+        role_id="role_1",
+        required_count=0,
+    )
+    session.add(org)
+    session.commit()
+
+    session.add_all([role, shift_type])
+    session.commit()
+
+    session.add(requirement)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
 def _organization_with_two_employees():
     org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
     employee_a = Employee(
