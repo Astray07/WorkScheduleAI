@@ -99,6 +99,25 @@ class PublishScheduleRunRequest(BaseModel):
     expected_issue_snapshot_hash: str = Field(min_length=1)
 
 
+class ManualEditValidationRequest(BaseModel):
+    slot_id: str = Field(min_length=1)
+    role_id: str = Field(min_length=1)
+    employee_id: str = Field(min_length=1)
+    locked_by_user: bool
+
+
+class FieldErrorResponse(BaseModel):
+    field: str
+    code: str
+    message: str
+
+
+class ManualEditValidationResponse(BaseModel):
+    valid: bool
+    blocking_errors: list[FieldErrorResponse]
+    warnings: list[FieldErrorResponse]
+
+
 class ScheduleRunProgress(BaseModel):
     phase: str
     message: str
@@ -373,6 +392,37 @@ def get_schedule_run_result(
 
 
 @router.post(
+    "/{organization_id}/schedule-runs/{schedule_run_id}/manual-edits/validate",
+    response_model=ManualEditValidationResponse,
+)
+def validate_manual_edit(
+    organization_id: str,
+    schedule_run_id: str,
+    request: ManualEditValidationRequest,
+    db_session: Session = Depends(get_db_session),
+) -> ManualEditValidationResponse:
+    run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
+    publication = _get_publication_for_run(run, db_session)
+    if publication is not None and publication.status == "published":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "SCHEDULE_RUN_ALREADY_PUBLISHED",
+                "message": "Published ScheduleRun results are read-only.",
+                "field": "schedule_run_id",
+            },
+        )
+
+    artifacts = _result_artifacts_for_run(run, db_session)
+    return _validate_manual_edit_request(
+        organization_id=organization_id,
+        request=request,
+        artifacts=artifacts,
+        db_session=db_session,
+    )
+
+
+@router.post(
     "/{organization_id}/schedule-runs/{schedule_run_id}/cancel",
     response_model=ScheduleRunResponse,
 )
@@ -484,6 +534,17 @@ def recalculate_schedule_run(
     db_session: Session = Depends(get_db_session),
 ) -> ScheduleRunResponse:
     run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
+
+    publication = _get_publication_for_run(run, db_session)
+    if publication is not None and publication.status == "published":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "SCHEDULE_RUN_ALREADY_PUBLISHED",
+                "message": "Published ScheduleRun results are read-only.",
+                "field": "schedule_run_id",
+            },
+        )
 
     if idempotency_key is not None:
         existing_request = db_session.execute(
@@ -1335,7 +1396,13 @@ def _solver_result_artifacts(
             )
         ).scalars()
     )
-    proposals = _mock_proposals(run, issues, approved_proposal_ids)
+    proposals = _solver_proposals(
+        run=run,
+        issues=issues,
+        approved_proposal_ids=approved_proposal_ids,
+        db_session=db_session,
+    )
+    _attach_related_proposal_ids(issues, proposals)
     return _MockArtifacts(
         slots=slots,
         requirements=response_requirements,
@@ -1370,8 +1437,155 @@ def _solver_issue_response(
         reason_code="NO_AVAILABLE_CANDIDATE",
         display_message=f"{requirement.role_name} {missing_count}명이 미배정입니다.",
         attempt_no=run.current_attempt_no,
-        related_proposal_ids=["proposal_mock_time_off_1"],
+        related_proposal_ids=[],
     )
+
+
+def _solver_proposals(
+    *,
+    run: ScheduleRun,
+    issues: list[ScheduleIssueResponse],
+    approved_proposal_ids: set[str],
+    db_session: Session,
+) -> list[RelaxationProposalResponse]:
+    proposals: list[RelaxationProposalResponse] = []
+    for issue in issues:
+        candidate = _time_off_override_candidate(run, issue, db_session)
+        if candidate is not None and issue.slot_id is not None:
+            proposal_id = _time_off_proposal_id(candidate.id, issue.slot_id)
+            proposals.append(
+                RelaxationProposalResponse(
+                    id=proposal_id,
+                    group_id=None,
+                    requires_proposal_ids=[],
+                    type="approve_time_off_override",
+                    severity=issue.severity,
+                    affected_slot_id=issue.slot_id,
+                    display_summary=(
+                        "해당 슬롯의 휴가 중 후보 1명을 예외 승인하면 "
+                        "미배정을 해소할 수 있습니다."
+                    ),
+                    impact_preview=ImpactPreview(
+                        resolved_issue_ids=[issue.id],
+                        new_warning_count=1,
+                    ),
+                    status=(
+                        "approved"
+                        if proposal_id in approved_proposal_ids
+                        else "suggested"
+                    ),
+                    attempt_no=run.current_attempt_no,
+                    llm_explanation=_llm_explanation(),
+                )
+            )
+            continue
+
+        proposal_id = f"proposal_manual_review__{issue.id}"
+        proposals.append(
+            RelaxationProposalResponse(
+                id=proposal_id,
+                group_id=None,
+                requires_proposal_ids=[],
+                type="mark_manual_review",
+                severity=issue.severity,
+                affected_slot_id=issue.slot_id,
+                display_summary="자동 완화 가능한 후보가 없어 수동 검토가 필요합니다.",
+                impact_preview=ImpactPreview(
+                    resolved_issue_ids=[],
+                    new_warning_count=0,
+                ),
+                status=(
+                    "approved" if proposal_id in approved_proposal_ids else "suggested"
+                ),
+                attempt_no=run.current_attempt_no,
+                llm_explanation=_llm_explanation(),
+            )
+        )
+    return proposals
+
+
+def _attach_related_proposal_ids(
+    issues: list[ScheduleIssueResponse],
+    proposals: list[RelaxationProposalResponse],
+) -> None:
+    for issue in issues:
+        issue.related_proposal_ids = [
+            proposal.id
+            for proposal in proposals
+            if issue.id in proposal.impact_preview.resolved_issue_ids
+            or proposal.affected_slot_id == issue.slot_id
+        ]
+
+
+def _time_off_override_candidate(
+    run: ScheduleRun,
+    issue: ScheduleIssueResponse,
+    db_session: Session,
+) -> Employee | None:
+    if issue.slot_id is None or issue.role_id is None:
+        return None
+    slot_date = _local_date_from_slot_id(issue.slot_id)
+    if slot_date is None:
+        return None
+    role_ids_by_employee = _role_ids_by_employee(run.organization_id, db_session)
+    eligible_employee_ids = {
+        employee_id
+        for employee_id, role_ids in role_ids_by_employee.items()
+        if issue.role_id in role_ids
+    }
+    if not eligible_employee_ids:
+        return None
+    employees_by_id = {
+        employee.id: employee
+        for employee in db_session.execute(
+            select(Employee).where(
+                Employee.organization_id == run.organization_id,
+                Employee.active.is_(True),
+                Employee.id.in_(eligible_employee_ids),
+            )
+        ).scalars()
+    }
+    candidates: list[Employee] = []
+    unavailabilities = db_session.execute(
+        select(Unavailability).where(
+            Unavailability.organization_id == run.organization_id,
+            Unavailability.override_allowed.is_(True),
+            Unavailability.employee_id.in_(eligible_employee_ids),
+        )
+    ).scalars()
+    for unavailability in unavailabilities:
+        if (
+            _unavailability_overlaps_date(unavailability, slot_date)
+            and unavailability.employee_id in employees_by_id
+        ):
+            candidates.append(employees_by_id[unavailability.employee_id])
+    candidates.sort(key=lambda employee: employee.employee_code)
+    return candidates[0] if candidates else None
+
+
+def _time_off_proposal_id(employee_id: str, slot_id: str) -> str:
+    return f"proposal_time_off__{employee_id}__{slot_id}"
+
+
+def _parse_time_off_proposal_id(proposal_id: str) -> tuple[str, str] | None:
+    prefix = "proposal_time_off__"
+    if not proposal_id.startswith(prefix):
+        return None
+    remainder = proposal_id[len(prefix) :]
+    parts = remainder.split("__", 1)
+    if len(parts) != 2:
+        return None
+    return parts[0], parts[1]
+
+
+def _local_date_from_slot_id(slot_id: str) -> date | None:
+    parts = slot_id.split("_")
+    if len(parts) < 4 or parts[0] != "slot":
+        return None
+    try:
+        return date(int(parts[1]), int(parts[2]), int(parts[3]))
+    except ValueError:
+        return None
 
 
 def _solver_slots(
@@ -1385,9 +1599,17 @@ def _solver_slot_pairs(
     run: ScheduleRun,
     shift_types: list[ShiftType],
 ) -> list[tuple[ShiftSlotResponse, ShiftType]]:
+    return _generated_slot_pairs(run.period_start, run.period_end, shift_types)
+
+
+def _generated_slot_pairs(
+    period_start: date,
+    period_end: date,
+    shift_types: list[ShiftType],
+) -> list[tuple[ShiftSlotResponse, ShiftType]]:
     slot_pairs: list[tuple[ShiftSlotResponse, ShiftType]] = []
-    current_date = run.period_start
-    while current_date <= run.period_end:
+    current_date = period_start
+    while current_date <= period_end:
         date_token = current_date.isoformat().replace("-", "_")
         for shift_type in shift_types:
             slot = ShiftSlotResponse(
@@ -1400,6 +1622,58 @@ def _solver_slot_pairs(
             slot_pairs.append((slot, shift_type))
         current_date += timedelta(days=1)
     return slot_pairs
+
+
+def _generated_snapshot_artifacts(
+    *,
+    period_start: date,
+    period_end: date,
+    shift_types: list[ShiftType],
+    shift_requirements: list[ShiftRequirement],
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    active_shift_types = sorted(
+        [shift_type for shift_type in shift_types if shift_type.active],
+        key=lambda shift_type: (shift_type.name, shift_type.id),
+    )
+    requirements_by_shift_type: dict[str, list[ShiftRequirement]] = {
+        shift_type.id: [] for shift_type in active_shift_types
+    }
+    for requirement in shift_requirements:
+        if requirement.shift_type_id in requirements_by_shift_type:
+            requirements_by_shift_type[requirement.shift_type_id].append(requirement)
+    for requirements in requirements_by_shift_type.values():
+        requirements.sort(key=lambda requirement: (requirement.role_id, requirement.id))
+
+    generated_slots: list[dict[str, object]] = []
+    generated_requirements: list[dict[str, object]] = []
+    for slot, shift_type in _generated_slot_pairs(
+        period_start,
+        period_end,
+        active_shift_types,
+    ):
+        generated_slots.append(
+            {
+                "id": slot.id,
+                "shift_type_id": shift_type.id,
+                "local_date": slot.local_date.isoformat(),
+                "label": slot.label,
+                "starts_at": slot.starts_at,
+                "ends_at": slot.ends_at,
+            }
+        )
+        for requirement in requirements_by_shift_type[shift_type.id]:
+            generated_requirements.append(
+                {
+                    "id": f"req_{slot.id}_{requirement.id}",
+                    "slot_id": slot.id,
+                    "shift_type_id": shift_type.id,
+                    "shift_requirement_id": requirement.id,
+                    "role_id": requirement.role_id,
+                    "required_count": requirement.required_count,
+                    "unfilled_weight_override": requirement.unfilled_weight_override,
+                }
+            )
+    return generated_slots, generated_requirements
 
 
 def _local_datetime(local_date: date, local_time: str) -> str:
@@ -1438,18 +1712,36 @@ def _unavailable_slot_ids_by_employee(
             )
         ).scalars()
     )
-    approved_override = db_session.execute(
+    approved_time_off_pairs = {
+        parsed
+        for proposal_id in db_session.execute(
+            select(OverrideApproval.relaxation_proposal_id).where(
+                OverrideApproval.organization_id == run.organization_id,
+                OverrideApproval.schedule_run_id == run.id,
+                OverrideApproval.type == "approve_time_off_override",
+            )
+        ).scalars()
+        if (parsed := _parse_time_off_proposal_id(proposal_id)) is not None
+    }
+    legacy_run_wide_override = db_session.execute(
         select(OverrideApproval.id).where(
             OverrideApproval.organization_id == run.organization_id,
             OverrideApproval.schedule_run_id == run.id,
             OverrideApproval.type == "approve_time_off_override",
+            OverrideApproval.relaxation_proposal_id == "proposal_mock_time_off_1",
         )
     ).first()
     slot_ids_by_employee: dict[str, set[str]] = {}
     for unavailability in unavailabilities:
-        if approved_override is not None and unavailability.override_allowed:
-            continue
         for slot in slots:
+            if (
+                unavailability.override_allowed
+                and (
+                    legacy_run_wide_override is not None
+                    or (unavailability.employee_id, slot.id) in approved_time_off_pairs
+                )
+            ):
+                continue
             if _unavailability_overlaps_date(unavailability, slot.local_date):
                 slot_ids_by_employee.setdefault(unavailability.employee_id, set()).add(
                     slot.id
@@ -1574,6 +1866,165 @@ def _mock_proposals(
     ]
 
 
+def _validate_manual_edit_request(
+    *,
+    organization_id: str,
+    request: ManualEditValidationRequest,
+    artifacts: _MockArtifacts,
+    db_session: Session,
+) -> ManualEditValidationResponse:
+    blocking_errors: list[FieldErrorResponse] = []
+    warnings: list[FieldErrorResponse] = []
+
+    slot = next((item for item in artifacts.slots if item.id == request.slot_id), None)
+    if slot is None:
+        blocking_errors.append(
+            _field_error(
+                "slot_id",
+                "SLOT_NOT_FOUND",
+                "Shift slot does not exist in this ScheduleRun.",
+            )
+        )
+
+    role = db_session.get(Role, request.role_id)
+    if role is None or role.organization_id != organization_id:
+        blocking_errors.append(
+            _field_error(
+                "role_id",
+                "ROLE_NOT_FOUND",
+                "Role does not exist in this organization.",
+            )
+        )
+
+    employee = db_session.get(Employee, request.employee_id)
+    if (
+        employee is None
+        or employee.organization_id != organization_id
+        or not employee.active
+    ):
+        blocking_errors.append(
+            _field_error(
+                "employee_id",
+                "EMPLOYEE_NOT_FOUND",
+                "Active employee does not exist in this organization.",
+            )
+        )
+
+    if role is not None and employee is not None:
+        role_link = db_session.execute(
+            select(EmployeeRole).where(
+                EmployeeRole.organization_id == organization_id,
+                EmployeeRole.employee_id == request.employee_id,
+                EmployeeRole.role_id == request.role_id,
+                EmployeeRole.active.is_(True),
+            )
+        ).scalar_one_or_none()
+        if role_link is None:
+            blocking_errors.append(
+                _field_error(
+                    "employee_id",
+                    "EMPLOYEE_ROLE_MISMATCH",
+                    "Employee is not eligible for the requested role.",
+                )
+            )
+
+    if slot is not None and employee is not None:
+        _validate_manual_unavailability(
+            organization_id=organization_id,
+            employee_id=request.employee_id,
+            slot=slot,
+            blocking_errors=blocking_errors,
+            warnings=warnings,
+            db_session=db_session,
+        )
+        _validate_manual_blocked_pairs(
+            organization_id=organization_id,
+            employee_id=request.employee_id,
+            slot_id=request.slot_id,
+            assignments=artifacts.assignments,
+            blocking_errors=blocking_errors,
+            db_session=db_session,
+        )
+
+    return ManualEditValidationResponse(
+        valid=not blocking_errors,
+        blocking_errors=blocking_errors,
+        warnings=warnings,
+    )
+
+
+def _validate_manual_unavailability(
+    *,
+    organization_id: str,
+    employee_id: str,
+    slot: ShiftSlotResponse,
+    blocking_errors: list[FieldErrorResponse],
+    warnings: list[FieldErrorResponse],
+    db_session: Session,
+) -> None:
+    unavailabilities = db_session.execute(
+        select(Unavailability).where(
+            Unavailability.organization_id == organization_id,
+            Unavailability.employee_id == employee_id,
+        )
+    ).scalars()
+    for unavailability in unavailabilities:
+        if not _unavailability_overlaps_date(unavailability, slot.local_date):
+            continue
+        target = warnings if unavailability.override_allowed else blocking_errors
+        target.append(
+            _field_error(
+                "employee_id",
+                "UNAVAILABILITY_CONFLICT",
+                "Employee is unavailable for this slot.",
+            )
+        )
+        return
+
+
+def _validate_manual_blocked_pairs(
+    *,
+    organization_id: str,
+    employee_id: str,
+    slot_id: str,
+    assignments: list[AssignmentResponse],
+    blocking_errors: list[FieldErrorResponse],
+    db_session: Session,
+) -> None:
+    assigned_employee_ids = {
+        assignment.employee_id
+        for assignment in assignments
+        if assignment.slot_id == slot_id and assignment.employee_id != employee_id
+    }
+    if not assigned_employee_ids:
+        return
+    blocked_pairs = db_session.execute(
+        select(PairConstraint).where(
+            PairConstraint.organization_id == organization_id,
+            PairConstraint.type == "blocked",
+            PairConstraint.active.is_(True),
+        )
+    ).scalars()
+    for pair_constraint in blocked_pairs:
+        pair = {
+            pair_constraint.normalized_employee_a_id,
+            pair_constraint.normalized_employee_b_id,
+        }
+        if employee_id in pair and pair.intersection(assigned_employee_ids):
+            blocking_errors.append(
+                _field_error(
+                    "employee_id",
+                    "PAIR_CONSTRAINT_CONFLICT",
+                    "Employee is blocked with another assignment in this slot.",
+                )
+            )
+            return
+
+
+def _field_error(field: str, code: str, message: str) -> FieldErrorResponse:
+    return FieldErrorResponse(field=field, code=code, message=message)
+
+
 def _build_snapshot_payload(
     *,
     organization_id: str,
@@ -1620,6 +2071,14 @@ def _build_snapshot_payload(
                 PairConstraint.organization_id == organization_id
             )
         ).scalars()
+    )
+    generated_shift_slots, generated_schedule_requirements = (
+        _generated_snapshot_artifacts(
+            period_start=request.period_start,
+            period_end=request.period_end,
+            shift_types=shift_types,
+            shift_requirements=shift_requirements,
+        )
     )
     return {
         "organization_id": organization_id,
@@ -1685,6 +2144,8 @@ def _build_snapshot_payload(
             ],
             key=lambda item: str(item["id"]),
         ),
+        "generated_shift_slots": generated_shift_slots,
+        "generated_schedule_requirements": generated_schedule_requirements,
         "unavailabilities": sorted(
             [
                 {

@@ -296,7 +296,26 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260624_0008"
+    assert version == "20260624_0009"
+
+
+def test_postgresql_rls_migration_defines_tenant_policies():
+    migration = Path("alembic/versions/20260624_0009_m1_postgresql_rls.py")
+
+    content = migration.read_text(encoding="utf-8")
+
+    assert "ENABLE ROW LEVEL SECURITY" in content
+    assert "FORCE ROW LEVEL SECURITY" in content
+    assert "current_setting(" in content
+    assert "app.current_organization_id" in content
+    for table_name in (
+        "employees",
+        "schedule_runs",
+        "assignments",
+        "schedule_issues",
+        "relaxation_proposals",
+    ):
+        assert f'"{table_name}"' in content
 
 
 def _upgrade_head(db_path: Path) -> None:
