@@ -35,3 +35,7 @@
 ## 9. 재계산은 locked manual assignment를 solver 결과에 병합
 
 재계산 artifact 교체 시 기존 `source=manual`, `locked_by_user=true` assignment를 먼저 읽어 같은 slot/role 또는 slot/employee solver assignment를 대체합니다. 이 방식은 solver 모델을 즉시 크게 바꾸지 않고도 사용자 수동 잠금을 보존합니다.
+
+## 10. 100명/31일은 현재 solver 기준 병목 없음
+
+deterministic `num_search_workers=1` 경로에서 100명/31일 fixture가 약 0.054초에 해결됐습니다. 현재 단계에서는 fast mode를 추가하지 않고, 성능 회귀 테스트와 baseline 문서화로 hardening 기준을 고정합니다.

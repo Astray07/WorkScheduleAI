@@ -20,9 +20,11 @@ Redis worker 분리 구현을 커밋했고, Phase 2의 첫 단위로 proposal �
 - `audit_logs` table/model/migration을 추가했습니다.
 - `POST /organizations/{organization_id}/schedule-runs/{schedule_run_id}/manual-edits`가 manual Assignment를 저장하고 audit row를 남깁니다.
 - 재계산 시 locked manual Assignment가 solver 결과를 대체해 유지됩니다.
+- `src/work_schedule_ai/solver/large_cases.py`에 100명/31일 deterministic fixture generator를 추가했습니다.
+- `tests/solver/test_large_schedule_performance.py`가 100명/31일 solver runtime을 10초 미만으로 회귀 검증합니다.
+- 현재 측정 runtime은 약 0.0543초이며 병목은 확인되지 않았습니다.
 
 ## 다음 작업
 
-1. Phase 3 frontend build와 diff check를 실행합니다.
-2. 수동 편집 저장/감사 이력 변경을 커밋합니다.
-3. Phase 4 100명/31일 성능 hardening을 시작합니다.
+1. Phase 4 full 검증과 커밋을 진행합니다.
+2. Phase 5 운영 모니터링을 시작합니다.

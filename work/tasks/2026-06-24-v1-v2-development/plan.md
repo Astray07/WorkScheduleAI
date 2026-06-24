@@ -39,11 +39,11 @@
 
 ## Phase 4: 100 Employees / 31 Days Performance Hardening
 
-- [ ] 100명/31일 fixture generator와 deterministic benchmark를 추가합니다.
-- [ ] 현재 solver runtime, artifact row count, DB write count를 baseline으로 기록합니다.
-- [ ] 병목이 확인된 부분만 최적화합니다.
-- [ ] 재현성 우선 모드와 빠른 생성 모드의 solver parameter 차이를 명시합니다.
-- [ ] 성능 기준과 남은 리스크를 문서화합니다.
+- [x] 100명/31일 fixture generator와 deterministic benchmark를 추가합니다.
+- [x] 현재 solver runtime, artifact row count, DB write count를 baseline으로 기록합니다.
+- [x] 병목이 확인된 부분만 최적화합니다.
+- [x] 재현성 우선 모드와 빠른 생성 모드의 solver parameter 차이를 명시합니다.
+- [x] 성능 기준과 남은 리스크를 문서화합니다.
 
 ## Phase 5: Operational Monitoring
 
