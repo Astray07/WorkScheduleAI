@@ -1,0 +1,15 @@
+.git/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.sqlite3
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+frontend/dist/
+frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
+htmlcov/
+work/

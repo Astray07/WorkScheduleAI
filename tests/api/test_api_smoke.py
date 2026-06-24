@@ -12,6 +12,24 @@ def test_health_endpoint_returns_ok():
     assert response.json() == {"status": "ok"}
 
 
+def test_cors_allows_configured_frontend_origin(monkeypatch):
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://frontend.example")
+    client = TestClient(create_app())
+
+    response = client.options(
+        "/health",
+        headers={
+            "Origin": "https://frontend.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == (
+        "https://frontend.example"
+    )
+
+
 def test_m0_contract_summary_reports_no_missing_contract_items():
     client = TestClient(create_app())
 
@@ -28,4 +46,3 @@ def test_m0_contract_summary_reports_no_missing_contract_items():
         "p0-result-before-relaxation.json",
         "p0-schedule-run-running.json",
     ]
-
