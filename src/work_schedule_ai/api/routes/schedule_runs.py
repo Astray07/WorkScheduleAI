@@ -49,8 +49,8 @@ from work_schedule_ai.solver.models import (
 from work_schedule_ai.solver.ortools_solver import solve_schedule
 from work_schedule_ai.worker.schedule_worker import (
     cancel_schedule_run as worker_cancel_schedule_run,
-    execute_schedule_run,
 )
+from work_schedule_ai.worker.queue import enqueue_schedule_run
 
 
 router = APIRouter(prefix="/organizations", tags=["schedule-runs"])
@@ -333,7 +333,8 @@ def create_schedule_run(
     )
     db_session.add_all([run, snapshot])
     db_session.flush()
-    execute_schedule_run(db_session, run.id, executor=_execute_schedule_run_artifacts)
+    db_session.commit()
+    enqueue_schedule_run(run.id)
 
     return _schedule_run_response(run, db_session)
 
@@ -814,12 +815,7 @@ def _schedule_run_response(
         current_attempt_no=run.current_attempt_no,
         recalculation_count=run.recalculation_count,
         input_snapshot_hash=run.input_snapshot_hash,
-        progress=ScheduleRunProgress(
-            phase="completed",
-            message="Schedule result is ready.",
-            started_at=run.started_at,
-            timeout_seconds=run.timeout_seconds,
-        ),
+        progress=_schedule_run_progress(run),
         score_summary=artifacts.score_summary,
         issues=artifacts.issues,
         proposals=artifacts.proposals,
@@ -843,7 +839,62 @@ def _result_artifacts_for_run(
     stored = _load_persisted_artifacts(run, db_session)
     if stored is not None:
         return stored
+    if run.status in {"queued", "running"}:
+        return _empty_result_artifacts()
     return _mock_result_artifacts(run, db_session)
+
+
+def _schedule_run_progress(run: ScheduleRun) -> ScheduleRunProgress:
+    if run.status == "queued":
+        return ScheduleRunProgress(
+            phase="queued",
+            message="ScheduleRun is queued for worker processing.",
+            started_at=run.started_at,
+            timeout_seconds=run.timeout_seconds,
+        )
+    if run.status == "running":
+        return ScheduleRunProgress(
+            phase="running",
+            message="ScheduleRun is being processed by the worker.",
+            started_at=run.started_at,
+            timeout_seconds=run.timeout_seconds,
+        )
+    if run.status == "canceled":
+        return ScheduleRunProgress(
+            phase="canceled",
+            message="ScheduleRun was canceled.",
+            started_at=run.started_at,
+            timeout_seconds=run.timeout_seconds,
+        )
+    if run.status == "failed":
+        return ScheduleRunProgress(
+            phase="failed",
+            message="ScheduleRun failed during worker processing.",
+            started_at=run.started_at,
+            timeout_seconds=run.timeout_seconds,
+        )
+    return ScheduleRunProgress(
+        phase="completed",
+        message="Schedule result is ready.",
+        started_at=run.started_at,
+        timeout_seconds=run.timeout_seconds,
+    )
+
+
+def _empty_result_artifacts() -> _MockArtifacts:
+    return _MockArtifacts(
+        slots=[],
+        requirements=[],
+        assignments=[],
+        issues=[],
+        proposals=[],
+        score_summary=ScoreSummary(
+            hard=0,
+            approvable=0,
+            soft=0,
+            severity_label="none",
+        ),
+    )
 
 
 def _replace_persisted_artifacts(

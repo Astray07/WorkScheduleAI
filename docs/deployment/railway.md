@@ -48,12 +48,12 @@ Healthcheck:
 Required variables:
 
 - `DATABASE_URL`: Railway PostgreSQL internal connection URL
+- `REDIS_URL`: Railway Redis internal connection URL used to enqueue ScheduleRun jobs
 - `CORS_ALLOW_ORIGINS`: deployed frontend origin, comma-separated for multiple origins
 - `APP_ENV`: `production`
 
 Optional variables:
 
-- `REDIS_URL`: future async worker queue
 - `LLM_PROVIDER`: future provider selector
 - `LLM_API_KEY`: future provider key; not required for fallback mode
 
@@ -83,19 +83,21 @@ After the frontend domain is issued, set the same origin in the API service `COR
 
 ### Worker service
 
-1차 릴리즈 코드에는 ScheduleRun in-process execution path가 있습니다. Railway에는 worker service를 별도로 만들 수 있도록 준비하되, Redis queue worker 완성은 후속 hardening으로 둡니다.
+ScheduleRun solver execution runs outside the API request path. Create a separate Railway worker service from the same repository and override the start command.
 
-Recommended later start command:
+Start:
 
 ```powershell
 python -m work_schedule_ai.worker.queue_worker
 ```
 
-Required future variables:
+Required variables:
 
 - `DATABASE_URL`
 - `REDIS_URL`
 - `APP_ENV`
+
+The API service creates `ScheduleRun` rows and enqueues run ids into Redis. The worker service consumes those ids, opens its own database session, runs the OR-Tools artifact executor, and transitions the run from `queued` to a terminal state.
 
 ## Database
 

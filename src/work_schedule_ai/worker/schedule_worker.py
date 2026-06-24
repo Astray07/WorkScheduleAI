@@ -1,11 +1,14 @@
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.db.models import ScheduleRun, utc_now
+from work_schedule_ai.worker.queue import ScheduleRunQueue
 
 ScheduleRunExecutor = Callable[[Session, ScheduleRun], None]
+ScheduleRunSessionFactory = Callable[[], AbstractContextManager[Session]]
 
 
 def execute_schedule_run(
@@ -69,6 +72,26 @@ def cancel_schedule_run(
     run.updated_at = now
     db_session.commit()
     return run
+
+
+def process_next_schedule_run(
+    *,
+    queue: ScheduleRunQueue,
+    db_session_factory: ScheduleRunSessionFactory,
+    executor: ScheduleRunExecutor | None = None,
+    dequeue_timeout_seconds: int = 5,
+) -> bool:
+    job = queue.dequeue(timeout_seconds=dequeue_timeout_seconds)
+    if job is None:
+        return False
+
+    with db_session_factory() as db_session:
+        execute_schedule_run(
+            db_session,
+            job.schedule_run_id,
+            executor=executor,
+        )
+    return True
 
 
 def _get_schedule_run(

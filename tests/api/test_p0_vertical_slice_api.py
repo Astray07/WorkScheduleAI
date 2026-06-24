@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from contextlib import nullcontext
 from io import BytesIO
 import zipfile
 
@@ -10,7 +11,14 @@ from sqlalchemy.pool import StaticPool
 
 from work_schedule_ai.api.app import create_app
 from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api.routes import schedule_runs as schedule_runs_module
 from work_schedule_ai.db.models import Base
+from work_schedule_ai.worker.queue import (
+    InMemoryScheduleRunQueue,
+    get_schedule_run_queue,
+    set_schedule_run_queue,
+)
+from work_schedule_ai.worker.schedule_worker import process_next_schedule_run
 
 
 def test_p0_vertical_slice_recalculates_publishes_and_downloads_excel(
@@ -110,8 +118,13 @@ def test_p0_vertical_slice_recalculates_publishes_and_downloads_excel(
         },
     )
     assert run_response.status_code == 202
-    assert run_response.json()["solver_status"].startswith("cp_sat_")
+    assert run_response.json()["status"] == "queued"
     run_id = run_response.json()["id"]
+    _process_next_schedule_run(client)
+    processed_run_response = client.get(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}"
+    )
+    assert processed_run_response.json()["solver_status"].startswith("cp_sat_")
 
     initial_result_response = client.get(
         f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
@@ -217,8 +230,20 @@ def db_session() -> Generator[Session, None, None]:
 
 
 @pytest.fixture
-def client(db_session: Session) -> Generator[TestClient, None, None]:
+def schedule_queue() -> Generator[InMemoryScheduleRunQueue, None, None]:
+    queue = InMemoryScheduleRunQueue()
+    set_schedule_run_queue(queue)
+    yield queue
+    set_schedule_run_queue(None)
+
+
+@pytest.fixture
+def client(
+    db_session: Session,
+    schedule_queue: InMemoryScheduleRunQueue,
+) -> Generator[TestClient, None, None]:
     app = create_app()
+    app.state.test_db_session = db_session
 
     def override_session() -> Generator[Session, None, None]:
         yield db_session
@@ -227,3 +252,13 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+def _process_next_schedule_run(client: TestClient) -> None:
+    processed = process_next_schedule_run(
+        queue=get_schedule_run_queue(),
+        db_session_factory=lambda: nullcontext(client.app.state.test_db_session),
+        executor=schedule_runs_module._execute_schedule_run_artifacts,
+        dequeue_timeout_seconds=0,
+    )
+    assert processed is True
