@@ -13,6 +13,7 @@ from work_schedule_ai.db.models import (
     Employee,
     EmployeeRole,
     Organization,
+    OverrideApproval,
     Role,
     ScheduleInputSnapshot,
     ScheduleRun,
@@ -173,6 +174,113 @@ def test_get_schedule_run_result_returns_one_week_mock_grid(client: TestClient):
     assert payload["proposals"][0]["status"] == "suggested"
     assert payload["score_summary"]["soft"] == 100
     assert payload["llm_explanation"]["source"] == "server_template"
+
+
+def test_approve_relaxation_proposal_records_override_without_recalculation(
+    client: TestClient,
+    db_session: Session,
+):
+    create_response = client.post(
+        "/organizations/org_1/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
+    )
+    run_id = create_response.json()["id"]
+
+    response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/relaxation-proposals/proposal_mock_time_off_1/approve",
+        json={
+            "reason": "관리자 승인",
+            "notification_required": True,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["id"].startswith("override_")
+    assert payload["schedule_run_id"] == run_id
+    assert payload["relaxation_proposal_id"] == "proposal_mock_time_off_1"
+    assert payload["type"] == "approve_time_off_override"
+    assert payload["notification_required"] is True
+    assert db_session.query(OverrideApproval).count() == 1
+    run = db_session.query(ScheduleRun).filter_by(id=run_id).one()
+    assert run.recalculation_count == 0
+
+
+def test_approved_relaxation_proposal_is_marked_approved_in_result(
+    client: TestClient,
+):
+    create_response = client.post(
+        "/organizations/org_1/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
+    )
+    run_id = create_response.json()["id"]
+    client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/relaxation-proposals/proposal_mock_time_off_1/approve",
+        json={
+            "reason": "관리자 승인",
+            "notification_required": True,
+        },
+    )
+
+    response = client.get(f"/organizations/org_1/schedule-runs/{run_id}/result")
+
+    assert response.status_code == 200
+    assert response.json()["proposals"][0]["status"] == "approved"
+
+
+def test_approve_relaxation_proposal_rejects_duplicate_approval(
+    client: TestClient,
+    db_session: Session,
+):
+    create_response = client.post(
+        "/organizations/org_1/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
+    )
+    run_id = create_response.json()["id"]
+    url = (
+        f"/organizations/org_1/schedule-runs/{run_id}"
+        "/relaxation-proposals/proposal_mock_time_off_1/approve"
+    )
+    first_response = client.post(
+        url,
+        json={
+            "reason": "관리자 승인",
+            "notification_required": True,
+        },
+    )
+    second_response = client.post(
+        url,
+        json={
+            "reason": "중복 승인",
+            "notification_required": True,
+        },
+    )
+
+    assert first_response.status_code == 201
+    assert second_response.status_code == 409
+    assert db_session.query(OverrideApproval).count() == 1
+
+
+def test_approve_relaxation_proposal_rejects_unknown_proposal(
+    client: TestClient,
+    db_session: Session,
+):
+    create_response = client.post(
+        "/organizations/org_1/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
+    )
+    run_id = create_response.json()["id"]
+
+    response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/relaxation-proposals/proposal_missing/approve",
+        json={
+            "reason": "관리자 승인",
+            "notification_required": True,
+        },
+    )
+
+    assert response.status_code == 404
+    assert db_session.query(OverrideApproval).count() == 0
 
 
 def _seed_p0_organization(session: Session) -> None:

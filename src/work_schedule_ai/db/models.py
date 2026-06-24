@@ -419,6 +419,45 @@ class ScheduleInputSnapshot(Base):
     )
 
 
+class OverrideApproval(Base):
+    __tablename__ = "override_approvals"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "schedule_run_id",
+            "relaxation_proposal_id",
+            name="uq_override_approvals_run_proposal",
+        ),
+        CheckConstraint(
+            "type IN ('approve_time_off_override', 'approve_pair_constraint_override', 'approve_min_rest_override', 'keep_unfilled_requirement', 'reduce_role_requirement', 'mark_manual_review')",
+            name="ck_override_approvals_type",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    schedule_run_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("schedule_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    relaxation_proposal_id: Mapped[str] = mapped_column(Text, nullable=False)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    notification_required: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
 def normalize_pair_employee_ids(employee_a_id: str, employee_b_id: str) -> tuple[str, str]:
     if employee_a_id == employee_b_id:
         raise ValueError("Pair constraint cannot reference the same employee twice")
