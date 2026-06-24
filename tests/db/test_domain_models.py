@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
@@ -11,6 +13,7 @@ from work_schedule_ai.db.models import (
     Organization,
     PairConstraint,
     Role,
+    Unavailability,
     User,
     normalize_pair_employee_ids,
 )
@@ -230,6 +233,52 @@ def test_membership_is_unique_per_organization_user(session):
         session.commit()
 
 
+def test_unavailability_rejects_unknown_type(session):
+    org, employee = _organization_with_employee()
+    unavailability = Unavailability(
+        id="unavailability_1",
+        organization_id="org_1",
+        employee_id="emp_1",
+        type="sick_leave",
+        starts_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        ends_at=datetime(2026, 7, 2, tzinfo=timezone.utc),
+        override_allowed=False,
+    )
+    session.add(org)
+    session.commit()
+
+    session.add(employee)
+    session.commit()
+
+    session.add(unavailability)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_unavailability_rejects_non_positive_time_range(session):
+    org, employee = _organization_with_employee()
+    unavailability = Unavailability(
+        id="unavailability_1",
+        organization_id="org_1",
+        employee_id="emp_1",
+        type="vacation",
+        starts_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        ends_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        override_allowed=False,
+    )
+    session.add(org)
+    session.commit()
+
+    session.add(employee)
+    session.commit()
+
+    session.add(unavailability)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
 def _organization_with_two_employees():
     org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
     employee_a = Employee(
@@ -245,3 +294,14 @@ def _organization_with_two_employees():
         name="Lee",
     )
     return org, employee_a, employee_b
+
+
+def _organization_with_employee():
+    org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
+    employee = Employee(
+        id="emp_1",
+        organization_id="org_1",
+        employee_code="E001",
+        name="Kim",
+    )
+    return org, employee

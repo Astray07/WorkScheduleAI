@@ -97,6 +97,50 @@ class Employee(Base):
     )
 
 
+class Unavailability(Base):
+    __tablename__ = "unavailabilities"
+    __table_args__ = (
+        CheckConstraint(
+            "type IN ('vacation', 'business_trip', 'training', 'personal')",
+            name="ck_unavailabilities_type",
+        ),
+        CheckConstraint(
+            "starts_at < ends_at",
+            name="ck_unavailabilities_time_order",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    employee_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    ends_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    override_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
 class Role(Base):
     __tablename__ = "roles"
     __table_args__ = (
@@ -256,4 +300,3 @@ def normalize_pair_employee_ids(employee_a_id: str, employee_b_id: str) -> tuple
     if employee_a_id == employee_b_id:
         raise ValueError("Pair constraint cannot reference the same employee twice")
     return tuple(sorted((employee_a_id, employee_b_id)))
-

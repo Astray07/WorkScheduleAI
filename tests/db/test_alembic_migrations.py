@@ -14,6 +14,7 @@ EXPECTED_TABLES = {
     "roles",
     "employee_roles",
     "pair_constraints",
+    "unavailabilities",
 }
 
 
@@ -51,6 +52,9 @@ def test_alembic_upgrade_head_creates_named_constraints(tmp_path):
     pair_check_names = {
         item["name"] for item in inspector.get_check_constraints("pair_constraints")
     }
+    unavailability_check_names = {
+        item["name"] for item in inspector.get_check_constraints("unavailabilities")
+    }
 
     assert "uq_employees_organization_employee_code" in employee_unique_names
     assert "uq_roles_organization_name" in role_unique_names
@@ -60,6 +64,24 @@ def test_alembic_upgrade_head_creates_named_constraints(tmp_path):
     )
     assert "uq_pair_constraints_normalized_pair_type" in pair_unique_names
     assert "ck_pair_constraints_normalized_order" in pair_check_names
+    assert "ck_unavailabilities_type" in unavailability_check_names
+    assert "ck_unavailabilities_time_order" in unavailability_check_names
+
+
+def test_alembic_upgrade_head_creates_unavailability_indexes(tmp_path):
+    db_path = tmp_path / "migration-test.sqlite"
+
+    _upgrade_head(db_path)
+
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    inspector = inspect(engine)
+    unavailability_index_names = {
+        item["name"] for item in inspector.get_indexes("unavailabilities")
+    }
+
+    assert "ix_unavailabilities_organization_id" in unavailability_index_names
+    assert "ix_unavailabilities_employee_id" in unavailability_index_names
+    assert "ix_unavailabilities_employee_time" in unavailability_index_names
 
 
 def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
@@ -73,11 +95,10 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260624_0001"
+    assert version == "20260624_0002"
 
 
 def _upgrade_head(db_path: Path) -> None:
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
     command.upgrade(config, "head")
-
