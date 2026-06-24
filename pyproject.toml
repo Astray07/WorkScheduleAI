@@ -7,7 +7,7 @@ name = "work-schedule-ai"
 version = "0.1.0"
 description = "WorkScheduleAI backend scaffold and contract tests"
 requires-python = ">=3.13"
-dependencies = ["fastapi>=0.128,<1", "SQLAlchemy>=2.0,<3"]
+dependencies = ["fastapi>=0.128,<1", "ortools>=9.14,<10", "SQLAlchemy>=2.0,<3"]
 
 [project.optional-dependencies]
 dev = ["alembic>=1.16,<2", "httpx>=0.28", "pytest>=8"]
