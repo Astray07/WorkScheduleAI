@@ -15,6 +15,7 @@ from work_schedule_ai.db.models import (
     Organization,
     OverrideApproval,
     Role,
+    ScheduleRecalculationRequest,
     ScheduleInputSnapshot,
     ScheduleRun,
 )
@@ -281,6 +282,132 @@ def test_approve_relaxation_proposal_rejects_unknown_proposal(
 
     assert response.status_code == 404
     assert db_session.query(OverrideApproval).count() == 0
+
+
+def test_recalculate_with_approved_override_increments_recalculation_count_only(
+    client: TestClient,
+    db_session: Session,
+):
+    run_id = _create_run_and_approve_mock_proposal(client)
+
+    response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/recalculate",
+        json={"reason": "승인된 완화안을 반영합니다."},
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["id"] == run_id
+    assert payload["recalculation_count"] == 1
+    assert payload["current_attempt_no"] == 1
+    assert db_session.query(ScheduleRecalculationRequest).count() == 1
+    run = db_session.query(ScheduleRun).filter_by(id=run_id).one()
+    assert run.recalculation_count == 1
+    assert run.current_attempt_no == 1
+
+
+def test_recalculate_resolves_mock_unfilled_issue_after_approval(client: TestClient):
+    run_id = _create_run_and_approve_mock_proposal(client)
+    client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/recalculate",
+        json={"reason": "승인된 완화안을 반영합니다."},
+    )
+
+    response = client.get(f"/organizations/org_1/schedule-runs/{run_id}/result")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["recalculation_count"] == 1
+    assert payload["current_attempt_no"] == 1
+    assert payload["issues"] == []
+    assert payload["proposals"] == []
+    assert len(payload["assignments"]) == 14
+
+
+def test_recalculate_without_approved_override_returns_conflict(
+    client: TestClient,
+    db_session: Session,
+):
+    create_response = client.post(
+        "/organizations/org_1/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
+    )
+    run_id = create_response.json()["id"]
+
+    response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/recalculate",
+        json={"reason": "승인 없이 재계산합니다."},
+    )
+
+    assert response.status_code == 409
+    run = db_session.query(ScheduleRun).filter_by(id=run_id).one()
+    assert run.recalculation_count == 0
+    assert db_session.query(ScheduleRecalculationRequest).count() == 0
+
+
+def test_recalculate_is_idempotent_with_same_key(
+    client: TestClient,
+    db_session: Session,
+):
+    run_id = _create_run_and_approve_mock_proposal(client)
+    headers = {"Idempotency-Key": "recalculate-key-1"}
+
+    first_response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/recalculate",
+        headers=headers,
+        json={"reason": "승인된 완화안을 반영합니다."},
+    )
+    second_response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/recalculate",
+        headers=headers,
+        json={"reason": "중복 호출입니다."},
+    )
+
+    assert first_response.status_code == 202
+    assert second_response.status_code == 202
+    assert first_response.json()["recalculation_count"] == 1
+    assert second_response.json()["recalculation_count"] == 1
+    assert db_session.query(ScheduleRecalculationRequest).count() == 1
+
+
+def test_recalculate_rejects_fourth_recalculation(
+    client: TestClient,
+    db_session: Session,
+):
+    run_id = _create_run_and_approve_mock_proposal(client)
+    for round_no in range(1, 4):
+        response = client.post(
+            f"/organizations/org_1/schedule-runs/{run_id}/recalculate",
+            json={"reason": f"재계산 {round_no}"},
+        )
+        assert response.status_code == 202
+
+    response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/recalculate",
+        json={"reason": "4회차 재계산"},
+    )
+
+    assert response.status_code == 409
+    run = db_session.query(ScheduleRun).filter_by(id=run_id).one()
+    assert run.recalculation_count == 3
+    assert db_session.query(ScheduleRecalculationRequest).count() == 3
+
+
+def _create_run_and_approve_mock_proposal(client: TestClient) -> str:
+    create_response = client.post(
+        "/organizations/org_1/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
+    )
+    run_id = create_response.json()["id"]
+    approval_response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/relaxation-proposals/proposal_mock_time_off_1/approve",
+        json={
+            "reason": "관리자 승인",
+            "notification_required": True,
+        },
+    )
+    assert approval_response.status_code == 201
+    return run_id
 
 
 def _seed_p0_organization(session: Session) -> None:
