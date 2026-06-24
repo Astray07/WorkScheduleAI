@@ -15,6 +15,7 @@ from work_schedule_ai.api.dependencies import get_db_session
 from work_schedule_ai.db.models import (
     Employee,
     Organization,
+    OverrideApproval,
     Role,
     ScheduleInputSnapshot,
     ScheduleRun,
@@ -51,6 +52,20 @@ class ScheduleRunCreateRequest(BaseModel):
         if day_count > 31:
             raise ValueError("ScheduleRun period cannot exceed 31 days")
         return self
+
+
+class ApproveRelaxationProposalRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+    notification_required: bool
+
+
+class OverrideApprovalResponse(BaseModel):
+    id: str
+    schedule_run_id: str
+    relaxation_proposal_id: str
+    type: str
+    notification_required: bool
+    created_at: datetime
 
 
 class ScheduleRunProgress(BaseModel):
@@ -286,6 +301,70 @@ def get_schedule_run_result(
     )
 
 
+@router.post(
+    "/{organization_id}/schedule-runs/{schedule_run_id}/relaxation-proposals/{proposal_id}/approve",
+    response_model=OverrideApprovalResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def approve_relaxation_proposal(
+    organization_id: str,
+    schedule_run_id: str,
+    proposal_id: str,
+    request: ApproveRelaxationProposalRequest,
+    db_session: Session = Depends(get_db_session),
+) -> OverrideApprovalResponse:
+    run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
+    artifacts = _mock_result_artifacts(run, db_session)
+    proposal = next(
+        (candidate for candidate in artifacts.proposals if candidate.id == proposal_id),
+        None,
+    )
+    if proposal is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="RelaxationProposal not found",
+        )
+
+    existing_approval = db_session.execute(
+        select(OverrideApproval).where(
+            OverrideApproval.organization_id == organization_id,
+            OverrideApproval.schedule_run_id == schedule_run_id,
+            OverrideApproval.relaxation_proposal_id == proposal_id,
+        )
+    ).scalar_one_or_none()
+    if existing_approval is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "RELAXATION_PROPOSAL_ALREADY_APPROVED",
+                "message": "Relaxation proposal is already approved.",
+                "field": "proposal_id",
+            },
+        )
+
+    approval = OverrideApproval(
+        id=_new_id("override"),
+        organization_id=organization_id,
+        schedule_run_id=schedule_run_id,
+        relaxation_proposal_id=proposal_id,
+        type=proposal.type,
+        notification_required=request.notification_required,
+        reason=request.reason,
+        created_at=utc_now(),
+    )
+    db_session.add(approval)
+    db_session.commit()
+
+    return OverrideApprovalResponse(
+        id=approval.id,
+        schedule_run_id=approval.schedule_run_id,
+        relaxation_proposal_id=approval.relaxation_proposal_id,
+        type=approval.type,
+        notification_required=approval.notification_required,
+        created_at=approval.created_at,
+    )
+
+
 class _MockArtifacts(BaseModel):
     slots: list[ShiftSlotResponse]
     requirements: list[ShiftRequirementResponse]
@@ -402,7 +481,15 @@ def _mock_result_artifacts(
             assignment_no += 1
 
     issues = _mock_issues(run, roles, slots, skipped_unfilled)
-    proposals = _mock_proposals(run, issues)
+    approved_proposal_ids = set(
+        db_session.execute(
+            select(OverrideApproval.relaxation_proposal_id).where(
+                OverrideApproval.organization_id == run.organization_id,
+                OverrideApproval.schedule_run_id == run.id,
+            )
+        ).scalars()
+    )
+    proposals = _mock_proposals(run, issues, approved_proposal_ids)
     score_summary = ScoreSummary(
         hard=0,
         approvable=0,
@@ -465,12 +552,14 @@ def _mock_issues(
 def _mock_proposals(
     run: ScheduleRun,
     issues: list[ScheduleIssueResponse],
+    approved_proposal_ids: set[str],
 ) -> list[RelaxationProposalResponse]:
     if not issues:
         return []
+    proposal_id = "proposal_mock_time_off_1"
     return [
         RelaxationProposalResponse(
-            id="proposal_mock_time_off_1",
+            id=proposal_id,
             group_id=None,
             requires_proposal_ids=[],
             type="approve_time_off_override",
@@ -481,7 +570,7 @@ def _mock_proposals(
                 resolved_issue_ids=[issues[0].id],
                 new_warning_count=1,
             ),
-            status="suggested",
+            status="approved" if proposal_id in approved_proposal_ids else "suggested",
             attempt_no=run.current_attempt_no,
             llm_explanation=_llm_explanation(),
         )

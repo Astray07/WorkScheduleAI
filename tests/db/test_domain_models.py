@@ -11,6 +11,7 @@ from work_schedule_ai.db.models import (
     EmployeeRole,
     Membership,
     Organization,
+    OverrideApproval,
     PairConstraint,
     Role,
     ScheduleRun,
@@ -376,6 +377,42 @@ def test_schedule_input_snapshot_is_unique_per_schedule_run(session):
         session.commit()
 
 
+def test_override_approval_is_unique_per_schedule_run_proposal(session):
+    org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
+    run = _schedule_run()
+    approval = OverrideApproval(
+        id="override_1",
+        organization_id="org_1",
+        schedule_run_id="run_1",
+        relaxation_proposal_id="proposal_1",
+        type="approve_time_off_override",
+        notification_required=True,
+        reason="Approved for P0 test",
+    )
+    duplicate = OverrideApproval(
+        id="override_2",
+        organization_id="org_1",
+        schedule_run_id="run_1",
+        relaxation_proposal_id="proposal_1",
+        type="approve_time_off_override",
+        notification_required=False,
+        reason="Duplicate",
+    )
+    session.add(org)
+    session.commit()
+
+    session.add(run)
+    session.commit()
+
+    session.add(approval)
+    session.commit()
+
+    session.add(duplicate)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
 def _organization_with_two_employees():
     org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
     employee_a = Employee(
@@ -402,3 +439,20 @@ def _organization_with_employee():
         name="Kim",
     )
     return org, employee
+
+
+def _schedule_run():
+    return ScheduleRun(
+        id="run_1",
+        organization_id="org_1",
+        period_start=date(2026, 7, 1),
+        period_end=date(2026, 7, 7),
+        template="one_shift_per_day",
+        deterministic_mode=True,
+        timeout_seconds=30,
+        status="succeeded",
+        solver_status="not_started",
+        solution_quality="feasible_not_proven_optimal",
+        current_attempt_no=1,
+        recalculation_count=0,
+    )
