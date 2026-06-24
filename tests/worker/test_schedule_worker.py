@@ -37,6 +37,23 @@ def test_execute_schedule_run_transitions_queued_to_succeeded(session: Session):
     assert result.finished_at is not None
 
 
+def test_execute_schedule_run_uses_executor_to_set_solver_status(session: Session):
+    run = _queued_run()
+    session.add(run)
+    session.commit()
+
+    def executor(db_session: Session, schedule_run: ScheduleRun) -> None:
+        schedule_run.solver_status = "cp_sat_optimal"
+        schedule_run.solution_quality = "optimal"
+        db_session.flush()
+
+    result = execute_schedule_run(session, "run_1", executor=executor)
+
+    assert result.status == "succeeded"
+    assert result.solver_status == "cp_sat_optimal"
+    assert result.solution_quality == "optimal"
+
+
 def test_cancel_schedule_run_marks_queued_run_canceled(session: Session):
     run = _queued_run()
     session.add(run)

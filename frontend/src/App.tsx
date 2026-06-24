@@ -134,14 +134,30 @@ export function App() {
           body: {
             mode: "upsert",
             rows: [
-              employeeRow(1, "E001", "Kim"),
-              employeeRow(2, "E002", "Lee"),
-              employeeRow(3, "E003", "Park"),
-              employeeRow(4, "E004", "Choi"),
+              employeeRow(1, "E001", "Kim", ["사수"]),
+              employeeRow(2, "E002", "Lee", ["부사수"]),
+              employeeRow(3, "E003", "Park", ["사수"]),
+              employeeRow(4, "E004", "Choi", ["사수"]),
             ],
           },
         },
       );
+      const seniorRole = organization.default_roles.find((role) => role.name === "사수");
+      const juniorRole = organization.default_roles.find((role) => role.name === "부사수");
+      if (!seniorRole || !juniorRole) throw new Error("Default roles are missing.");
+      await api(`/organizations/${organization.id}/shift-types`, {
+        method: "POST",
+        body: {
+          name: "주간 근무",
+          local_start_time: "09:00",
+          local_end_time: "18:00",
+          timezone: "Asia/Seoul",
+          requirements: [
+            { role_id: seniorRole.id, required_count: 1 },
+            { role_id: juniorRole.id, required_count: 1 },
+          ],
+        },
+      });
       const employeesByCode = new Map(
         employeePayload.employees.map((employee) => [employee.employee_code, employee]),
       );
@@ -473,12 +489,12 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function employeeRow(row_no: number, employee_code: string, name: string) {
+function employeeRow(row_no: number, employee_code: string, name: string, role_names: string[]) {
   return {
     row_no,
     employee_code,
     name,
-    role_names: ["사수", "부사수"],
+    role_names,
     max_shifts_per_week: 5,
   };
 }

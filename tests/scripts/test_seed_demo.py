@@ -8,9 +8,10 @@ from sqlalchemy.pool import StaticPool
 from scripts.seed_demo import DEMO_ORGANIZATION_ID, DEMO_RUN_ID, seed_demo
 from work_schedule_ai.api.routes.schedule_runs import (
     _artifact_hashes,
-    _mock_result_artifacts,
+    _result_artifacts_for_run,
 )
 from work_schedule_ai.db.models import (
+    Assignment,
     Base,
     Employee,
     EmployeeRole,
@@ -22,6 +23,11 @@ from work_schedule_ai.db.models import (
     SchedulePublication,
     ScheduleRecalculationRequest,
     ScheduleRun,
+    ScheduleIssue,
+    ScheduleRequirement,
+    ShiftSlot,
+    ShiftRequirement,
+    ShiftType,
     Unavailability,
 )
 
@@ -35,7 +41,9 @@ def test_seed_demo_is_idempotent(db_session: Session):
     assert _count(db_session, Organization) == 1
     assert _count(db_session, Role) == 2
     assert _count(db_session, Employee) == 4
-    assert _count(db_session, EmployeeRole) == 8
+    assert _count(db_session, EmployeeRole) == 4
+    assert _count(db_session, ShiftType) == 1
+    assert _count(db_session, ShiftRequirement) == 2
     assert _count(db_session, Unavailability) == 1
     assert _count(db_session, PairConstraint) == 1
     assert _count(db_session, ScheduleRun) == 1
@@ -43,13 +51,17 @@ def test_seed_demo_is_idempotent(db_session: Session):
     assert _count(db_session, OverrideApproval) == 1
     assert _count(db_session, ScheduleRecalculationRequest) == 1
     assert _count(db_session, SchedulePublication) == 1
+    assert _count(db_session, ShiftSlot) == 7
+    assert _count(db_session, ScheduleRequirement) == 14
+    assert _count(db_session, Assignment) == 14
+    assert _count(db_session, ScheduleIssue) == 0
 
 
 def test_seed_demo_publication_hashes_match_generated_artifacts(db_session: Session):
     seed_demo(db_session)
     run = db_session.get(ScheduleRun, DEMO_RUN_ID)
     publication = db_session.execute(select(SchedulePublication)).scalar_one()
-    artifacts = _mock_result_artifacts(run, db_session)
+    artifacts = _result_artifacts_for_run(run, db_session)
     hashes = _artifact_hashes(artifacts)
 
     assert run.recalculation_count == 1

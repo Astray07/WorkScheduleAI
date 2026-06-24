@@ -18,9 +18,13 @@ from work_schedule_ai.db.models import (
     Organization,
     OverrideApproval,
     Role,
+    Assignment,
+    ScheduleIssue,
     ScheduleRecalculationRequest,
     ScheduleInputSnapshot,
+    RelaxationProposal,
     ScheduleRun,
+    ShiftSlot,
     ShiftRequirement,
     ShiftType,
 )
@@ -83,7 +87,7 @@ def test_create_schedule_run_persists_run_and_snapshot(
     assert payload["progress"]["phase"] == "completed"
     assert payload["llm_explanation"] == {
         "status": "fallback",
-        "text": "서버 템플릿으로 mock 근무표 설명을 생성했습니다.",
+            "text": "서버 템플릿으로 근무표 설명을 생성했습니다.",
         "source": "server_template",
     }
     assert db_session.query(ScheduleRun).count() == 1
@@ -111,6 +115,30 @@ def test_create_schedule_run_is_idempotent_with_same_key(
     assert second_response.json()["id"] == first_response.json()["id"]
     assert db_session.query(ScheduleRun).count() == 1
     assert db_session.query(ScheduleInputSnapshot).count() == 1
+
+
+def test_create_schedule_run_rejects_same_idempotency_key_with_different_snapshot(
+    client: TestClient,
+    db_session: Session,
+):
+    headers = {"Idempotency-Key": "schedule-run-key-2"}
+    first_response = client.post(
+        "/organizations/org_1/schedule-runs",
+        headers=headers,
+        json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
+    )
+    second_response = client.post(
+        "/organizations/org_1/schedule-runs",
+        headers=headers,
+        json={"period_start": "2026-07-08", "period_end": "2026-07-14"},
+    )
+
+    assert first_response.status_code == 202
+    assert second_response.status_code == 409
+    assert second_response.json()["detail"]["code"] == (
+        "SCHEDULE_RUN_IDEMPOTENCY_CONFLICT"
+    )
+    assert db_session.query(ScheduleRun).count() == 1
 
 
 def test_create_schedule_run_rejects_period_longer_than_31_days(
@@ -452,6 +480,12 @@ def test_schedule_run_result_uses_shift_template_solver_path(
     )
     run_id = create_response.json()["id"]
 
+    assert create_response.json()["solver_status"].startswith("cp_sat_")
+    assert db_session.query(ShiftSlot).count() == 1
+    assert db_session.query(Assignment).count() == 2
+    assert db_session.query(ScheduleIssue).count() == 0
+    assert db_session.query(RelaxationProposal).count() == 0
+
     response = client.get(f"/organizations/org_1/schedule-runs/{run_id}/result")
 
     assert response.status_code == 200
@@ -636,6 +670,36 @@ def test_download_schedule_publication_excel_returns_workbook(client: TestClient
     assert "local_date" in sheet_xml
     assert "role_name" in sheet_xml
     assert "Kim" in sheet_xml
+
+
+def test_publication_excel_uses_immutable_published_snapshot(
+    client: TestClient,
+    db_session: Session,
+):
+    run_id, result_payload = _create_recalculated_result(client)
+    publish_response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/publications",
+        json={
+            "expected_assignment_snapshot_hash": result_payload[
+                "assignment_snapshot_hash"
+            ],
+            "expected_issue_snapshot_hash": result_payload["issue_snapshot_hash"],
+        },
+    )
+    publication_id = publish_response.json()["id"]
+    employee = db_session.query(Employee).filter_by(name="Kim").one()
+    employee.name = "Changed Name"
+    db_session.commit()
+
+    response = client.get(
+        f"/organizations/org_1/schedule-publications/{publication_id}/excel"
+    )
+
+    assert response.status_code == 200
+    with zipfile.ZipFile(BytesIO(response.content)) as workbook:
+        sheet_xml = workbook.read("xl/worksheets/sheet1.xml").decode("utf-8")
+    assert "Kim" in sheet_xml
+    assert "Changed Name" not in sheet_xml
 
 
 def _create_recalculated_result(client: TestClient) -> tuple[str, dict]:

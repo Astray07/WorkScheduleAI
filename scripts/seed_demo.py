@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import SessionLocal
 from work_schedule_ai.api.routes.schedule_runs import (
+    _execute_schedule_run_artifacts,
     _artifact_hashes,
-    _mock_result_artifacts,
+    _result_artifacts_for_run,
+    _result_snapshot_payload,
 )
 from work_schedule_ai.db.models import (
     Employee,
@@ -24,6 +26,8 @@ from work_schedule_ai.db.models import (
     SchedulePublication,
     ScheduleRecalculationRequest,
     ScheduleRun,
+    ShiftRequirement,
+    ShiftType,
     Unavailability,
     utc_now,
 )
@@ -52,6 +56,7 @@ def seed_demo(db_session: Session) -> SeedSummary:
     roles = _upsert_roles(db_session, organization.id)
     employees = _upsert_employees(db_session, organization.id)
     _upsert_employee_roles(db_session, organization.id, roles, employees)
+    _upsert_shift_type(db_session, organization.id, roles)
     _upsert_unavailability(db_session, organization.id, employees["E002"].id)
     _upsert_pair_constraint(
         db_session,
@@ -71,8 +76,8 @@ def seed_demo(db_session: Session) -> SeedSummary:
     _upsert_override_approval(db_session, organization.id, run.id)
     _upsert_recalculation_request(db_session, organization.id, run.id)
     db_session.flush()
-
-    artifacts = _mock_result_artifacts(run, db_session)
+    _execute_schedule_run_artifacts(db_session, run)
+    artifacts = _result_artifacts_for_run(run, db_session)
     hashes = _artifact_hashes(artifacts)
     publication = _upsert_publication(
         db_session,
@@ -80,6 +85,11 @@ def seed_demo(db_session: Session) -> SeedSummary:
         run.id,
         hashes.assignment_snapshot_hash,
         hashes.issue_snapshot_hash,
+        result_snapshot_json=json.dumps(
+            _result_snapshot_payload(artifacts),
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
     )
     db_session.commit()
     return SeedSummary(
@@ -178,8 +188,15 @@ def _upsert_employee_roles(
     roles: dict[str, Role],
     employees: dict[str, Employee],
 ) -> None:
+    role_names_by_employee_code = {
+        "E001": ["사수"],
+        "E002": ["부사수"],
+        "E003": ["사수"],
+        "E004": ["사수"],
+    }
     for employee in employees.values():
-        for role_name, role in roles.items():
+        for role_name in role_names_by_employee_code[employee.employee_code]:
+            role = roles[role_name]
             link_id = f"employee_role_demo_{employee.employee_code}_{role.id}"
             link = db_session.get(EmployeeRole, link_id)
             if link is None:
@@ -198,6 +215,54 @@ def _upsert_employee_roles(
                 link.role_id = role.id
                 link.priority = 100
                 link.active = True
+
+
+def _upsert_shift_type(
+    db_session: Session,
+    organization_id: str,
+    roles: dict[str, Role],
+) -> None:
+    shift_type = db_session.get(ShiftType, "shift_type_demo_day")
+    if shift_type is None:
+        shift_type = ShiftType(
+            id="shift_type_demo_day",
+            organization_id=organization_id,
+            name="주간 근무",
+            local_start_time="09:00",
+            local_end_time="18:00",
+            timezone="Asia/Seoul",
+            crosses_midnight=False,
+            active=True,
+        )
+        db_session.add(shift_type)
+    else:
+        shift_type.name = "주간 근무"
+        shift_type.local_start_time = "09:00"
+        shift_type.local_end_time = "18:00"
+        shift_type.timezone = "Asia/Seoul"
+        shift_type.crosses_midnight = False
+        shift_type.active = True
+    db_session.flush()
+
+    for role_name, role in roles.items():
+        requirement_id = f"shift_requirement_demo_{role.id}"
+        requirement = db_session.get(ShiftRequirement, requirement_id)
+        if requirement is None:
+            db_session.add(
+                ShiftRequirement(
+                    id=requirement_id,
+                    organization_id=organization_id,
+                    shift_type_id=shift_type.id,
+                    role_id=role.id,
+                    required_count=1,
+                    unfilled_weight_override=None,
+                )
+            )
+        else:
+            requirement.shift_type_id = shift_type.id
+            requirement.role_id = role.id
+            requirement.required_count = 1
+            requirement.unfilled_weight_override = None
 
 
 def _upsert_unavailability(
@@ -389,6 +454,7 @@ def _upsert_publication(
     schedule_run_id: str,
     assignment_snapshot_hash: str,
     issue_snapshot_hash: str,
+    result_snapshot_json: str,
 ) -> SchedulePublication:
     now = utc_now()
     publication = db_session.get(SchedulePublication, DEMO_PUBLICATION_ID)
@@ -402,6 +468,7 @@ def _upsert_publication(
             status="published",
             assignment_snapshot_hash=assignment_snapshot_hash,
             issue_snapshot_hash=issue_snapshot_hash,
+            result_snapshot_json=result_snapshot_json,
             published_at=now,
             created_at=now,
         )
@@ -410,6 +477,7 @@ def _upsert_publication(
         publication.status = "published"
         publication.assignment_snapshot_hash = assignment_snapshot_hash
         publication.issue_snapshot_hash = issue_snapshot_hash
+        publication.result_snapshot_json = result_snapshot_json
     return publication
 
 

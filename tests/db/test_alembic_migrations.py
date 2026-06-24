@@ -22,6 +22,11 @@ EXPECTED_TABLES = {
     "schedule_publications",
     "shift_types",
     "shift_requirements",
+    "shift_slots",
+    "schedule_requirements",
+    "assignments",
+    "schedule_issues",
+    "relaxation_proposals",
 }
 
 
@@ -241,6 +246,45 @@ def test_alembic_upgrade_head_creates_shift_template_indexes(tmp_path):
     assert "ix_shift_requirements_role_id" in shift_requirement_index_names
 
 
+def test_alembic_upgrade_head_creates_schedule_result_artifact_indexes(tmp_path):
+    db_path = tmp_path / "migration-test.sqlite"
+
+    _upgrade_head(db_path)
+
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    inspector = inspect(engine)
+    shift_slot_index_names = {
+        item["name"] for item in inspector.get_indexes("shift_slots")
+    }
+    schedule_requirement_index_names = {
+        item["name"] for item in inspector.get_indexes("schedule_requirements")
+    }
+    assignment_index_names = {
+        item["name"] for item in inspector.get_indexes("assignments")
+    }
+    assignment_unique_names = {
+        item["name"] for item in inspector.get_unique_constraints("assignments")
+    }
+    issue_index_names = {
+        item["name"] for item in inspector.get_indexes("schedule_issues")
+    }
+    proposal_index_names = {
+        item["name"] for item in inspector.get_indexes("relaxation_proposals")
+    }
+
+    assert "ix_shift_slots_organization_id" in shift_slot_index_names
+    assert "ix_shift_slots_schedule_run_id" in shift_slot_index_names
+    assert "ix_schedule_requirements_schedule_run_id" in schedule_requirement_index_names
+    assert "ix_schedule_requirements_shift_slot_id" in schedule_requirement_index_names
+    assert "ix_assignments_schedule_run_id" in assignment_index_names
+    assert "ix_assignments_shift_slot_id" in assignment_index_names
+    assert "ix_assignments_employee_id" in assignment_index_names
+    assert "uq_assignments_run_slot_role_employee" in assignment_unique_names
+    assert "uq_assignments_run_slot_employee" in assignment_unique_names
+    assert "ix_schedule_issues_schedule_run_id" in issue_index_names
+    assert "ix_relaxation_proposals_schedule_run_id" in proposal_index_names
+
+
 def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
     db_path = tmp_path / "migration-test.sqlite"
 
@@ -252,7 +296,7 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260624_0007"
+    assert version == "20260624_0008"
 
 
 def _upgrade_head(db_path: Path) -> None:

@@ -499,6 +499,220 @@ class ScheduleInputSnapshot(Base):
     )
 
 
+class ShiftSlot(Base):
+    __tablename__ = "shift_slots"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    schedule_run_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("schedule_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    shift_type_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("shift_types.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    local_date: Mapped[date] = mapped_column(Date, nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    starts_at: Mapped[str] = mapped_column(Text, nullable=False)
+    ends_at: Mapped[str] = mapped_column(Text, nullable=False)
+    timezone: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="generated")
+    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
+class ScheduleRequirement(Base):
+    __tablename__ = "schedule_requirements"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    schedule_run_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("schedule_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    shift_slot_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("shift_slots.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("roles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role_name: Mapped[str] = mapped_column(Text, nullable=False)
+    required_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
+class Assignment(Base):
+    __tablename__ = "assignments"
+    __table_args__ = (
+        UniqueConstraint(
+            "schedule_run_id",
+            "shift_slot_id",
+            "role_id",
+            "employee_id",
+            name="uq_assignments_run_slot_role_employee",
+        ),
+        UniqueConstraint(
+            "schedule_run_id",
+            "shift_slot_id",
+            "employee_id",
+            name="uq_assignments_run_slot_employee",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    schedule_run_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("schedule_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    shift_slot_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("shift_slots.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("roles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    employee_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    employee_name: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    locked_by_user: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    warning_state: Mapped[str] = mapped_column(Text, nullable=False)
+    warning_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
+class ScheduleIssue(Base):
+    __tablename__ = "schedule_issues"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    schedule_run_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("schedule_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    shift_slot_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("shift_slots.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    role_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("roles.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    missing_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    severity: Mapped[str] = mapped_column(Text, nullable=False)
+    reason_code: Mapped[str] = mapped_column(Text, nullable=False)
+    display_message: Mapped[str] = mapped_column(Text, nullable=False)
+    related_proposal_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
+class RelaxationProposal(Base):
+    __tablename__ = "relaxation_proposals"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    schedule_run_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("schedule_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    group_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requires_proposal_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(Text, nullable=False)
+    affected_shift_slot_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("shift_slots.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    display_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    impact_preview_json: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
 class OverrideApproval(Base):
     __tablename__ = "override_approvals"
     __table_args__ = (
@@ -617,6 +831,7 @@ class SchedulePublication(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False)
     assignment_snapshot_hash: Mapped[str] = mapped_column(Text, nullable=False)
     issue_snapshot_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    result_snapshot_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     published_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
