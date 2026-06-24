@@ -1,0 +1,1768 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "WorkScheduleAI M0 Contract",
+    "version": "0.0.0-m0",
+    "description": "M0 contract draft for P0 vertical slice development. Scheduling is produced by OR-Tools/server logic; LLM output is explanation-only."
+  },
+  "servers": [
+    {
+      "url": "https://api.example.local",
+      "description": "Local or deployed API base URL placeholder for contract consumers"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Health check",
+        "responses": {
+          "200": {
+            "description": "Service is reachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/organizations": {
+      "post": {
+        "operationId": "createOrganization",
+        "summary": "Create the first organization for the signed-in admin",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Organization created with default roles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/organizations/{organization_id}/employees/bulk-paste": {
+      "post": {
+        "operationId": "bulkPasteEmployees",
+        "summary": "Create or validate employees from pasted rows",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmployeeBulkPasteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bulk paste validation or import result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmployeeBulkPasteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/organizations/{organization_id}/unavailabilities": {
+      "post": {
+        "operationId": "createUnavailability",
+        "summary": "Create vacation, business trip, training, or personal unavailability",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnavailabilityCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Unavailability created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnavailabilityResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/organizations/{organization_id}/pair-constraints": {
+      "post": {
+        "operationId": "createPairConstraint",
+        "summary": "Create a pair constraint between two employees",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairConstraintCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Pair constraint created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairConstraintResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/organizations/{organization_id}/schedule-runs": {
+      "post": {
+        "operationId": "createScheduleRun",
+        "summary": "Create a ScheduleRun and enqueue solver work",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleRunCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "ScheduleRun accepted or existing idempotent run returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleRunResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
+    "/organizations/{organization_id}/schedule-runs/{schedule_run_id}": {
+      "get": {
+        "operationId": "getScheduleRun",
+        "summary": "Get ScheduleRun status for polling",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "$ref": "#/components/parameters/ScheduleRunId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ScheduleRun status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleRunResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/organizations/{organization_id}/schedule-runs/{schedule_run_id}/result": {
+      "get": {
+        "operationId": "getScheduleRunResult",
+        "summary": "Get schedule grid, issues, proposals, and publication state",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "$ref": "#/components/parameters/ScheduleRunId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ScheduleRun result payload for grid UI",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleRunResultResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/organizations/{organization_id}/schedule-runs/{schedule_run_id}/manual-edits/validate": {
+      "post": {
+        "operationId": "validateManualEdit",
+        "summary": "Validate a manual assignment before saving",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "$ref": "#/components/parameters/ScheduleRunId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualEditValidationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualEditValidationResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/organizations/{organization_id}/schedule-runs/{schedule_run_id}/relaxation-proposals/{proposal_id}/approve": {
+      "post": {
+        "operationId": "approveRelaxationProposal",
+        "summary": "Approve one server-generated relaxation proposal",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "$ref": "#/components/parameters/ScheduleRunId"
+          },
+          {
+            "$ref": "#/components/parameters/ProposalId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveRelaxationProposalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Override approval recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverrideApprovalResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/organizations/{organization_id}/schedule-runs/{schedule_run_id}/recalculate": {
+      "post": {
+        "operationId": "recalculateScheduleRun",
+        "summary": "Recalculate with approved overrides and locked manual assignments",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "$ref": "#/components/parameters/ScheduleRunId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecalculateScheduleRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Recalculation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleRunResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/organizations/{organization_id}/schedule-runs/{schedule_run_id}/publications": {
+      "post": {
+        "operationId": "publishScheduleRun",
+        "summary": "Publish and lock a ScheduleRun result",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "$ref": "#/components/parameters/ScheduleRunId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishScheduleRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "SchedulePublication created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePublication"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/organizations/{organization_id}/schedule-publications/{publication_id}/excel": {
+      "get": {
+        "operationId": "downloadSchedulePublicationExcel",
+        "summary": "Download a published schedule as Excel",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OrganizationId"
+          },
+          {
+            "$ref": "#/components/parameters/PublicationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Excel workbook",
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "OrganizationId": {
+        "name": "organization_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^org_[A-Za-z0-9_]+$"
+        }
+      },
+      "ScheduleRunId": {
+        "name": "schedule_run_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^run_[A-Za-z0-9_]+$"
+        }
+      },
+      "ProposalId": {
+        "name": "proposal_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^proposal_[A-Za-z0-9_]+$"
+        }
+      },
+      "PublicationId": {
+        "name": "publication_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^pub_[A-Za-z0-9_]+$"
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128
+        }
+      }
+    },
+    "responses": {
+      "Conflict": {
+        "description": "Conflict with existing state or idempotency key",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found in organization scope",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "Request validation failed",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ValidationErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok"
+            ]
+          }
+        }
+      },
+      "ScheduleRunStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "infeasible",
+          "failed",
+          "canceled"
+        ]
+      },
+      "ScheduleRunProgressPhase": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "snapshotting",
+          "validating",
+          "building_model",
+          "solving",
+          "diagnosing",
+          "generating_proposals",
+          "explaining",
+          "completed",
+          "canceling",
+          "canceled"
+        ]
+      },
+      "SolutionQuality": {
+        "type": "string",
+        "enum": [
+          "optimal",
+          "feasible_not_proven_optimal",
+          "infeasible",
+          "unknown"
+        ]
+      },
+      "SolverStatus": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "cp_sat_optimal",
+          "cp_sat_feasible",
+          "cp_sat_infeasible",
+          "cp_sat_model_invalid",
+          "cp_sat_unknown",
+          "not_started",
+          "error",
+          null
+        ]
+      },
+      "Severity": {
+        "type": "string",
+        "enum": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "critical"
+        ]
+      },
+      "IssueType": {
+        "type": "string",
+        "enum": [
+          "unfilled_requirement",
+          "reduced_requirement",
+          "manual_review_required"
+        ]
+      },
+      "ReasonCode": {
+        "type": "string",
+        "enum": [
+          "NO_AVAILABLE_CANDIDATE",
+          "ROLE_NOT_ALLOWED",
+          "UNAVAILABILITY_CONFLICT",
+          "PAIR_CONSTRAINT_CONFLICT",
+          "RECALCULATION_LIMIT_EXCEEDED",
+          "PUBLICATION_OVERLAP",
+          "WORKER_ERROR"
+        ]
+      },
+      "RelaxationProposalType": {
+        "type": "string",
+        "enum": [
+          "approve_time_off_override",
+          "approve_pair_constraint_override",
+          "approve_min_rest_override",
+          "keep_unfilled_requirement",
+          "reduce_role_requirement",
+          "mark_manual_review"
+        ]
+      },
+      "RelaxationProposalStatus": {
+        "type": "string",
+        "enum": [
+          "suggested",
+          "approved",
+          "rejected",
+          "read_only"
+        ]
+      },
+      "AssignmentSource": {
+        "type": "string",
+        "enum": [
+          "solver",
+          "manual",
+          "override"
+        ]
+      },
+      "WarningState": {
+        "type": "string",
+        "enum": [
+          "none",
+          "warning",
+          "approved_override"
+        ]
+      },
+      "PublicationStatus": {
+        "type": "string",
+        "enum": [
+          "published",
+          "archived"
+        ]
+      },
+      "OrganizationCreateRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "timezone"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "timezone": {
+            "type": "string",
+            "examples": [
+              "Asia/Seoul"
+            ]
+          }
+        }
+      },
+      "OrganizationResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "timezone",
+          "default_roles",
+          "data_version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "default_roles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Role"
+            }
+          },
+          "data_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "Role": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "EmployeeBulkPasteRequest": {
+        "type": "object",
+        "required": [
+          "mode",
+          "rows"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "validate_only",
+              "upsert"
+            ]
+          },
+          "rows": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/EmployeeBulkPasteRow"
+            }
+          }
+        }
+      },
+      "EmployeeBulkPasteRow": {
+        "type": "object",
+        "required": [
+          "row_no",
+          "employee_code",
+          "name",
+          "role_names"
+        ],
+        "properties": {
+          "row_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "employee_code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "role_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_shifts_per_week": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        }
+      },
+      "EmployeeBulkPasteResponse": {
+        "type": "object",
+        "required": [
+          "valid",
+          "created_count",
+          "updated_count",
+          "errors",
+          "employees"
+        ],
+        "properties": {
+          "valid": {
+            "type": "boolean"
+          },
+          "created_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updated_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            }
+          },
+          "employees": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Employee"
+            }
+          }
+        }
+      },
+      "Employee": {
+        "type": "object",
+        "required": [
+          "id",
+          "employee_code",
+          "name",
+          "active",
+          "role_ids"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "employee_code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "role_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "UnavailabilityCreateRequest": {
+        "type": "object",
+        "required": [
+          "employee_id",
+          "type",
+          "starts_at",
+          "ends_at",
+          "override_allowed"
+        ],
+        "properties": {
+          "employee_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "vacation",
+              "business_trip",
+              "training",
+              "personal"
+            ]
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "override_allowed": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          }
+        }
+      },
+      "UnavailabilityResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/UnavailabilityCreateRequest"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "PairConstraintCreateRequest": {
+        "type": "object",
+        "required": [
+          "employee_a_id",
+          "employee_b_id",
+          "type",
+          "override_allowed"
+        ],
+        "properties": {
+          "employee_a_id": {
+            "type": "string"
+          },
+          "employee_b_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "blocked",
+              "avoid",
+              "prefer"
+            ]
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "override_allowed": {
+            "type": "boolean"
+          },
+          "active": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "PairConstraintResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PairConstraintCreateRequest"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "normalized_employee_a_id",
+              "normalized_employee_b_id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "normalized_employee_a_id": {
+                "type": "string"
+              },
+              "normalized_employee_b_id": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "ScheduleRunCreateRequest": {
+        "type": "object",
+        "required": [
+          "period_start",
+          "period_end"
+        ],
+        "properties": {
+          "period_start": {
+            "type": "string",
+            "format": "date"
+          },
+          "period_end": {
+            "type": "string",
+            "format": "date"
+          },
+          "template": {
+            "type": "string",
+            "enum": [
+              "one_shift_per_day",
+              "morning_afternoon_night",
+              "on_call",
+              "custom"
+            ],
+            "default": "one_shift_per_day"
+          },
+          "deterministic_mode": {
+            "type": "boolean",
+            "default": true
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120,
+            "default": 30
+          }
+        }
+      },
+      "ScheduleRunResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "period_start",
+          "period_end",
+          "status",
+          "solution_quality",
+          "current_attempt_no",
+          "recalculation_count",
+          "progress",
+          "score_summary",
+          "issues",
+          "proposals",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "organization_id": {
+            "type": "string"
+          },
+          "period_start": {
+            "type": "string",
+            "format": "date"
+          },
+          "period_end": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ScheduleRunStatus"
+          },
+          "solver_status": {
+            "$ref": "#/components/schemas/SolverStatus"
+          },
+          "solution_quality": {
+            "$ref": "#/components/schemas/SolutionQuality"
+          },
+          "current_attempt_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "recalculation_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3
+          },
+          "input_snapshot_hash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "progress": {
+            "$ref": "#/components/schemas/ScheduleRunProgress"
+          },
+          "score_summary": {
+            "$ref": "#/components/schemas/ScoreSummary"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScheduleIssue"
+            }
+          },
+          "proposals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelaxationProposal"
+            }
+          },
+          "llm_explanation": {
+            "$ref": "#/components/schemas/LLMExplanation"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ScheduleRunProgress": {
+        "type": "object",
+        "required": [
+          "phase",
+          "message",
+          "started_at",
+          "timeout_seconds"
+        ],
+        "properties": {
+          "phase": {
+            "$ref": "#/components/schemas/ScheduleRunProgressPhase"
+          },
+          "message": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120
+          }
+        }
+      },
+      "ScoreSummary": {
+        "type": "object",
+        "required": [
+          "hard",
+          "approvable",
+          "soft",
+          "severity_label"
+        ],
+        "properties": {
+          "hard": {
+            "type": "integer"
+          },
+          "approvable": {
+            "type": "integer"
+          },
+          "soft": {
+            "type": "integer"
+          },
+          "severity_label": {
+            "$ref": "#/components/schemas/Severity"
+          }
+        }
+      },
+      "ScheduleRunResultResponse": {
+        "type": "object",
+        "required": [
+          "schedule_run_id",
+          "status",
+          "solution_quality",
+          "current_attempt_no",
+          "recalculation_count",
+          "read_only",
+          "publication",
+          "slots",
+          "requirements",
+          "assignments",
+          "issues",
+          "proposals",
+          "score_summary"
+        ],
+        "properties": {
+          "schedule_run_id": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ScheduleRunStatus"
+          },
+          "solution_quality": {
+            "$ref": "#/components/schemas/SolutionQuality"
+          },
+          "current_attempt_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "recalculation_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3
+          },
+          "read_only": {
+            "type": "boolean"
+          },
+          "publication": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SchedulePublication"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShiftSlot"
+            }
+          },
+          "requirements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShiftRequirementInstance"
+            }
+          },
+          "assignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Assignment"
+            }
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScheduleIssue"
+            }
+          },
+          "proposals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelaxationProposal"
+            }
+          },
+          "score_summary": {
+            "$ref": "#/components/schemas/ScoreSummary"
+          },
+          "llm_explanation": {
+            "$ref": "#/components/schemas/LLMExplanation"
+          }
+        }
+      },
+      "ShiftSlot": {
+        "type": "object",
+        "required": [
+          "id",
+          "local_date",
+          "label",
+          "starts_at",
+          "ends_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "local_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "label": {
+            "type": "string"
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ShiftRequirementInstance": {
+        "type": "object",
+        "required": [
+          "id",
+          "slot_id",
+          "role_id",
+          "role_name",
+          "required_count"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "slot_id": {
+            "type": "string"
+          },
+          "role_id": {
+            "type": "string"
+          },
+          "role_name": {
+            "type": "string"
+          },
+          "required_count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "Assignment": {
+        "type": "object",
+        "required": [
+          "id",
+          "slot_id",
+          "role_id",
+          "employee_id",
+          "employee_name",
+          "source",
+          "locked_by_user",
+          "warning_state",
+          "attempt_no"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "slot_id": {
+            "type": "string"
+          },
+          "role_id": {
+            "type": "string"
+          },
+          "employee_id": {
+            "type": "string"
+          },
+          "employee_name": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/AssignmentSource"
+          },
+          "locked_by_user": {
+            "type": "boolean"
+          },
+          "warning_state": {
+            "$ref": "#/components/schemas/WarningState"
+          },
+          "warning_message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attempt_no": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "ScheduleIssue": {
+        "type": "object",
+        "required": [
+          "id",
+          "slot_id",
+          "role_id",
+          "type",
+          "missing_count",
+          "severity",
+          "reason_code",
+          "display_message",
+          "attempt_no"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "slot_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "$ref": "#/components/schemas/IssueType"
+          },
+          "missing_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/ReasonCode"
+          },
+          "display_message": {
+            "type": "string"
+          },
+          "attempt_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "related_proposal_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "RelaxationProposal": {
+        "type": "object",
+        "required": [
+          "id",
+          "group_id",
+          "requires_proposal_ids",
+          "type",
+          "severity",
+          "affected_slot_id",
+          "display_summary",
+          "impact_preview",
+          "status",
+          "attempt_no"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "group_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requires_proposal_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "type": {
+            "$ref": "#/components/schemas/RelaxationProposalType"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "affected_slot_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "display_summary": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "impact_preview": {
+            "$ref": "#/components/schemas/ImpactPreview"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RelaxationProposalStatus"
+          },
+          "attempt_no": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "llm_explanation": {
+            "$ref": "#/components/schemas/LLMExplanation"
+          }
+        }
+      },
+      "ImpactPreview": {
+        "type": "object",
+        "required": [
+          "resolved_issue_ids",
+          "new_warning_count"
+        ],
+        "properties": {
+          "resolved_issue_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "new_warning_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "LLMExplanation": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "required": [
+          "status",
+          "text",
+          "source"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "not_requested",
+              "pending",
+              "ready",
+              "fallback"
+            ]
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "server_template",
+              "llm"
+            ]
+          }
+        }
+      },
+      "ManualEditValidationRequest": {
+        "type": "object",
+        "required": [
+          "slot_id",
+          "role_id",
+          "employee_id",
+          "locked_by_user"
+        ],
+        "properties": {
+          "slot_id": {
+            "type": "string"
+          },
+          "role_id": {
+            "type": "string"
+          },
+          "employee_id": {
+            "type": "string"
+          },
+          "locked_by_user": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ManualEditValidationResponse": {
+        "type": "object",
+        "required": [
+          "valid",
+          "blocking_errors",
+          "warnings"
+        ],
+        "properties": {
+          "valid": {
+            "type": "boolean"
+          },
+          "blocking_errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            }
+          }
+        }
+      },
+      "ApproveRelaxationProposalRequest": {
+        "type": "object",
+        "required": [
+          "reason",
+          "notification_required"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "notification_required": {
+            "type": "boolean"
+          }
+        }
+      },
+      "OverrideApprovalResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "schedule_run_id",
+          "relaxation_proposal_id",
+          "type",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "schedule_run_id": {
+            "type": "string"
+          },
+          "relaxation_proposal_id": {
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/RelaxationProposalType"
+          },
+          "notification_required": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RecalculateScheduleRunRequest": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "PublishScheduleRunRequest": {
+        "type": "object",
+        "required": [
+          "expected_assignment_snapshot_hash",
+          "expected_issue_snapshot_hash"
+        ],
+        "properties": {
+          "expected_assignment_snapshot_hash": {
+            "type": "string"
+          },
+          "expected_issue_snapshot_hash": {
+            "type": "string"
+          }
+        }
+      },
+      "SchedulePublication": {
+        "type": "object",
+        "required": [
+          "id",
+          "organization_id",
+          "schedule_run_id",
+          "period_start",
+          "period_end",
+          "status",
+          "assignment_snapshot_hash",
+          "issue_snapshot_hash",
+          "published_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "organization_id": {
+            "type": "string"
+          },
+          "schedule_run_id": {
+            "type": "string"
+          },
+          "period_start": {
+            "type": "string",
+            "format": "date"
+          },
+          "period_end": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PublicationStatus"
+          },
+          "assignment_snapshot_hash": {
+            "type": "string"
+          },
+          "issue_snapshot_hash": {
+            "type": "string"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "FieldError": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "field": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "row_no": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/FieldError"
+          }
+        }
+      },
+      "ValidationErrorResponse": {
+        "type": "object",
+        "required": [
+          "errors"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,33 @@
+{
+  "id": "run_p0_week_001",
+  "organization_id": "org_demo_001",
+  "period_start": "2026-07-06",
+  "period_end": "2026-07-13",
+  "status": "running",
+  "solver_status": "not_started",
+  "solution_quality": "unknown",
+  "current_attempt_no": 1,
+  "recalculation_count": 0,
+  "input_snapshot_hash": "sha256:p0-demo-input-v1",
+  "progress": {
+    "phase": "building_model",
+    "message": "근무표 모델을 구성하는 중입니다.",
+    "started_at": "2026-07-06T00:00:00Z",
+    "timeout_seconds": 30
+  },
+  "score_summary": {
+    "hard": 0,
+    "approvable": 0,
+    "soft": 0,
+    "severity_label": "none"
+  },
+  "issues": [],
+  "proposals": [],
+  "llm_explanation": {
+    "status": "not_requested",
+    "text": null,
+    "source": "server_template"
+  },
+  "updated_at": "2026-07-06T00:00:03Z"
+}
+
