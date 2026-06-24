@@ -88,7 +88,7 @@ def test_anonymized_payload_excludes_pii_and_numeric_loss_scores():
 def test_fallback_explanation_matches_api_contract_shape():
     assert fallback_explanation() == {
         "status": "fallback",
-        "text": "서버 템플릿으로 mock 근무표 설명을 생성했습니다.",
+        "text": "서버 템플릿으로 근무표 설명을 생성했습니다.",
         "source": "server_template",
     }
 

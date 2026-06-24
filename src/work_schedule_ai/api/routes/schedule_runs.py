@@ -11,22 +11,27 @@ from xml.sax.saxutils import escape as xml_escape
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
 from work_schedule_ai.db.models import (
+    Assignment as AssignmentRecord,
     Employee,
     EmployeeRole,
     Organization,
     OverrideApproval,
     PairConstraint,
+    RelaxationProposal as RelaxationProposalRecord,
     Role,
+    ScheduleIssue as ScheduleIssueRecord,
     ScheduleRecalculationRequest,
     ScheduleInputSnapshot,
     SchedulePublication,
+    ScheduleRequirement as ScheduleRequirementRecord,
     ScheduleRun,
+    ShiftSlot as ShiftSlotRecord,
     ShiftRequirement,
     ShiftType,
     Unavailability,
@@ -248,6 +253,13 @@ def create_schedule_run(
             detail="Organization not found",
         )
 
+    snapshot_payload = _build_snapshot_payload(
+        organization_id=organization_id,
+        request=request,
+        db_session=db_session,
+    )
+    snapshot_hash = _snapshot_hash(snapshot_payload)
+
     if idempotency_key is not None:
         existing_run = db_session.execute(
             select(ScheduleRun).where(
@@ -256,15 +268,21 @@ def create_schedule_run(
             )
         ).scalar_one_or_none()
         if existing_run is not None:
+            if existing_run.input_snapshot_hash != snapshot_hash:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "SCHEDULE_RUN_IDEMPOTENCY_CONFLICT",
+                        "message": (
+                            "Idempotency-Key was reused with different "
+                            "ScheduleRun input."
+                        ),
+                        "field": "Idempotency-Key",
+                    },
+                )
             return _schedule_run_response(existing_run, db_session)
 
     run_id = _new_id("run")
-    snapshot_payload = _build_snapshot_payload(
-        organization_id=organization_id,
-        request=request,
-        db_session=db_session,
-    )
-    snapshot_hash = _snapshot_hash(snapshot_payload)
     now = utc_now()
     run = ScheduleRun(
         id=run_id,
@@ -295,7 +313,7 @@ def create_schedule_run(
     )
     db_session.add_all([run, snapshot])
     db_session.flush()
-    execute_schedule_run(db_session, run.id)
+    execute_schedule_run(db_session, run.id, executor=_execute_schedule_run_artifacts)
 
     return _schedule_run_response(run, db_session)
 
@@ -323,9 +341,13 @@ def get_schedule_run_result(
     db_session: Session = Depends(get_db_session),
 ) -> ScheduleRunResultResponse:
     run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
-    artifacts = _mock_result_artifacts(run, db_session)
-    hashes = _artifact_hashes(artifacts)
     publication = _get_publication_for_run(run, db_session)
+    artifacts = (
+        _artifacts_from_publication_snapshot(publication)
+        if publication is not None and publication.result_snapshot_json
+        else _result_artifacts_for_run(run, db_session)
+    )
+    hashes = _artifact_hashes(artifacts)
     return ScheduleRunResultResponse(
         schedule_run_id=run.id,
         status=run.status,
@@ -387,7 +409,7 @@ def approve_relaxation_proposal(
     db_session: Session = Depends(get_db_session),
 ) -> OverrideApprovalResponse:
     run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
-    artifacts = _mock_result_artifacts(run, db_session)
+    artifacts = _result_artifacts_for_run(run, db_session)
     proposal = next(
         (candidate for candidate in artifacts.proposals if candidate.id == proposal_id),
         None,
@@ -426,6 +448,12 @@ def approve_relaxation_proposal(
         created_at=utc_now(),
     )
     db_session.add(approval)
+    persisted_proposal = db_session.get(
+        RelaxationProposalRecord,
+        _stored_artifact_id(run.id, proposal.id),
+    )
+    if persisted_proposal is not None:
+        persisted_proposal.status = "approved"
     db_session.commit()
 
     return OverrideApprovalResponse(
@@ -496,9 +524,10 @@ def recalculate_schedule_run(
 
     run.recalculation_count += 1
     run.updated_at = utc_now()
-    run.status = "succeeded"
-    run.solver_status = "not_started"
-    run.solution_quality = "feasible_not_proven_optimal"
+    run.status = "running"
+    _execute_schedule_run_artifacts(db_session, run)
+    if run.status == "running":
+        run.status = "succeeded"
     recalculation_request = ScheduleRecalculationRequest(
         id=_new_id("recalc"),
         organization_id=organization_id,
@@ -525,7 +554,7 @@ def publish_schedule_run(
     db_session: Session = Depends(get_db_session),
 ) -> SchedulePublicationResponse:
     run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
-    artifacts = _mock_result_artifacts(run, db_session)
+    artifacts = _result_artifacts_for_run(run, db_session)
     hashes = _artifact_hashes(artifacts)
 
     if (
@@ -591,6 +620,11 @@ def publish_schedule_run(
         status="published",
         assignment_snapshot_hash=hashes.assignment_snapshot_hash,
         issue_snapshot_hash=hashes.issue_snapshot_hash,
+        result_snapshot_json=json.dumps(
+            _result_snapshot_payload(artifacts),
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
         published_at=now,
         created_at=now,
     )
@@ -625,7 +659,11 @@ def download_schedule_publication_excel(
             detail="ScheduleRun not found",
         )
 
-    artifacts = _mock_result_artifacts(run, db_session)
+    artifacts = (
+        _artifacts_from_publication_snapshot(publication)
+        if publication.result_snapshot_json
+        else _result_artifacts_for_run(run, db_session)
+    )
     workbook = _build_schedule_workbook(publication, artifacts)
     filename = f"work_schedule_{publication.period_start}_{publication.period_end}.xlsx"
     return Response(
@@ -702,7 +740,7 @@ def _schedule_run_response(
     run: ScheduleRun,
     db_session: Session,
 ) -> ScheduleRunResponse:
-    artifacts = _mock_result_artifacts(run, db_session)
+    artifacts = _result_artifacts_for_run(run, db_session)
     return ScheduleRunResponse(
         id=run.id,
         organization_id=run.organization_id,
@@ -716,7 +754,7 @@ def _schedule_run_response(
         input_snapshot_hash=run.input_snapshot_hash,
         progress=ScheduleRunProgress(
             phase="completed",
-            message="Mock schedule result is ready.",
+            message="Schedule result is ready.",
             started_at=run.started_at,
             timeout_seconds=run.timeout_seconds,
         ),
@@ -726,6 +764,345 @@ def _schedule_run_response(
         llm_explanation=_llm_explanation(),
         updated_at=run.updated_at,
     )
+
+
+def _execute_schedule_run_artifacts(
+    db_session: Session,
+    run: ScheduleRun,
+) -> None:
+    artifacts = _mock_result_artifacts(run, db_session)
+    _replace_persisted_artifacts(run, artifacts, db_session)
+
+
+def _result_artifacts_for_run(
+    run: ScheduleRun,
+    db_session: Session,
+) -> _MockArtifacts:
+    stored = _load_persisted_artifacts(run, db_session)
+    if stored is not None:
+        return stored
+    return _mock_result_artifacts(run, db_session)
+
+
+def _replace_persisted_artifacts(
+    run: ScheduleRun,
+    artifacts: _MockArtifacts,
+    db_session: Session,
+) -> None:
+    for model in (
+        RelaxationProposalRecord,
+        ScheduleIssueRecord,
+        AssignmentRecord,
+        ScheduleRequirementRecord,
+        ShiftSlotRecord,
+    ):
+        db_session.execute(
+            delete(model).where(
+                model.organization_id == run.organization_id,
+                model.schedule_run_id == run.id,
+            )
+        )
+    db_session.flush()
+
+    db_session.add_all(
+        [
+            ShiftSlotRecord(
+                id=_stored_artifact_id(run.id, slot.id),
+                organization_id=run.organization_id,
+                schedule_run_id=run.id,
+                shift_type_id=_shift_type_id_from_slot_id(slot.id),
+                local_date=slot.local_date,
+                label=slot.label,
+                starts_at=slot.starts_at,
+                ends_at=slot.ends_at,
+                timezone="Asia/Seoul",
+                status="generated",
+                attempt_no=run.current_attempt_no,
+            )
+            for slot in artifacts.slots
+        ]
+    )
+    db_session.flush()
+    db_session.add_all(
+        [
+            ScheduleRequirementRecord(
+                id=_stored_artifact_id(run.id, requirement.id),
+                organization_id=run.organization_id,
+                schedule_run_id=run.id,
+                shift_slot_id=_stored_artifact_id(run.id, requirement.slot_id),
+                role_id=requirement.role_id,
+                role_name=requirement.role_name,
+                required_count=requirement.required_count,
+                attempt_no=run.current_attempt_no,
+            )
+            for requirement in artifacts.requirements
+        ]
+    )
+    db_session.add_all(
+        [
+            AssignmentRecord(
+                id=_stored_artifact_id(run.id, assignment.id),
+                organization_id=run.organization_id,
+                schedule_run_id=run.id,
+                shift_slot_id=_stored_artifact_id(run.id, assignment.slot_id),
+                role_id=assignment.role_id,
+                employee_id=assignment.employee_id,
+                employee_name=assignment.employee_name,
+                source=assignment.source,
+                locked_by_user=assignment.locked_by_user,
+                warning_state=assignment.warning_state,
+                warning_message=assignment.warning_message,
+                attempt_no=assignment.attempt_no,
+            )
+            for assignment in artifacts.assignments
+        ]
+    )
+    db_session.add_all(
+        [
+            ScheduleIssueRecord(
+                id=_stored_artifact_id(run.id, issue.id),
+                organization_id=run.organization_id,
+                schedule_run_id=run.id,
+                shift_slot_id=(
+                    _stored_artifact_id(run.id, issue.slot_id)
+                    if issue.slot_id is not None
+                    else None
+                ),
+                role_id=issue.role_id,
+                type=issue.type,
+                missing_count=issue.missing_count,
+                severity=issue.severity,
+                reason_code=issue.reason_code,
+                display_message=issue.display_message,
+                related_proposal_ids_json=json.dumps(
+                    issue.related_proposal_ids,
+                    ensure_ascii=False,
+                ),
+                attempt_no=issue.attempt_no,
+            )
+            for issue in artifacts.issues
+        ]
+    )
+    db_session.add_all(
+        [
+            RelaxationProposalRecord(
+                id=_stored_artifact_id(run.id, proposal.id),
+                organization_id=run.organization_id,
+                schedule_run_id=run.id,
+                group_id=proposal.group_id,
+                requires_proposal_ids_json=json.dumps(
+                    proposal.requires_proposal_ids,
+                    ensure_ascii=False,
+                ),
+                type=proposal.type,
+                severity=proposal.severity,
+                affected_shift_slot_id=(
+                    _stored_artifact_id(run.id, proposal.affected_slot_id)
+                    if proposal.affected_slot_id is not None
+                    else None
+                ),
+                display_summary=proposal.display_summary,
+                impact_preview_json=json.dumps(
+                    proposal.impact_preview.model_dump(mode="json"),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+                status=proposal.status,
+                attempt_no=proposal.attempt_no,
+            )
+            for proposal in artifacts.proposals
+        ]
+    )
+    db_session.flush()
+
+
+def _load_persisted_artifacts(
+    run: ScheduleRun,
+    db_session: Session,
+) -> _MockArtifacts | None:
+    slots = list(
+        db_session.execute(
+            select(ShiftSlotRecord)
+            .where(ShiftSlotRecord.schedule_run_id == run.id)
+            .order_by(ShiftSlotRecord.local_date, ShiftSlotRecord.id)
+        ).scalars()
+    )
+    if not slots:
+        return None
+    requirements = list(
+        db_session.execute(
+            select(ScheduleRequirementRecord)
+            .where(ScheduleRequirementRecord.schedule_run_id == run.id)
+            .order_by(ScheduleRequirementRecord.shift_slot_id, ScheduleRequirementRecord.id)
+        ).scalars()
+    )
+    assignments = list(
+        db_session.execute(
+            select(AssignmentRecord)
+            .where(AssignmentRecord.schedule_run_id == run.id)
+            .order_by(AssignmentRecord.shift_slot_id, AssignmentRecord.role_id, AssignmentRecord.id)
+        ).scalars()
+    )
+    issues = list(
+        db_session.execute(
+            select(ScheduleIssueRecord)
+            .where(ScheduleIssueRecord.schedule_run_id == run.id)
+            .order_by(ScheduleIssueRecord.id)
+        ).scalars()
+    )
+    proposals = list(
+        db_session.execute(
+            select(RelaxationProposalRecord)
+            .where(RelaxationProposalRecord.schedule_run_id == run.id)
+            .order_by(RelaxationProposalRecord.id)
+        ).scalars()
+    )
+    return _MockArtifacts(
+        slots=[
+            ShiftSlotResponse(
+                id=_external_artifact_id(run.id, slot.id),
+                local_date=slot.local_date,
+                label=slot.label,
+                starts_at=slot.starts_at,
+                ends_at=slot.ends_at,
+            )
+            for slot in slots
+        ],
+        requirements=[
+            ShiftRequirementResponse(
+                id=_external_artifact_id(run.id, requirement.id),
+                slot_id=_external_artifact_id(run.id, requirement.shift_slot_id),
+                role_id=requirement.role_id,
+                role_name=requirement.role_name,
+                required_count=requirement.required_count,
+            )
+            for requirement in requirements
+        ],
+        assignments=[
+            AssignmentResponse(
+                id=_external_artifact_id(run.id, assignment.id),
+                slot_id=_external_artifact_id(run.id, assignment.shift_slot_id),
+                role_id=assignment.role_id,
+                employee_id=assignment.employee_id,
+                employee_name=assignment.employee_name,
+                source=assignment.source,
+                locked_by_user=assignment.locked_by_user,
+                warning_state=assignment.warning_state,
+                warning_message=assignment.warning_message,
+                attempt_no=assignment.attempt_no,
+            )
+            for assignment in assignments
+        ],
+        issues=[
+            ScheduleIssueResponse(
+                id=_external_artifact_id(run.id, issue.id),
+                slot_id=(
+                    _external_artifact_id(run.id, issue.shift_slot_id)
+                    if issue.shift_slot_id is not None
+                    else None
+                ),
+                role_id=issue.role_id,
+                type=issue.type,
+                missing_count=issue.missing_count,
+                severity=issue.severity,
+                reason_code=issue.reason_code,
+                display_message=issue.display_message,
+                attempt_no=issue.attempt_no,
+                related_proposal_ids=json.loads(issue.related_proposal_ids_json),
+            )
+            for issue in issues
+        ],
+        proposals=[
+            RelaxationProposalResponse(
+                id=_external_artifact_id(run.id, proposal.id),
+                group_id=proposal.group_id,
+                requires_proposal_ids=json.loads(proposal.requires_proposal_ids_json),
+                type=proposal.type,
+                severity=proposal.severity,
+                affected_slot_id=(
+                    _external_artifact_id(run.id, proposal.affected_shift_slot_id)
+                    if proposal.affected_shift_slot_id is not None
+                    else None
+                ),
+                display_summary=proposal.display_summary,
+                impact_preview=ImpactPreview.model_validate_json(
+                    proposal.impact_preview_json
+                ),
+                status=proposal.status,
+                attempt_no=proposal.attempt_no,
+                llm_explanation=_llm_explanation(),
+            )
+            for proposal in proposals
+        ],
+        score_summary=ScoreSummary(
+            hard=0,
+            approvable=0,
+            soft=sum(issue.missing_count * 100 for issue in issues),
+            severity_label="high" if issues else "none",
+        ),
+    )
+
+
+def _result_snapshot_payload(artifacts: _MockArtifacts) -> dict[str, object]:
+    return {
+        "slots": [slot.model_dump(mode="json") for slot in artifacts.slots],
+        "requirements": [
+            requirement.model_dump(mode="json")
+            for requirement in artifacts.requirements
+        ],
+        "assignments": [
+            assignment.model_dump(mode="json")
+            for assignment in artifacts.assignments
+        ],
+        "issues": [issue.model_dump(mode="json") for issue in artifacts.issues],
+        "proposals": [
+            proposal.model_dump(mode="json")
+            for proposal in artifacts.proposals
+        ],
+        "score_summary": artifacts.score_summary.model_dump(mode="json"),
+    }
+
+
+def _artifacts_from_publication_snapshot(
+    publication: SchedulePublication,
+) -> _MockArtifacts:
+    payload = json.loads(publication.result_snapshot_json or "{}")
+    return _MockArtifacts(
+        slots=[ShiftSlotResponse.model_validate(item) for item in payload["slots"]],
+        requirements=[
+            ShiftRequirementResponse.model_validate(item)
+            for item in payload["requirements"]
+        ],
+        assignments=[
+            AssignmentResponse.model_validate(item)
+            for item in payload["assignments"]
+        ],
+        issues=[
+            ScheduleIssueResponse.model_validate(item)
+            for item in payload["issues"]
+        ],
+        proposals=[
+            RelaxationProposalResponse.model_validate(item)
+            for item in payload["proposals"]
+        ],
+        score_summary=ScoreSummary.model_validate(payload["score_summary"]),
+    )
+
+
+def _shift_type_id_from_slot_id(slot_id: str) -> str | None:
+    marker = "_shift_type_"
+    if marker not in slot_id:
+        return None
+    return "shift_type_" + slot_id.split(marker, 1)[1]
+
+
+def _stored_artifact_id(run_id: str, artifact_id: str) -> str:
+    return f"{run_id}__{artifact_id}"
+
+
+def _external_artifact_id(run_id: str, stored_id: str) -> str:
+    prefix = f"{run_id}__"
+    return stored_id[len(prefix) :] if stored_id.startswith(prefix) else stored_id
 
 
 def _mock_result_artifacts(
@@ -891,9 +1268,9 @@ def _solver_result_artifacts(
     employees.sort(key=lambda employee: employee.employee_code)
     role_ids_by_employee = _role_ids_by_employee(run.organization_id, db_session)
     unavailable_slot_ids_by_employee = _unavailable_slot_ids_by_employee(
-        run.organization_id,
-        slots,
-        db_session,
+        run=run,
+        slots=slots,
+        db_session=db_session,
     )
     solver_employees = [
         EmployeeInput(
@@ -919,6 +1296,9 @@ def _solver_result_artifacts(
             random_seed=1,
         )
     )
+    run.status = solver_result.status
+    run.solver_status = solver_result.solver_status
+    run.solution_quality = solver_result.solution_quality
     employee_by_id = {employee.id: employee for employee in employees}
     assignments = [
         AssignmentResponse(
@@ -1046,17 +1426,29 @@ def _role_ids_by_employee(
 
 
 def _unavailable_slot_ids_by_employee(
-    organization_id: str,
+    *,
+    run: ScheduleRun,
     slots: list[ShiftSlotResponse],
     db_session: Session,
 ) -> dict[str, set[str]]:
     unavailabilities = list(
         db_session.execute(
-            select(Unavailability).where(Unavailability.organization_id == organization_id)
+            select(Unavailability).where(
+                Unavailability.organization_id == run.organization_id
+            )
         ).scalars()
     )
+    approved_override = db_session.execute(
+        select(OverrideApproval.id).where(
+            OverrideApproval.organization_id == run.organization_id,
+            OverrideApproval.schedule_run_id == run.id,
+            OverrideApproval.type == "approve_time_off_override",
+        )
+    ).first()
     slot_ids_by_employee: dict[str, set[str]] = {}
     for unavailability in unavailabilities:
+        if approved_override is not None and unavailability.override_allowed:
+            continue
         for slot in slots:
             if _unavailability_overlaps_date(unavailability, slot.local_date):
                 slot_ids_by_employee.setdefault(unavailability.employee_id, set()).add(
@@ -1188,12 +1580,47 @@ def _build_snapshot_payload(
     request: ScheduleRunCreateRequest,
     db_session: Session,
 ) -> dict[str, object]:
-    employee_ids = db_session.execute(
-        select(Employee.id).where(Employee.organization_id == organization_id)
-    ).scalars()
-    role_ids = db_session.execute(
-        select(Role.id).where(Role.organization_id == organization_id)
-    ).scalars()
+    employees = list(
+        db_session.execute(
+            select(Employee).where(Employee.organization_id == organization_id)
+        ).scalars()
+    )
+    roles = list(
+        db_session.execute(
+            select(Role).where(Role.organization_id == organization_id)
+        ).scalars()
+    )
+    employee_roles = list(
+        db_session.execute(
+            select(EmployeeRole).where(EmployeeRole.organization_id == organization_id)
+        ).scalars()
+    )
+    shift_types = list(
+        db_session.execute(
+            select(ShiftType).where(ShiftType.organization_id == organization_id)
+        ).scalars()
+    )
+    shift_requirements = list(
+        db_session.execute(
+            select(ShiftRequirement).where(
+                ShiftRequirement.organization_id == organization_id
+            )
+        ).scalars()
+    )
+    unavailabilities = list(
+        db_session.execute(
+            select(Unavailability).where(
+                Unavailability.organization_id == organization_id
+            )
+        ).scalars()
+    )
+    pair_constraints = list(
+        db_session.execute(
+            select(PairConstraint).where(
+                PairConstraint.organization_id == organization_id
+            )
+        ).scalars()
+    )
     return {
         "organization_id": organization_id,
         "period_start": request.period_start.isoformat(),
@@ -1201,8 +1628,90 @@ def _build_snapshot_payload(
         "template": request.template,
         "deterministic_mode": request.deterministic_mode,
         "timeout_seconds": request.timeout_seconds,
-        "employee_ids": sorted(employee_ids),
-        "role_ids": sorted(role_ids),
+        "employees": sorted(
+            [
+                {
+                    "id": employee.id,
+                    "employee_code": employee.employee_code,
+                    "active": employee.active,
+                    "max_shifts_per_week": employee.max_shifts_per_week,
+                    "max_shifts_per_month": employee.max_shifts_per_month,
+                }
+                for employee in employees
+            ],
+            key=lambda item: str(item["id"]),
+        ),
+        "roles": sorted(
+            [{"id": role.id, "name": role.name} for role in roles],
+            key=lambda item: str(item["id"]),
+        ),
+        "employee_roles": sorted(
+            [
+                {
+                    "employee_id": employee_role.employee_id,
+                    "role_id": employee_role.role_id,
+                    "priority": employee_role.priority,
+                    "active": employee_role.active,
+                }
+                for employee_role in employee_roles
+            ],
+            key=lambda item: (str(item["employee_id"]), str(item["role_id"])),
+        ),
+        "shift_types": sorted(
+            [
+                {
+                    "id": shift_type.id,
+                    "name": shift_type.name,
+                    "local_start_time": shift_type.local_start_time,
+                    "local_end_time": shift_type.local_end_time,
+                    "timezone": shift_type.timezone,
+                    "crosses_midnight": shift_type.crosses_midnight,
+                    "active": shift_type.active,
+                }
+                for shift_type in shift_types
+            ],
+            key=lambda item: str(item["id"]),
+        ),
+        "shift_requirements": sorted(
+            [
+                {
+                    "id": requirement.id,
+                    "shift_type_id": requirement.shift_type_id,
+                    "role_id": requirement.role_id,
+                    "required_count": requirement.required_count,
+                    "unfilled_weight_override": requirement.unfilled_weight_override,
+                }
+                for requirement in shift_requirements
+            ],
+            key=lambda item: str(item["id"]),
+        ),
+        "unavailabilities": sorted(
+            [
+                {
+                    "employee_id": unavailability.employee_id,
+                    "type": unavailability.type,
+                    "starts_at": unavailability.starts_at.isoformat(),
+                    "ends_at": unavailability.ends_at.isoformat(),
+                    "override_allowed": unavailability.override_allowed,
+                }
+                for unavailability in unavailabilities
+            ],
+            key=lambda item: (str(item["employee_id"]), str(item["starts_at"])),
+        ),
+        "pair_constraints": sorted(
+            [
+                {
+                    "employee_a_id": pair_constraint.employee_a_id,
+                    "employee_b_id": pair_constraint.employee_b_id,
+                    "type": pair_constraint.type,
+                    "severity": pair_constraint.severity,
+                    "override_allowed": pair_constraint.override_allowed,
+                    "active": pair_constraint.active,
+                }
+                for pair_constraint in pair_constraints
+            ],
+            key=lambda item: (str(item["employee_a_id"]), str(item["employee_b_id"])),
+        ),
     }
 
 

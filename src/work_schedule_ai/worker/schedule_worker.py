@@ -1,12 +1,17 @@
+from collections.abc import Callable
+
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.db.models import ScheduleRun, utc_now
 
+ScheduleRunExecutor = Callable[[Session, ScheduleRun], None]
+
 
 def execute_schedule_run(
     db_session: Session,
     schedule_run_id: str,
+    executor: ScheduleRunExecutor | None = None,
 ) -> ScheduleRun:
     run = _get_schedule_run(db_session, schedule_run_id)
     if run.status == "canceled":
@@ -20,10 +25,16 @@ def execute_schedule_run(
     run.updated_at = now
     db_session.flush()
 
+    if executor is not None:
+        executor(db_session, run)
+
     finished_at = utc_now()
-    run.status = "succeeded"
-    run.solver_status = "not_started"
-    run.solution_quality = "feasible_not_proven_optimal"
+    if run.status == "running":
+        run.status = "succeeded"
+    if run.solver_status is None:
+        run.solver_status = "not_started"
+    if run.solution_quality == "unknown":
+        run.solution_quality = "feasible_not_proven_optimal"
     run.finished_at = finished_at
     run.updated_at = finished_at
     db_session.commit()

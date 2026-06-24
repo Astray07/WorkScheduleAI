@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 
-DEFAULT_FALLBACK_TEXT = "서버 템플릿으로 mock 근무표 설명을 생성했습니다."
+DEFAULT_FALLBACK_TEXT = "서버 템플릿으로 근무표 설명을 생성했습니다."
 
 
 class StructuredExplanation(BaseModel):

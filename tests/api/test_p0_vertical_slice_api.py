@@ -29,10 +29,10 @@ def test_p0_vertical_slice_recalculates_publishes_and_downloads_excel(
         json={
             "mode": "upsert",
             "rows": [
-                _employee_row(1, "E001", "Kim"),
-                _employee_row(2, "E002", "Lee"),
-                _employee_row(3, "E003", "Park"),
-                _employee_row(4, "E004", "Choi"),
+                _employee_row(1, "E001", "Kim", ["사수"]),
+                _employee_row(2, "E002", "Lee", ["부사수"]),
+                _employee_row(3, "E003", "Park", ["사수"]),
+                _employee_row(4, "E004", "Choi", ["사수"]),
             ],
         },
     )
@@ -70,6 +70,35 @@ def test_p0_vertical_slice_recalculates_publishes_and_downloads_excel(
     )
     assert pair_response.status_code == 201
 
+    shift_type_response = client.post(
+        f"/organizations/{organization_id}/shift-types",
+        json={
+            "name": "주간 근무",
+            "local_start_time": "09:00",
+            "local_end_time": "18:00",
+            "timezone": "Asia/Seoul",
+            "requirements": [
+                {
+                    "role_id": next(
+                        role["id"]
+                        for role in organization["default_roles"]
+                        if role["name"] == "사수"
+                    ),
+                    "required_count": 1,
+                },
+                {
+                    "role_id": next(
+                        role["id"]
+                        for role in organization["default_roles"]
+                        if role["name"] == "부사수"
+                    ),
+                    "required_count": 1,
+                },
+            ],
+        },
+    )
+    assert shift_type_response.status_code == 201
+
     run_response = client.post(
         f"/organizations/{organization_id}/schedule-runs",
         json={
@@ -81,6 +110,7 @@ def test_p0_vertical_slice_recalculates_publishes_and_downloads_excel(
         },
     )
     assert run_response.status_code == 202
+    assert run_response.json()["solver_status"].startswith("cp_sat_")
     run_id = run_response.json()["id"]
 
     initial_result_response = client.get(
@@ -155,15 +185,20 @@ def test_p0_vertical_slice_recalculates_publishes_and_downloads_excel(
         sheet_xml = workbook.read("xl/worksheets/sheet1.xml").decode("utf-8")
     assert "publication_id" in sheet_xml
     assert "local_date" in sheet_xml
-    assert "Kim" in sheet_xml
+    assert "Lee" in sheet_xml
 
 
-def _employee_row(row_no: int, employee_code: str, name: str) -> dict:
+def _employee_row(
+    row_no: int,
+    employee_code: str,
+    name: str,
+    role_names: list[str],
+) -> dict:
     return {
         "row_no": row_no,
         "employee_code": employee_code,
         "name": name,
-        "role_names": ["사수", "부사수"],
+        "role_names": role_names,
         "max_shifts_per_week": 5,
     }
 
