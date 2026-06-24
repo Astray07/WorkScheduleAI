@@ -39,3 +39,7 @@
 ## 10. 100명/31일은 현재 solver 기준 병목 없음
 
 deterministic `num_search_workers=1` 경로에서 100명/31일 fixture가 약 0.054초에 해결됐습니다. 현재 단계에서는 fast mode를 추가하지 않고, 성능 회귀 테스트와 baseline 문서화로 hardening 기준을 고정합니다.
+
+## 11. 운영 모니터링은 우선 pull 기반 endpoint로 시작
+
+별도 metrics backend나 push gateway를 붙이지 않고 `/operations/schedule-runs/metrics`와 `/health/ready`를 추가했습니다. Railway/staging 배포 전까지는 로컬/CI에서 검증 가능한 pull endpoint로 상태 카운트, active job 수, 완료 duration 평균, DB/Redis readiness를 확인합니다.

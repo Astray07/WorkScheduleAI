@@ -124,6 +124,26 @@
   - 결과: 통과
   - 참고: 기존 unstaged 파일과 수정 파일의 LF/CRLF warning만 출력됨
 
+## Operational Monitoring RED/GREEN
+
+- RED: `python -m pytest tests\api\test_operations_api.py -q`
+  - 결과: 실패
+  - 이유: `/operations/schedule-runs/metrics` route가 아직 없음
+- GREEN: 같은 테스트 재실행
+  - 결과: 1 passed
+- RED: `python -m pytest tests\api\test_operations_api.py::test_readiness_reports_database_and_redis_status -q`
+  - 결과: 실패
+  - 이유: `/health/ready` route가 아직 없음
+- GREEN: `python -m pytest tests\api\test_operations_api.py -q`
+  - 결과: 2 passed
+- 전체 회귀: `python -m pytest -q`
+  - 결과: 122 passed, 1 skipped
+- `cd frontend; npm run build`
+  - 결과: 성공
+- `git diff --check`
+  - 결과: 통과
+  - 참고: 기존 unstaged 파일과 수정 파일의 LF/CRLF warning만 출력됨
+
 ## Advanced Diagnostics RED/GREEN
 
 - RED: `python -m pytest tests\api\test_schedule_runs_api.py::test_schedule_run_result_maps_solver_unfilled_issue tests\api\test_schedule_runs_api.py::test_solver_proposes_multiple_time_off_override_candidates -q`

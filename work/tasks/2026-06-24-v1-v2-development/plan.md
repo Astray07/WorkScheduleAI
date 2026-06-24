@@ -47,10 +47,10 @@
 
 ## Phase 5: Operational Monitoring
 
-- [ ] ScheduleRun phase/status/duration metric과 실패 reason code를 기록합니다.
-- [ ] worker heartbeat 또는 job processing visibility를 추가합니다.
-- [ ] health/readiness endpoint가 DB와 Redis 연결 상태를 구분해 보고하도록 확장합니다.
-- [ ] 운영 smoke checklist를 작성하고 마지막 통합 점검 전까지 push/deploy는 보류합니다.
+- [x] ScheduleRun phase/status/duration metric과 실패 reason code를 기록합니다.
+- [x] worker heartbeat 또는 job processing visibility를 추가합니다.
+- [x] health/readiness endpoint가 DB와 Redis 연결 상태를 구분해 보고하도록 확장합니다.
+- [x] 운영 smoke checklist를 작성하고 마지막 통합 점검 전까지 push/deploy는 보류합니다.
 
 ## Redis Worker 성공 기준
 
