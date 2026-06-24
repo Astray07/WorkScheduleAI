@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Text
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, Text
+from sqlalchemy import Index, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -294,6 +294,129 @@ class PairConstraint(Base):
             override_allowed=override_allowed,
             active=active,
         )
+
+
+class ScheduleRun(Base):
+    __tablename__ = "schedule_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "idempotency_key",
+            name="uq_schedule_runs_organization_idempotency_key",
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'infeasible', 'failed', 'canceled')",
+            name="ck_schedule_runs_status",
+        ),
+        CheckConstraint(
+            "solver_status IS NULL OR solver_status IN ('cp_sat_optimal', 'cp_sat_feasible', 'cp_sat_infeasible', 'cp_sat_model_invalid', 'cp_sat_unknown', 'not_started', 'error')",
+            name="ck_schedule_runs_solver_status",
+        ),
+        CheckConstraint(
+            "solution_quality IN ('optimal', 'feasible_not_proven_optimal', 'infeasible', 'unknown')",
+            name="ck_schedule_runs_solution_quality",
+        ),
+        CheckConstraint(
+            "template IN ('one_shift_per_day', 'morning_afternoon_night', 'on_call', 'custom')",
+            name="ck_schedule_runs_template",
+        ),
+        CheckConstraint(
+            "period_start <= period_end",
+            name="ck_schedule_runs_period_order",
+        ),
+        CheckConstraint(
+            "timeout_seconds >= 1 AND timeout_seconds <= 120",
+            name="ck_schedule_runs_timeout_seconds",
+        ),
+        CheckConstraint(
+            "current_attempt_no >= 1",
+            name="ck_schedule_runs_current_attempt_no",
+        ),
+        CheckConstraint(
+            "recalculation_count >= 0 AND recalculation_count <= 3",
+            name="ck_schedule_runs_recalculation_count",
+        ),
+        Index(
+            "ix_schedule_runs_organization_period",
+            "organization_id",
+            "period_start",
+            "period_end",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    template: Mapped[str] = mapped_column(Text, nullable=False)
+    deterministic_mode: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    solver_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    solution_quality: Mapped[str] = mapped_column(Text, nullable=False)
+    current_attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    recalculation_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    input_snapshot_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    canceled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+class ScheduleInputSnapshot(Base):
+    __tablename__ = "schedule_input_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "schedule_run_id",
+            name="uq_schedule_input_snapshots_schedule_run_id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    schedule_run_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("schedule_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    snapshot_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    storage_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
 
 
 def normalize_pair_employee_ids(employee_a_id: str, employee_b_id: str) -> tuple[str, str]:

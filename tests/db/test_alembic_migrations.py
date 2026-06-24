@@ -15,6 +15,8 @@ EXPECTED_TABLES = {
     "employee_roles",
     "pair_constraints",
     "unavailabilities",
+    "schedule_runs",
+    "schedule_input_snapshots",
 }
 
 
@@ -55,6 +57,16 @@ def test_alembic_upgrade_head_creates_named_constraints(tmp_path):
     unavailability_check_names = {
         item["name"] for item in inspector.get_check_constraints("unavailabilities")
     }
+    schedule_run_unique_names = {
+        item["name"] for item in inspector.get_unique_constraints("schedule_runs")
+    }
+    schedule_run_check_names = {
+        item["name"] for item in inspector.get_check_constraints("schedule_runs")
+    }
+    snapshot_unique_names = {
+        item["name"]
+        for item in inspector.get_unique_constraints("schedule_input_snapshots")
+    }
 
     assert "uq_employees_organization_employee_code" in employee_unique_names
     assert "uq_roles_organization_name" in role_unique_names
@@ -66,6 +78,13 @@ def test_alembic_upgrade_head_creates_named_constraints(tmp_path):
     assert "ck_pair_constraints_normalized_order" in pair_check_names
     assert "ck_unavailabilities_type" in unavailability_check_names
     assert "ck_unavailabilities_time_order" in unavailability_check_names
+    assert (
+        "uq_schedule_runs_organization_idempotency_key"
+        in schedule_run_unique_names
+    )
+    assert "ck_schedule_runs_status" in schedule_run_check_names
+    assert "ck_schedule_runs_recalculation_count" in schedule_run_check_names
+    assert "uq_schedule_input_snapshots_schedule_run_id" in snapshot_unique_names
 
 
 def test_alembic_upgrade_head_creates_unavailability_indexes(tmp_path):
@@ -84,6 +103,26 @@ def test_alembic_upgrade_head_creates_unavailability_indexes(tmp_path):
     assert "ix_unavailabilities_employee_time" in unavailability_index_names
 
 
+def test_alembic_upgrade_head_creates_schedule_run_indexes(tmp_path):
+    db_path = tmp_path / "migration-test.sqlite"
+
+    _upgrade_head(db_path)
+
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    inspector = inspect(engine)
+    schedule_run_index_names = {
+        item["name"] for item in inspector.get_indexes("schedule_runs")
+    }
+    snapshot_index_names = {
+        item["name"] for item in inspector.get_indexes("schedule_input_snapshots")
+    }
+
+    assert "ix_schedule_runs_organization_id" in schedule_run_index_names
+    assert "ix_schedule_runs_organization_period" in schedule_run_index_names
+    assert "ix_schedule_input_snapshots_organization_id" in snapshot_index_names
+    assert "ix_schedule_input_snapshots_schedule_run_id" in snapshot_index_names
+
+
 def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
     db_path = tmp_path / "migration-test.sqlite"
 
@@ -95,7 +134,7 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260624_0002"
+    assert version == "20260624_0003"
 
 
 def _upgrade_head(db_path: Path) -> None:
