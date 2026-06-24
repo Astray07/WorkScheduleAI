@@ -63,3 +63,22 @@
 - `git diff --check`
   - 결과: 통과
   - 참고: 기존 unstaged 파일과 수정 파일의 LF/CRLF warning만 출력됨
+
+## Advanced Diagnostics RED/GREEN
+
+- RED: `python -m pytest tests\api\test_schedule_runs_api.py::test_schedule_run_result_maps_solver_unfilled_issue tests\api\test_schedule_runs_api.py::test_solver_proposes_multiple_time_off_override_candidates -q`
+  - 결과: 실패
+  - 이유: `impact_preview.unavailable_reasons`가 없고 휴가 override 후보가 1개만 반환됨
+- GREEN: 같은 테스트 재실행
+  - 결과: 2 passed
+- Diagnostic metadata 보강: `python -m pytest tests\api\test_schedule_runs_api.py::test_solver_unfilled_issue_persists_diagnostic_events -q`
+  - 결과: 1 passed
+- 회귀: `python -m pytest tests\api\test_schedule_runs_api.py tests\llm\test_explanations.py -q`
+  - 결과: 37 passed
+- 전체 회귀: `python -m pytest -q`
+  - 결과: 115 passed, 1 skipped
+- `cd frontend; npm run build`
+  - 결과: 성공
+- `git diff --check`
+  - 결과: 통과
+  - 참고: 기존 unstaged 파일과 수정 파일의 LF/CRLF warning만 출력됨

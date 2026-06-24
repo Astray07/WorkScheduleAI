@@ -23,9 +23,9 @@
 
 ## Phase 2: Advanced Diagnostics And Mitigations
 
-- [ ] 현재 SolverDiagnosticEvent와 proposal 생성 경계를 정리합니다.
-- [ ] assumption literal 기반 또는 동등한 구조화 진단이 필요한 케이스를 테스트로 고정합니다.
-- [ ] 완화안이 2개 미만일 때 추가 후보 부재 이유를 API에 노출합니다.
+- [x] 현재 SolverDiagnosticEvent와 proposal 생성 경계를 정리합니다.
+- [x] assumption literal 기반 또는 동등한 구조화 진단이 필요한 케이스를 테스트로 고정합니다.
+- [x] 완화안이 2개 미만일 때 추가 후보 부재 이유를 API에 노출합니다.
 - [ ] grouped proposal과 requires_proposal_ids를 읽기 전용/수동 조정 폴백 UX 계약에 맞게 실제화합니다.
 - [ ] LLM 설명 payload가 서버 구조화 진단만 자연어화하고 개인정보와 numeric loss score를 보내지 않는지 회귀 테스트합니다.
 

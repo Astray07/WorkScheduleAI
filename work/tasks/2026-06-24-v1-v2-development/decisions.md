@@ -23,3 +23,7 @@
 ## 6. Worker entrypoint는 기존 artifact executor를 재사용
 
 `python -m work_schedule_ai.worker.queue_worker`는 Redis 또는 fake queue에서 run id를 소비하고 `execute_schedule_run`을 호출합니다. artifact 생성 로직은 현재 `schedule_runs` route의 기존 `_execute_schedule_run_artifacts` 경계를 재사용해 범위 확장을 피했습니다.
+
+## 7. Phase 2 첫 단위는 proposal 후보 이유와 다중 후보 생성으로 제한
+
+전체 assumption literal 진단 모델은 큰 변경이므로 먼저 API 사용자 가치가 바로 드러나는 구조화 이유를 추가했습니다. `ImpactPreview.unavailable_reasons`는 기존 `impact_preview_json`에 저장되어 별도 migration 없이 응답과 diagnostic metadata에 함께 남습니다.

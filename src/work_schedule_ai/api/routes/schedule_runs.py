@@ -142,6 +142,7 @@ class LLMExplanation(BaseModel):
 class ImpactPreview(BaseModel):
     resolved_issue_ids: list[str]
     new_warning_count: int
+    unavailable_reasons: list[str] = Field(default_factory=list)
 
 
 class ScheduleIssueResponse(BaseModel):
@@ -1111,6 +1112,9 @@ def _diagnostic_events_for_artifacts(
                         "resolved_issue_ids": (
                             proposal.impact_preview.resolved_issue_ids
                         ),
+                        "unavailable_reasons": (
+                            proposal.impact_preview.unavailable_reasons
+                        ),
                     },
                     ensure_ascii=False,
                     sort_keys=True,
@@ -1594,34 +1598,42 @@ def _solver_proposals(
 ) -> list[RelaxationProposalResponse]:
     proposals: list[RelaxationProposalResponse] = []
     for issue in issues:
-        candidate = _time_off_override_candidate(run, issue, db_session)
-        if candidate is not None and issue.slot_id is not None:
-            proposal_id = _time_off_proposal_id(candidate.id, issue.slot_id)
-            proposals.append(
-                RelaxationProposalResponse(
-                    id=proposal_id,
-                    group_id=None,
-                    requires_proposal_ids=[],
-                    type="approve_time_off_override",
-                    severity=issue.severity,
-                    affected_slot_id=issue.slot_id,
-                    display_summary=(
-                        "해당 슬롯의 휴가 중 후보 1명을 예외 승인하면 "
-                        "미배정을 해소할 수 있습니다."
-                    ),
-                    impact_preview=ImpactPreview(
-                        resolved_issue_ids=[issue.id],
-                        new_warning_count=1,
-                    ),
-                    status=(
-                        "approved"
-                        if proposal_id in approved_proposal_ids
-                        else "suggested"
-                    ),
-                    attempt_no=run.current_attempt_no,
-                    llm_explanation=_llm_explanation(),
-                )
+        candidates = _time_off_override_candidates(run, issue, db_session)
+        if candidates and issue.slot_id is not None:
+            limited_candidates = candidates[:3]
+            unavailable_reasons = (
+                []
+                if len(limited_candidates) > 1
+                else ["NO_ADDITIONAL_TIME_OFF_OVERRIDE_CANDIDATE"]
             )
+            for candidate in limited_candidates:
+                proposal_id = _time_off_proposal_id(candidate.id, issue.slot_id)
+                proposals.append(
+                    RelaxationProposalResponse(
+                        id=proposal_id,
+                        group_id=None,
+                        requires_proposal_ids=[],
+                        type="approve_time_off_override",
+                        severity=issue.severity,
+                        affected_slot_id=issue.slot_id,
+                        display_summary=(
+                            "해당 슬롯의 휴가 중 후보 1명을 예외 승인하면 "
+                            "미배정을 해소할 수 있습니다."
+                        ),
+                        impact_preview=ImpactPreview(
+                            resolved_issue_ids=[issue.id],
+                            new_warning_count=1,
+                            unavailable_reasons=unavailable_reasons,
+                        ),
+                        status=(
+                            "approved"
+                            if proposal_id in approved_proposal_ids
+                            else "suggested"
+                        ),
+                        attempt_no=run.current_attempt_no,
+                        llm_explanation=_llm_explanation(),
+                    )
+                )
             continue
 
         proposal_id = f"proposal_manual_review__{issue.id}"
@@ -1637,6 +1649,7 @@ def _solver_proposals(
                 impact_preview=ImpactPreview(
                     resolved_issue_ids=[],
                     new_warning_count=0,
+                    unavailable_reasons=["NO_TIME_OFF_OVERRIDE_CANDIDATE"],
                 ),
                 status=(
                     "approved" if proposal_id in approved_proposal_ids else "suggested"
@@ -1661,16 +1674,16 @@ def _attach_related_proposal_ids(
         ]
 
 
-def _time_off_override_candidate(
+def _time_off_override_candidates(
     run: ScheduleRun,
     issue: ScheduleIssueResponse,
     db_session: Session,
-) -> Employee | None:
+) -> list[Employee]:
     if issue.slot_id is None or issue.role_id is None:
-        return None
+        return []
     slot_date = _local_date_from_slot_id(issue.slot_id)
     if slot_date is None:
-        return None
+        return []
     role_ids_by_employee = _role_ids_by_employee(run.organization_id, db_session)
     eligible_employee_ids = {
         employee_id
@@ -1678,7 +1691,7 @@ def _time_off_override_candidate(
         if issue.role_id in role_ids
     }
     if not eligible_employee_ids:
-        return None
+        return []
     employees_by_id = {
         employee.id: employee
         for employee in db_session.execute(
@@ -1704,7 +1717,7 @@ def _time_off_override_candidate(
         ):
             candidates.append(employees_by_id[unavailability.employee_id])
     candidates.sort(key=lambda employee: employee.employee_code)
-    return candidates[0] if candidates else None
+    return candidates
 
 
 def _time_off_proposal_id(employee_id: str, slot_id: str) -> str:
