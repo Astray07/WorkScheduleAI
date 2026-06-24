@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api.dependencies import get_db_session, set_tenant_context
 from work_schedule_ai.db.models import Organization, Role
 
 
@@ -45,6 +45,7 @@ def create_organization(
     )
     db_session.add(organization)
     db_session.flush()
+    set_tenant_context(db_session, organization.id)
 
     default_roles = [
         Role(id=_new_id("role"), organization_id=organization.id, name="사수"),
@@ -67,4 +68,3 @@ def create_organization(
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex}"
-

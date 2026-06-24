@@ -1,6 +1,7 @@
 from collections.abc import Generator
 from datetime import date
 from io import BytesIO
+import json
 import zipfile
 
 import pytest
@@ -469,6 +470,100 @@ def test_recalculate_rejects_fourth_recalculation(
     assert db_session.query(ScheduleRecalculationRequest).count() == 3
 
 
+def test_recalculate_rejects_published_schedule_run(
+    client: TestClient,
+    db_session: Session,
+):
+    run_id, result_payload = _create_recalculated_result(client)
+    publish_response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/publications",
+        json={
+            "expected_assignment_snapshot_hash": result_payload[
+                "assignment_snapshot_hash"
+            ],
+            "expected_issue_snapshot_hash": result_payload["issue_snapshot_hash"],
+        },
+    )
+    assert publish_response.status_code == 201
+    run = db_session.query(ScheduleRun).filter_by(id=run_id).one()
+    previous_recalculation_count = run.recalculation_count
+    previous_assignment_count = db_session.query(Assignment).filter_by(
+        schedule_run_id=run_id
+    ).count()
+
+    response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/recalculate",
+        json={"reason": "발행 후 재계산을 시도합니다."},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "SCHEDULE_RUN_ALREADY_PUBLISHED"
+    db_session.refresh(run)
+    assert run.recalculation_count == previous_recalculation_count
+    assert db_session.query(Assignment).filter_by(
+        schedule_run_id=run_id
+    ).count() == previous_assignment_count
+
+
+def test_time_off_override_applies_only_to_approved_employee_slot(
+    client: TestClient,
+):
+    organization = _create_role_scoped_organization(client, name="Scoped Clinic")
+    organization_id = organization["organization_id"]
+    employees_by_code = organization["employees_by_code"]
+    junior_role_id = organization["junior_role_id"]
+    client.post(
+        f"/organizations/{organization_id}/unavailabilities",
+        json={
+            "employee_id": employees_by_code["E002"]["id"],
+            "type": "vacation",
+            "starts_at": "2026-07-01T00:00:00+09:00",
+            "ends_at": "2026-07-03T00:00:00+09:00",
+            "override_allowed": True,
+        },
+    )
+    run_response = client.post(
+        f"/organizations/{organization_id}/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-02"},
+    )
+    run_id = run_response.json()["id"]
+    initial_result = client.get(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
+    ).json()
+    assert [issue["role_id"] for issue in initial_result["issues"]] == [
+        junior_role_id,
+        junior_role_id,
+    ]
+    first_proposal = initial_result["proposals"][0]
+
+    approval_response = client.post(
+        (
+            f"/organizations/{organization_id}/schedule-runs/{run_id}"
+            f"/relaxation-proposals/{first_proposal['id']}/approve"
+        ),
+        json={"reason": "첫날 휴가 예외만 승인", "notification_required": True},
+    )
+    assert approval_response.status_code == 201
+    recalculate_response = client.post(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/recalculate",
+        json={"reason": "승인된 단일 slot 예외 반영"},
+    )
+    assert recalculate_response.status_code == 202
+
+    result = client.get(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
+    ).json()
+
+    assert len(result["issues"]) == 1
+    assert result["issues"][0]["slot_id"].startswith("slot_2026_07_02")
+    assert result["issues"][0]["role_id"] == junior_role_id
+    assert all(
+        assignment["employee_id"] != employees_by_code["E002"]["id"]
+        or assignment["slot_id"].startswith("slot_2026_07_01")
+        for assignment in result["assignments"]
+    )
+
+
 def test_schedule_run_result_uses_shift_template_solver_path(
     client: TestClient,
     db_session: Session,
@@ -558,6 +653,138 @@ def test_schedule_run_result_maps_solver_unfilled_issue(client: TestClient):
     assert payload["issues"][0]["type"] == "unfilled_requirement"
     assert payload["issues"][0]["role_id"] == junior_role_id
     assert payload["issues"][0]["missing_count"] == 1
+    assert payload["proposals"][0]["type"] == "mark_manual_review"
+    assert "휴가" not in payload["proposals"][0]["display_summary"]
+
+
+def test_manual_edit_validation_rejects_ineligible_employee(client: TestClient):
+    create_response = client.post(
+        "/organizations",
+        json={"name": "Manual Edit Clinic", "timezone": "Asia/Seoul"},
+    )
+    organization = create_response.json()
+    organization_id = organization["id"]
+    senior_role_id = next(
+        role["id"] for role in organization["default_roles"] if role["name"] == "사수"
+    )
+    junior_role_id = next(
+        role["id"] for role in organization["default_roles"] if role["name"] == "부사수"
+    )
+    employee_response = client.post(
+        f"/organizations/{organization_id}/employees/bulk-paste",
+        json={
+            "mode": "upsert",
+            "rows": [
+                {
+                    "row_no": 1,
+                    "employee_code": "E001",
+                    "name": "Only Senior",
+                    "role_names": ["사수"],
+                }
+            ],
+        },
+    )
+    employee_id = employee_response.json()["employees"][0]["id"]
+    shift_type_response = client.post(
+        f"/organizations/{organization_id}/shift-types",
+        json={
+            "name": "주간 근무",
+            "local_start_time": "09:00",
+            "local_end_time": "18:00",
+            "timezone": "Asia/Seoul",
+            "requirements": [
+                {"role_id": senior_role_id, "required_count": 1},
+                {"role_id": junior_role_id, "required_count": 1},
+            ],
+        },
+    )
+    assert shift_type_response.status_code == 201
+    run_response = client.post(
+        f"/organizations/{organization_id}/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-01"},
+    )
+    run_id = run_response.json()["id"]
+    result = client.get(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
+    ).json()
+
+    response = client.post(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/manual-edits/validate",
+        json={
+            "slot_id": result["slots"][0]["id"],
+            "role_id": junior_role_id,
+            "employee_id": employee_id,
+            "locked_by_user": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["valid"] is False
+    assert payload["blocking_errors"] == [
+        {
+            "field": "employee_id",
+            "code": "EMPLOYEE_ROLE_MISMATCH",
+            "message": "Employee is not eligible for the requested role.",
+        }
+    ]
+    assert payload["warnings"] == []
+
+
+def test_manual_edit_validation_rejects_published_schedule_run(client: TestClient):
+    run_id, result_payload = _create_recalculated_result(client)
+    publish_response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/publications",
+        json={
+            "expected_assignment_snapshot_hash": result_payload[
+                "assignment_snapshot_hash"
+            ],
+            "expected_issue_snapshot_hash": result_payload["issue_snapshot_hash"],
+        },
+    )
+    assert publish_response.status_code == 201
+    result = client.get(f"/organizations/org_1/schedule-runs/{run_id}/result").json()
+
+    response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/manual-edits/validate",
+        json={
+            "slot_id": result["slots"][0]["id"],
+            "role_id": "role_senior",
+            "employee_id": "emp_1",
+            "locked_by_user": True,
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "SCHEDULE_RUN_ALREADY_PUBLISHED"
+
+
+def test_schedule_input_snapshot_includes_generated_slots_and_requirements(
+    client: TestClient,
+    db_session: Session,
+):
+    _create_day_shift_type(db_session)
+
+    response = client.post(
+        "/organizations/org_1/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-02"},
+    )
+
+    assert response.status_code == 202
+    snapshot = db_session.query(ScheduleInputSnapshot).one()
+    payload = json.loads(snapshot.payload_json)
+    assert [slot["id"] for slot in payload["generated_shift_slots"]] == [
+        "slot_2026_07_01_shift_type_day",
+        "slot_2026_07_02_shift_type_day",
+    ]
+    assert len(payload["generated_schedule_requirements"]) == 4
+    assert {
+        requirement["slot_id"]
+        for requirement in payload["generated_schedule_requirements"]
+    } == {
+        "slot_2026_07_01_shift_type_day",
+        "slot_2026_07_02_shift_type_day",
+    }
 
 
 def test_publish_schedule_run_creates_publication_and_marks_result_read_only(
@@ -732,6 +959,72 @@ def _create_run_and_approve_mock_proposal(client: TestClient) -> str:
     )
     assert approval_response.status_code == 201
     return run_id
+
+
+def _create_role_scoped_organization(client: TestClient, name: str) -> dict:
+    organization_response = client.post(
+        "/organizations",
+        json={"name": name, "timezone": "Asia/Seoul"},
+    )
+    assert organization_response.status_code == 201
+    organization = organization_response.json()
+    organization_id = organization["id"]
+    senior_role_id = next(
+        role["id"] for role in organization["default_roles"] if role["name"] == "사수"
+    )
+    junior_role_id = next(
+        role["id"] for role in organization["default_roles"] if role["name"] == "부사수"
+    )
+    employee_response = client.post(
+        f"/organizations/{organization_id}/employees/bulk-paste",
+        json={
+            "mode": "upsert",
+            "rows": [
+                {
+                    "row_no": 1,
+                    "employee_code": "E001",
+                    "name": "Kim",
+                    "role_names": ["사수"],
+                },
+                {
+                    "row_no": 2,
+                    "employee_code": "E002",
+                    "name": "Lee",
+                    "role_names": ["부사수"],
+                },
+                {
+                    "row_no": 3,
+                    "employee_code": "E003",
+                    "name": "Park",
+                    "role_names": ["사수"],
+                },
+            ],
+        },
+    )
+    assert employee_response.status_code == 200
+    shift_type_response = client.post(
+        f"/organizations/{organization_id}/shift-types",
+        json={
+            "name": "주간 근무",
+            "local_start_time": "09:00",
+            "local_end_time": "18:00",
+            "timezone": "Asia/Seoul",
+            "requirements": [
+                {"role_id": senior_role_id, "required_count": 1},
+                {"role_id": junior_role_id, "required_count": 1},
+            ],
+        },
+    )
+    assert shift_type_response.status_code == 201
+    return {
+        "organization_id": organization_id,
+        "senior_role_id": senior_role_id,
+        "junior_role_id": junior_role_id,
+        "employees_by_code": {
+            employee["employee_code"]: employee
+            for employee in employee_response.json()["employees"]
+        },
+    }
 
 
 def _create_day_shift_type(session: Session) -> None:
