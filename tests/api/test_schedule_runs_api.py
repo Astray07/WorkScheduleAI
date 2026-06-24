@@ -20,6 +20,8 @@ from work_schedule_ai.db.models import (
     ScheduleRecalculationRequest,
     ScheduleInputSnapshot,
     ScheduleRun,
+    ShiftRequirement,
+    ShiftType,
 )
 
 
@@ -395,6 +397,91 @@ def test_recalculate_rejects_fourth_recalculation(
     assert db_session.query(ScheduleRecalculationRequest).count() == 3
 
 
+def test_schedule_run_result_uses_shift_template_solver_path(
+    client: TestClient,
+    db_session: Session,
+):
+    _create_day_shift_type(db_session)
+    create_response = client.post(
+        "/organizations/org_1/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-01"},
+    )
+    run_id = create_response.json()["id"]
+
+    response = client.get(f"/organizations/org_1/schedule-runs/{run_id}/result")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["slots"]) == 1
+    assert payload["slots"][0]["label"] == "주간 근무"
+    assert len(payload["requirements"]) == 2
+    assert len(payload["assignments"]) == 2
+    assert payload["issues"] == []
+    assert {
+        assignment["role_id"] for assignment in payload["assignments"]
+    } == {"role_senior", "role_junior"}
+
+
+def test_schedule_run_result_maps_solver_unfilled_issue(client: TestClient):
+    create_response = client.post(
+        "/organizations",
+        json={"name": "Unfilled Clinic", "timezone": "Asia/Seoul"},
+    )
+    organization = create_response.json()
+    organization_id = organization["id"]
+    senior_role_id = next(
+        role["id"] for role in organization["default_roles"] if role["name"] == "사수"
+    )
+    junior_role_id = next(
+        role["id"] for role in organization["default_roles"] if role["name"] == "부사수"
+    )
+    employee_response = client.post(
+        f"/organizations/{organization_id}/employees/bulk-paste",
+        json={
+            "mode": "upsert",
+            "rows": [
+                {
+                    "row_no": 1,
+                    "employee_code": "E001",
+                    "name": "Only Senior",
+                    "role_names": ["사수"],
+                }
+            ],
+        },
+    )
+    assert employee_response.status_code == 200
+    shift_type_response = client.post(
+        f"/organizations/{organization_id}/shift-types",
+        json={
+            "name": "주간 근무",
+            "local_start_time": "09:00",
+            "local_end_time": "18:00",
+            "timezone": "Asia/Seoul",
+            "requirements": [
+                {"role_id": senior_role_id, "required_count": 1},
+                {"role_id": junior_role_id, "required_count": 1},
+            ],
+        },
+    )
+    assert shift_type_response.status_code == 201
+    run_response = client.post(
+        f"/organizations/{organization_id}/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-01"},
+    )
+    run_id = run_response.json()["id"]
+
+    response = client.get(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["assignments"]) == 1
+    assert payload["issues"][0]["type"] == "unfilled_requirement"
+    assert payload["issues"][0]["role_id"] == junior_role_id
+    assert payload["issues"][0]["missing_count"] == 1
+
+
 def test_publish_schedule_run_creates_publication_and_marks_result_read_only(
     client: TestClient,
 ):
@@ -537,6 +624,38 @@ def _create_run_and_approve_mock_proposal(client: TestClient) -> str:
     )
     assert approval_response.status_code == 201
     return run_id
+
+
+def _create_day_shift_type(session: Session) -> None:
+    shift_type = ShiftType(
+        id="shift_type_day",
+        organization_id="org_1",
+        name="주간 근무",
+        local_start_time="09:00",
+        local_end_time="18:00",
+        timezone="Asia/Seoul",
+        crosses_midnight=False,
+        active=True,
+    )
+    requirements = [
+        ShiftRequirement(
+            id="shift_requirement_senior",
+            organization_id="org_1",
+            shift_type_id="shift_type_day",
+            role_id="role_senior",
+            required_count=1,
+        ),
+        ShiftRequirement(
+            id="shift_requirement_junior",
+            organization_id="org_1",
+            shift_type_id="shift_type_day",
+            role_id="role_junior",
+            required_count=1,
+        ),
+    ]
+    session.add(shift_type)
+    session.add_all(requirements)
+    session.commit()
 
 
 def _seed_p0_organization(session: Session) -> None:

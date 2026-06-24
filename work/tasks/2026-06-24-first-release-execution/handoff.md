@@ -12,6 +12,6 @@
 
 ## 다음 단계
 
-1. OR-Tools solver를 ScheduleRun snapshot/result 생성 경로에 연결합니다.
-2. ShiftType/ShiftRequirement를 solver input으로 변환합니다.
+1. ScheduleRun worker 상태 전이와 cancel/retry 계약을 보강합니다.
+2. 기존 `current_attempt_no`와 `recalculation_count` 분리 규칙을 API 테스트로 고정합니다.
 3. 전체 테스트 후 커밋합니다.

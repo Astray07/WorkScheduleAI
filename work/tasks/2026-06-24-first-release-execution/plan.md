@@ -3,7 +3,7 @@
 - [x] 현재 저장소와 기획서의 1차 범위를 대조합니다.
 - [x] 1차 릴리즈 상위 실행 계획을 작성합니다.
 - [x] ShiftType/ShiftRequirement 모델과 API를 구현합니다.
-- [ ] OR-Tools solver MVP를 구현합니다.
+- [x] OR-Tools solver MVP를 구현합니다.
 - [ ] ScheduleRun worker 상태 전이를 보강합니다.
 - [ ] P0 운영형 프론트엔드를 구현합니다.
 - [ ] LLM 설명 fallback/privacy 테스트를 구현합니다.
