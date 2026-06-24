@@ -12,6 +12,6 @@
 
 ## 다음 단계
 
-1. OR-Tools solver MVP 작업을 시작합니다.
-2. ShiftType/ShiftRequirement를 ScheduleRun snapshot과 solver input에 연결합니다.
+1. OR-Tools solver를 ScheduleRun snapshot/result 생성 경로에 연결합니다.
+2. ShiftType/ShiftRequirement를 solver input으로 변환합니다.
 3. 전체 테스트 후 커밋합니다.
