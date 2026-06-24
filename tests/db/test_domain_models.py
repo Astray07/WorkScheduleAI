@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine, event
@@ -13,6 +13,8 @@ from work_schedule_ai.db.models import (
     Organization,
     PairConstraint,
     Role,
+    ScheduleRun,
+    ScheduleInputSnapshot,
     Unavailability,
     User,
     normalize_pair_employee_ids,
@@ -274,6 +276,101 @@ def test_unavailability_rejects_non_positive_time_range(session):
     session.commit()
 
     session.add(unavailability)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_schedule_run_rejects_unknown_status(session):
+    org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
+    run = ScheduleRun(
+        id="run_1",
+        organization_id="org_1",
+        period_start=date(2026, 7, 1),
+        period_end=date(2026, 7, 7),
+        template="one_shift_per_day",
+        deterministic_mode=True,
+        timeout_seconds=30,
+        status="done",
+        solver_status="not_started",
+        solution_quality="unknown",
+        current_attempt_no=1,
+        recalculation_count=0,
+    )
+    session.add(org)
+    session.commit()
+
+    session.add(run)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_schedule_run_rejects_recalculation_count_over_three(session):
+    org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
+    run = ScheduleRun(
+        id="run_1",
+        organization_id="org_1",
+        period_start=date(2026, 7, 1),
+        period_end=date(2026, 7, 7),
+        template="one_shift_per_day",
+        deterministic_mode=True,
+        timeout_seconds=30,
+        status="succeeded",
+        solver_status="not_started",
+        solution_quality="feasible_not_proven_optimal",
+        current_attempt_no=1,
+        recalculation_count=4,
+    )
+    session.add(org)
+    session.commit()
+
+    session.add(run)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_schedule_input_snapshot_is_unique_per_schedule_run(session):
+    org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
+    run = ScheduleRun(
+        id="run_1",
+        organization_id="org_1",
+        period_start=date(2026, 7, 1),
+        period_end=date(2026, 7, 7),
+        template="one_shift_per_day",
+        deterministic_mode=True,
+        timeout_seconds=30,
+        status="succeeded",
+        solver_status="not_started",
+        solution_quality="feasible_not_proven_optimal",
+        current_attempt_no=1,
+        recalculation_count=0,
+    )
+    snapshot = ScheduleInputSnapshot(
+        id="snapshot_1",
+        organization_id="org_1",
+        schedule_run_id="run_1",
+        snapshot_hash="hash_1",
+        payload_json="{}",
+    )
+    duplicate = ScheduleInputSnapshot(
+        id="snapshot_2",
+        organization_id="org_1",
+        schedule_run_id="run_1",
+        snapshot_hash="hash_2",
+        payload_json="{}",
+    )
+    session.add(org)
+    session.commit()
+
+    session.add(run)
+    session.commit()
+
+    session.add(snapshot)
+    session.commit()
+
+    session.add(duplicate)
 
     with pytest.raises(IntegrityError):
         session.commit()

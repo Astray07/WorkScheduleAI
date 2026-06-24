@@ -5,6 +5,7 @@ from work_schedule_ai.api.routes.organizations import router as organizations_ro
 from work_schedule_ai.api.routes.pair_constraints import (
     router as pair_constraints_router,
 )
+from work_schedule_ai.api.routes.schedule_runs import router as schedule_runs_router
 from work_schedule_ai.api.routes.unavailabilities import (
     router as unavailabilities_router,
 )
@@ -22,6 +23,7 @@ def create_app() -> FastAPI:
     app.include_router(employees_router)
     app.include_router(unavailabilities_router)
     app.include_router(pair_constraints_router)
+    app.include_router(schedule_runs_router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
