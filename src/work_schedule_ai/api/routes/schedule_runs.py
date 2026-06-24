@@ -12,6 +12,7 @@ from xml.sax.saxutils import escape as xml_escape
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
+from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
@@ -39,6 +40,10 @@ from work_schedule_ai.solver.models import (
     SolveScheduleRequest,
 )
 from work_schedule_ai.solver.ortools_solver import solve_schedule
+from work_schedule_ai.worker.schedule_worker import (
+    cancel_schedule_run as worker_cancel_schedule_run,
+    execute_schedule_run,
+)
 
 
 router = APIRouter(prefix="/organizations", tags=["schedule-runs"])
@@ -275,17 +280,17 @@ def create_schedule_run(
         template=request.template,
         deterministic_mode=request.deterministic_mode,
         timeout_seconds=request.timeout_seconds,
-        status="succeeded",
-        solver_status="not_started",
-        solution_quality="feasible_not_proven_optimal",
+        status="queued",
+        solver_status=None,
+        solution_quality="unknown",
         current_attempt_no=1,
         recalculation_count=0,
         input_snapshot_hash=snapshot_hash,
         idempotency_key=idempotency_key,
         created_at=now,
         updated_at=now,
-        started_at=now,
-        finished_at=now,
+        started_at=None,
+        finished_at=None,
     )
     snapshot = ScheduleInputSnapshot(
         id=_new_id("snapshot"),
@@ -295,7 +300,8 @@ def create_schedule_run(
         payload_json=json.dumps(snapshot_payload, ensure_ascii=False, sort_keys=True),
     )
     db_session.add_all([run, snapshot])
-    db_session.commit()
+    db_session.flush()
+    execute_schedule_run(db_session, run.id)
 
     return _schedule_run_response(run, db_session)
 
@@ -348,6 +354,30 @@ def get_schedule_run_result(
         score_summary=artifacts.score_summary,
         llm_explanation=_llm_explanation(),
     )
+
+
+@router.post(
+    "/{organization_id}/schedule-runs/{schedule_run_id}/cancel",
+    response_model=ScheduleRunResponse,
+)
+def cancel_schedule_run(
+    organization_id: str,
+    schedule_run_id: str,
+    db_session: Session = Depends(get_db_session),
+) -> ScheduleRunResponse:
+    _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
+    try:
+        run = worker_cancel_schedule_run(db_session, schedule_run_id)
+    except InvalidRequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "SCHEDULE_RUN_NOT_CANCELABLE",
+                "message": str(exc),
+                "field": "status",
+            },
+        ) from exc
+    return _schedule_run_response(run, db_session)
 
 
 @router.post(

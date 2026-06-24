@@ -1,0 +1,98 @@
+from datetime import date
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.exc import InvalidRequestError
+from sqlalchemy.orm import Session
+
+from work_schedule_ai.db.models import Base, Organization, ScheduleRun
+from work_schedule_ai.worker.schedule_worker import (
+    cancel_schedule_run,
+    execute_schedule_run,
+    retry_schedule_run,
+)
+
+
+@pytest.fixture
+def session():
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    with Session(engine) as db_session:
+        db_session.add(Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul"))
+        db_session.commit()
+        yield db_session
+
+
+def test_execute_schedule_run_transitions_queued_to_succeeded(session: Session):
+    run = _queued_run()
+    session.add(run)
+    session.commit()
+
+    result = execute_schedule_run(session, "run_1")
+
+    assert result.status == "succeeded"
+    assert result.current_attempt_no == 1
+    assert result.recalculation_count == 0
+    assert result.started_at is not None
+    assert result.finished_at is not None
+
+
+def test_cancel_schedule_run_marks_queued_run_canceled(session: Session):
+    run = _queued_run()
+    session.add(run)
+    session.commit()
+
+    result = cancel_schedule_run(session, "run_1")
+
+    assert result.status == "canceled"
+    assert result.canceled_at is not None
+
+
+def test_execute_schedule_run_does_not_run_canceled_run(session: Session):
+    run = _queued_run(status="canceled")
+    session.add(run)
+    session.commit()
+
+    result = execute_schedule_run(session, "run_1")
+
+    assert result.status == "canceled"
+    assert result.started_at is None
+    assert result.finished_at is None
+
+
+def test_retry_schedule_run_increments_attempt_without_recalculation(session: Session):
+    run = _queued_run(status="running")
+    session.add(run)
+    session.commit()
+
+    result = retry_schedule_run(session, "run_1")
+
+    assert result.status == "succeeded"
+    assert result.current_attempt_no == 2
+    assert result.recalculation_count == 0
+
+
+def test_cancel_schedule_run_rejects_terminal_status(session: Session):
+    run = _queued_run(status="succeeded")
+    session.add(run)
+    session.commit()
+
+    with pytest.raises(InvalidRequestError, match="Cannot cancel"):
+        cancel_schedule_run(session, "run_1")
+
+
+def _queued_run(status: str = "queued") -> ScheduleRun:
+    return ScheduleRun(
+        id="run_1",
+        organization_id="org_1",
+        period_start=date(2026, 7, 1),
+        period_end=date(2026, 7, 7),
+        template="one_shift_per_day",
+        deterministic_mode=True,
+        timeout_seconds=30,
+        status=status,
+        solver_status=None,
+        solution_quality="unknown",
+        current_attempt_no=1,
+        recalculation_count=0,
+    )
