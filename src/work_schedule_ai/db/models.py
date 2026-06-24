@@ -496,6 +496,59 @@ class ScheduleRecalculationRequest(Base):
     )
 
 
+class SchedulePublication(Base):
+    __tablename__ = "schedule_publications"
+    __table_args__ = (
+        UniqueConstraint(
+            "schedule_run_id",
+            name="uq_schedule_publications_schedule_run_id",
+        ),
+        CheckConstraint(
+            "status IN ('published', 'archived')",
+            name="ck_schedule_publications_status",
+        ),
+        CheckConstraint(
+            "period_start <= period_end",
+            name="ck_schedule_publications_period_order",
+        ),
+        Index(
+            "ix_schedule_publications_organization_period",
+            "organization_id",
+            "period_start",
+            "period_end",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    schedule_run_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("schedule_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    assignment_snapshot_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    issue_snapshot_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    published_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
 def normalize_pair_employee_ids(employee_a_id: str, employee_b_id: str) -> tuple[str, str]:
     if employee_a_id == employee_b_id:
         raise ValueError("Pair constraint cannot reference the same employee twice")
