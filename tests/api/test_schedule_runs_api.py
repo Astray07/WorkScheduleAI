@@ -484,6 +484,29 @@ def test_recalculate_enqueues_without_inline_solver_execution(
     assert schedule_queue.dequeue(timeout_seconds=0) is None
 
 
+def test_recalculating_result_hides_previous_persisted_artifacts(client: TestClient):
+    run_id = _create_run_and_approve_mock_proposal(client)
+    initial_response = client.get(f"/organizations/org_1/schedule-runs/{run_id}/result")
+    assert initial_response.status_code == 200
+    assert initial_response.json()["issues"] != []
+
+    recalculate_response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/recalculate",
+        json={"reason": "승인된 완화안을 큐에서 반영합니다."},
+    )
+
+    assert recalculate_response.status_code == 202
+    queued_result_response = client.get(
+        f"/organizations/org_1/schedule-runs/{run_id}/result"
+    )
+    assert queued_result_response.status_code == 200
+    queued_result = queued_result_response.json()
+    assert queued_result["status"] == "queued"
+    assert queued_result["assignments"] == []
+    assert queued_result["issues"] == []
+    assert queued_result["proposals"] == []
+
+
 def test_recalculate_resolves_mock_unfilled_issue_after_approval(client: TestClient):
     run_id = _create_run_and_approve_mock_proposal(client)
     client.post(
