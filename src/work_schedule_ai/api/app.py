@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from work_schedule_ai.api.routes.organizations import router as organizations_router
 from work_schedule_ai.contracts import (
     fixture_names,
     load_openapi_contract,
@@ -10,6 +11,7 @@ from work_schedule_ai.contracts import (
 
 def create_app() -> FastAPI:
     app = FastAPI(title="WorkScheduleAI")
+    app.include_router(organizations_router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -28,4 +30,3 @@ def create_app() -> FastAPI:
         }
 
     return app
-
