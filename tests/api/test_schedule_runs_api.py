@@ -1,4 +1,6 @@
 from collections.abc import Generator
+from io import BytesIO
+import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
@@ -391,6 +393,133 @@ def test_recalculate_rejects_fourth_recalculation(
     run = db_session.query(ScheduleRun).filter_by(id=run_id).one()
     assert run.recalculation_count == 3
     assert db_session.query(ScheduleRecalculationRequest).count() == 3
+
+
+def test_publish_schedule_run_creates_publication_and_marks_result_read_only(
+    client: TestClient,
+):
+    run_id, result_payload = _create_recalculated_result(client)
+
+    response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/publications",
+        json={
+            "expected_assignment_snapshot_hash": result_payload[
+                "assignment_snapshot_hash"
+            ],
+            "expected_issue_snapshot_hash": result_payload["issue_snapshot_hash"],
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["id"].startswith("publication_")
+    assert payload["organization_id"] == "org_1"
+    assert payload["schedule_run_id"] == run_id
+    assert payload["period_start"] == "2026-07-01"
+    assert payload["period_end"] == "2026-07-07"
+    assert payload["status"] == "published"
+    assert (
+        payload["assignment_snapshot_hash"]
+        == result_payload["assignment_snapshot_hash"]
+    )
+    assert payload["issue_snapshot_hash"] == result_payload["issue_snapshot_hash"]
+
+    result_response = client.get(f"/organizations/org_1/schedule-runs/{run_id}/result")
+    assert result_response.status_code == 200
+    published_result = result_response.json()
+    assert published_result["read_only"] is True
+    assert published_result["publication"]["id"] == payload["id"]
+
+
+def test_publish_schedule_run_rejects_overlapping_active_publication(
+    client: TestClient,
+):
+    first_run_id, first_result = _create_recalculated_result(client)
+    first_publish_response = client.post(
+        f"/organizations/org_1/schedule-runs/{first_run_id}/publications",
+        json={
+            "expected_assignment_snapshot_hash": first_result[
+                "assignment_snapshot_hash"
+            ],
+            "expected_issue_snapshot_hash": first_result["issue_snapshot_hash"],
+        },
+    )
+    assert first_publish_response.status_code == 201
+
+    second_run_id, second_result = _create_recalculated_result(client)
+    response = client.post(
+        f"/organizations/org_1/schedule-runs/{second_run_id}/publications",
+        json={
+            "expected_assignment_snapshot_hash": second_result[
+                "assignment_snapshot_hash"
+            ],
+            "expected_issue_snapshot_hash": second_result["issue_snapshot_hash"],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PUBLICATION_PERIOD_OVERLAP"
+
+
+def test_publish_schedule_run_rejects_stale_snapshot_hash(client: TestClient):
+    run_id, result_payload = _create_recalculated_result(client)
+
+    response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/publications",
+        json={
+            "expected_assignment_snapshot_hash": "stale-assignment-hash",
+            "expected_issue_snapshot_hash": result_payload["issue_snapshot_hash"],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "SCHEDULE_RESULT_STALE"
+
+
+def test_download_schedule_publication_excel_returns_workbook(client: TestClient):
+    run_id, result_payload = _create_recalculated_result(client)
+    publish_response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/publications",
+        json={
+            "expected_assignment_snapshot_hash": result_payload[
+                "assignment_snapshot_hash"
+            ],
+            "expected_issue_snapshot_hash": result_payload["issue_snapshot_hash"],
+        },
+    )
+    publication_id = publish_response.json()["id"]
+
+    response = client.get(
+        f"/organizations/org_1/schedule-publications/{publication_id}/excel"
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert "attachment" in response.headers["content-disposition"]
+    with zipfile.ZipFile(BytesIO(response.content)) as workbook:
+        assert "[Content_Types].xml" in workbook.namelist()
+        assert "xl/workbook.xml" in workbook.namelist()
+        sheet_xml = workbook.read("xl/worksheets/sheet1.xml").decode("utf-8")
+    assert "local_date" in sheet_xml
+    assert "role_name" in sheet_xml
+    assert "Kim" in sheet_xml
+
+
+def _create_recalculated_result(client: TestClient) -> tuple[str, dict]:
+    run_id = _create_run_and_approve_mock_proposal(client)
+    recalculate_response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/recalculate",
+        json={"reason": "승인된 완화안을 반영합니다."},
+    )
+    assert recalculate_response.status_code == 202
+    result_response = client.get(f"/organizations/org_1/schedule-runs/{run_id}/result")
+    assert result_response.status_code == 200
+    result_payload = result_response.json()
+    assert "assignment_snapshot_hash" in result_payload
+    assert "issue_snapshot_hash" in result_payload
+    return run_id, result_payload
 
 
 def _create_run_and_approve_mock_proposal(client: TestClient) -> str:

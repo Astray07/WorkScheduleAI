@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from io import BytesIO
 from datetime import date, datetime, timedelta
 import hashlib
 import json
 from typing import Literal
 from uuid import uuid4
+import zipfile
+from xml.sax.saxutils import escape as xml_escape
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -19,6 +22,7 @@ from work_schedule_ai.db.models import (
     Role,
     ScheduleRecalculationRequest,
     ScheduleInputSnapshot,
+    SchedulePublication,
     ScheduleRun,
     utc_now,
 )
@@ -71,6 +75,11 @@ class OverrideApprovalResponse(BaseModel):
 
 class RecalculateScheduleRunRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
+
+
+class PublishScheduleRunRequest(BaseModel):
+    expected_assignment_snapshot_hash: str = Field(min_length=1)
+    expected_issue_snapshot_hash: str = Field(min_length=1)
 
 
 class ScheduleRunProgress(BaseModel):
@@ -173,6 +182,18 @@ class AssignmentResponse(BaseModel):
     attempt_no: int
 
 
+class SchedulePublicationResponse(BaseModel):
+    id: str
+    organization_id: str
+    schedule_run_id: str
+    period_start: date
+    period_end: date
+    status: str
+    assignment_snapshot_hash: str
+    issue_snapshot_hash: str
+    published_at: datetime
+
+
 class ScheduleRunResultResponse(BaseModel):
     schedule_run_id: str
     status: str
@@ -180,7 +201,9 @@ class ScheduleRunResultResponse(BaseModel):
     current_attempt_no: int
     recalculation_count: int
     read_only: bool
-    publication: None
+    publication: SchedulePublicationResponse | None
+    assignment_snapshot_hash: str
+    issue_snapshot_hash: str
     slots: list[ShiftSlotResponse]
     requirements: list[ShiftRequirementResponse]
     assignments: list[AssignmentResponse]
@@ -288,14 +311,22 @@ def get_schedule_run_result(
 ) -> ScheduleRunResultResponse:
     run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
     artifacts = _mock_result_artifacts(run, db_session)
+    hashes = _artifact_hashes(artifacts)
+    publication = _get_publication_for_run(run, db_session)
     return ScheduleRunResultResponse(
         schedule_run_id=run.id,
         status=run.status,
         solution_quality=run.solution_quality,
         current_attempt_no=run.current_attempt_no,
         recalculation_count=run.recalculation_count,
-        read_only=False,
-        publication=None,
+        read_only=publication is not None and publication.status == "published",
+        publication=(
+            _schedule_publication_response(publication)
+            if publication is not None
+            else None
+        ),
+        assignment_snapshot_hash=hashes.assignment_snapshot_hash,
+        issue_snapshot_hash=hashes.issue_snapshot_hash,
         slots=artifacts.slots,
         requirements=artifacts.requirements,
         assignments=artifacts.assignments,
@@ -445,6 +476,130 @@ def recalculate_schedule_run(
     return _schedule_run_response(run, db_session)
 
 
+@router.post(
+    "/{organization_id}/schedule-runs/{schedule_run_id}/publications",
+    response_model=SchedulePublicationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def publish_schedule_run(
+    organization_id: str,
+    schedule_run_id: str,
+    request: PublishScheduleRunRequest,
+    db_session: Session = Depends(get_db_session),
+) -> SchedulePublicationResponse:
+    run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
+    artifacts = _mock_result_artifacts(run, db_session)
+    hashes = _artifact_hashes(artifacts)
+
+    if (
+        request.expected_assignment_snapshot_hash
+        != hashes.assignment_snapshot_hash
+        or request.expected_issue_snapshot_hash != hashes.issue_snapshot_hash
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "SCHEDULE_RESULT_STALE",
+                "message": "Schedule result snapshot hash does not match.",
+                "field": "expected_assignment_snapshot_hash",
+            },
+        )
+
+    if artifacts.issues:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "SCHEDULE_RESULT_HAS_ISSUES",
+                "message": "ScheduleRun must have no open issues before publication.",
+                "field": "schedule_run_id",
+            },
+        )
+
+    existing_publication = _get_publication_for_run(run, db_session)
+    if existing_publication is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "SCHEDULE_RUN_ALREADY_PUBLISHED",
+                "message": "ScheduleRun already has a publication.",
+                "field": "schedule_run_id",
+            },
+        )
+
+    overlapping_publication = db_session.execute(
+        select(SchedulePublication).where(
+            SchedulePublication.organization_id == organization_id,
+            SchedulePublication.status == "published",
+            SchedulePublication.period_start < run.period_end,
+            SchedulePublication.period_end > run.period_start,
+        )
+    ).scalar_one_or_none()
+    if overlapping_publication is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "PUBLICATION_PERIOD_OVERLAP",
+                "message": "Published SchedulePublication period overlaps.",
+                "field": "period_start",
+            },
+        )
+
+    now = utc_now()
+    publication = SchedulePublication(
+        id=_new_id("publication"),
+        organization_id=organization_id,
+        schedule_run_id=schedule_run_id,
+        period_start=run.period_start,
+        period_end=run.period_end,
+        status="published",
+        assignment_snapshot_hash=hashes.assignment_snapshot_hash,
+        issue_snapshot_hash=hashes.issue_snapshot_hash,
+        published_at=now,
+        created_at=now,
+    )
+    db_session.add(publication)
+    db_session.commit()
+
+    return _schedule_publication_response(publication)
+
+
+@router.get("/{organization_id}/schedule-publications/{publication_id}/excel")
+def download_schedule_publication_excel(
+    organization_id: str,
+    publication_id: str,
+    db_session: Session = Depends(get_db_session),
+) -> Response:
+    publication = db_session.execute(
+        select(SchedulePublication).where(
+            SchedulePublication.organization_id == organization_id,
+            SchedulePublication.id == publication_id,
+        )
+    ).scalar_one_or_none()
+    if publication is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="SchedulePublication not found",
+        )
+
+    run = db_session.get(ScheduleRun, publication.schedule_run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="ScheduleRun not found",
+        )
+
+    artifacts = _mock_result_artifacts(run, db_session)
+    workbook = _build_schedule_workbook(publication, artifacts)
+    filename = f"work_schedule_{publication.period_start}_{publication.period_end}.xlsx"
+    return Response(
+        content=workbook,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 class _MockArtifacts(BaseModel):
     slots: list[ShiftSlotResponse]
     requirements: list[ShiftRequirementResponse]
@@ -452,6 +607,11 @@ class _MockArtifacts(BaseModel):
     issues: list[ScheduleIssueResponse]
     proposals: list[RelaxationProposalResponse]
     score_summary: ScoreSummary
+
+
+class _ArtifactHashes(BaseModel):
+    assignment_snapshot_hash: str
+    issue_snapshot_hash: str
 
 
 def _get_schedule_run_or_404(
@@ -471,6 +631,34 @@ def _get_schedule_run_or_404(
             detail="ScheduleRun not found",
         )
     return run
+
+
+def _get_publication_for_run(
+    run: ScheduleRun,
+    db_session: Session,
+) -> SchedulePublication | None:
+    return db_session.execute(
+        select(SchedulePublication).where(
+            SchedulePublication.organization_id == run.organization_id,
+            SchedulePublication.schedule_run_id == run.id,
+        )
+    ).scalar_one_or_none()
+
+
+def _schedule_publication_response(
+    publication: SchedulePublication,
+) -> SchedulePublicationResponse:
+    return SchedulePublicationResponse(
+        id=publication.id,
+        organization_id=publication.organization_id,
+        schedule_run_id=publication.schedule_run_id,
+        period_start=publication.period_start,
+        period_end=publication.period_end,
+        status=publication.status,
+        assignment_snapshot_hash=publication.assignment_snapshot_hash,
+        issue_snapshot_hash=publication.issue_snapshot_hash,
+        published_at=publication.published_at,
+    )
 
 
 def _schedule_run_response(
@@ -698,8 +886,27 @@ def _build_snapshot_payload(
 
 
 def _snapshot_hash(snapshot_payload: dict[str, object]) -> str:
+    return _stable_hash(snapshot_payload)
+
+
+def _artifact_hashes(artifacts: _MockArtifacts) -> _ArtifactHashes:
+    assignments = [
+        assignment.model_dump(mode="json")
+        for assignment in sorted(artifacts.assignments, key=lambda item: item.id)
+    ]
+    issues = [
+        issue.model_dump(mode="json")
+        for issue in sorted(artifacts.issues, key=lambda item: item.id)
+    ]
+    return _ArtifactHashes(
+        assignment_snapshot_hash=_stable_hash({"assignments": assignments}),
+        issue_snapshot_hash=_stable_hash({"issues": issues}),
+    )
+
+
+def _stable_hash(payload: object) -> str:
     encoded = json.dumps(
-        snapshot_payload,
+        payload,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -713,3 +920,123 @@ def _llm_explanation() -> LLMExplanation:
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex}"
+
+
+def _build_schedule_workbook(
+    publication: SchedulePublication,
+    artifacts: _MockArtifacts,
+) -> bytes:
+    rows = _schedule_export_rows(publication, artifacts)
+    sheet_xml = _worksheet_xml(rows)
+    workbook = BytesIO()
+    with zipfile.ZipFile(workbook, mode="w", compression=zipfile.ZIP_DEFLATED) as xlsx:
+        xlsx.writestr("[Content_Types].xml", _content_types_xml())
+        xlsx.writestr("_rels/.rels", _root_relationships_xml())
+        xlsx.writestr("xl/workbook.xml", _workbook_xml())
+        xlsx.writestr("xl/_rels/workbook.xml.rels", _workbook_relationships_xml())
+        xlsx.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    return workbook.getvalue()
+
+
+def _schedule_export_rows(
+    publication: SchedulePublication,
+    artifacts: _MockArtifacts,
+) -> list[list[str]]:
+    slots_by_id = {slot.id: slot for slot in artifacts.slots}
+    role_names_by_requirement = {
+        (requirement.slot_id, requirement.role_id): requirement.role_name
+        for requirement in artifacts.requirements
+    }
+    rows = [
+        [
+            "publication_id",
+            "local_date",
+            "slot_label",
+            "role_name",
+            "employee_name",
+            "source",
+            "warning_state",
+        ]
+    ]
+    for assignment in artifacts.assignments:
+        slot = slots_by_id[assignment.slot_id]
+        role_name = role_names_by_requirement[(assignment.slot_id, assignment.role_id)]
+        rows.append(
+            [
+                publication.id,
+                slot.local_date.isoformat(),
+                slot.label,
+                role_name,
+                assignment.employee_name,
+                assignment.source,
+                assignment.warning_state,
+            ]
+        )
+    return rows
+
+
+def _worksheet_xml(rows: list[list[str]]) -> str:
+    row_xml = []
+    for row_index, row in enumerate(rows, start=1):
+        cell_xml = []
+        for column_index, value in enumerate(row, start=1):
+            cell_ref = f"{_column_name(column_index)}{row_index}"
+            cell_xml.append(
+                f'<c r="{cell_ref}" t="inlineStr"><is><t>'
+                f"{xml_escape(str(value))}</t></is></c>"
+            )
+        row_xml.append(f'<row r="{row_index}">{"".join(cell_xml)}</row>')
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<sheetData>{"".join(row_xml)}</sheetData>'
+        "</worksheet>"
+    )
+
+
+def _column_name(column_index: int) -> str:
+    name = ""
+    while column_index:
+        column_index, remainder = divmod(column_index - 1, 26)
+        name = chr(65 + remainder) + name
+    return name
+
+
+def _content_types_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        "</Types>"
+    )
+
+
+def _root_relationships_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+        "</Relationships>"
+    )
+
+
+def _workbook_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="Schedule" sheetId="1" r:id="rId1"/></sheets>'
+        "</workbook>"
+    )
+
+
+def _workbook_relationships_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+        "</Relationships>"
+    )

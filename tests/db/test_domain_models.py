@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from work_schedule_ai.db import models as db_models
 from work_schedule_ai.db.models import (
     Base,
     Employee,
@@ -440,6 +441,71 @@ def test_schedule_recalculation_request_is_unique_per_run_idempotency_key(sessio
     session.commit()
 
     session.add(recalc)
+    session.commit()
+
+    session.add(duplicate)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_schedule_publication_rejects_unknown_status(session):
+    assert hasattr(db_models, "SchedulePublication")
+    org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
+    run = _schedule_run()
+    publication = db_models.SchedulePublication(
+        id="publication_1",
+        organization_id="org_1",
+        schedule_run_id="run_1",
+        period_start=date(2026, 7, 1),
+        period_end=date(2026, 7, 7),
+        status="active",
+        assignment_snapshot_hash="assignment_hash_1",
+        issue_snapshot_hash="issue_hash_1",
+    )
+    session.add(org)
+    session.commit()
+
+    session.add(run)
+    session.commit()
+
+    session.add(publication)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_schedule_publication_is_unique_per_schedule_run(session):
+    assert hasattr(db_models, "SchedulePublication")
+    org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
+    run = _schedule_run()
+    publication = db_models.SchedulePublication(
+        id="publication_1",
+        organization_id="org_1",
+        schedule_run_id="run_1",
+        period_start=date(2026, 7, 1),
+        period_end=date(2026, 7, 7),
+        status="published",
+        assignment_snapshot_hash="assignment_hash_1",
+        issue_snapshot_hash="issue_hash_1",
+    )
+    duplicate = db_models.SchedulePublication(
+        id="publication_2",
+        organization_id="org_1",
+        schedule_run_id="run_1",
+        period_start=date(2026, 7, 1),
+        period_end=date(2026, 7, 7),
+        status="published",
+        assignment_snapshot_hash="assignment_hash_2",
+        issue_snapshot_hash="issue_hash_2",
+    )
+    session.add(org)
+    session.commit()
+
+    session.add(run)
+    session.commit()
+
+    session.add(publication)
     session.commit()
 
     session.add(duplicate)
