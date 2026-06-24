@@ -5,12 +5,13 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from work_schedule_ai.db.models import Base
+from work_schedule_ai.db.url import normalize_database_url
 
 
 config = context.config
 database_url = os.environ.get("DATABASE_URL")
 if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)
+    config.set_main_option("sqlalchemy.url", normalize_database_url(database_url))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

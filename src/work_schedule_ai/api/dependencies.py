@@ -5,8 +5,11 @@ from fastapi import Request
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from work_schedule_ai.db.url import normalize_database_url
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///work_schedule_ai.sqlite3")
+DATABASE_URL = normalize_database_url(
+    os.environ.get("DATABASE_URL", "sqlite:///work_schedule_ai.sqlite3")
+)
 
 engine = create_engine(DATABASE_URL, future=True)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
