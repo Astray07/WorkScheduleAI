@@ -1,10 +1,14 @@
 import os
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
+from work_schedule_ai.api.dependencies import get_db_session
 from work_schedule_ai.api.routes.employees import router as employees_router
 from work_schedule_ai.api.routes.organizations import router as organizations_router
+from work_schedule_ai.api.routes.operations import router as operations_router
 from work_schedule_ai.api.routes.pair_constraints import (
     router as pair_constraints_router,
 )
@@ -36,10 +40,20 @@ def create_app() -> FastAPI:
     app.include_router(pair_constraints_router)
     app.include_router(shift_templates_router)
     app.include_router(schedule_runs_router)
+    app.include_router(operations_router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/health/ready")
+    def readiness(db_session: Session = Depends(get_db_session)) -> dict[str, str]:
+        db_session.execute(text("SELECT 1"))
+        return {
+            "status": "ok",
+            "database": "ok",
+            "redis": _redis_readiness_status(),
+        }
 
     @app.get("/contracts/m0/summary")
     async def m0_contract_summary() -> dict[str, object]:
@@ -61,3 +75,16 @@ def _cors_allow_origins() -> list[str]:
     if configured:
         return [origin.strip() for origin in configured.split(",") if origin.strip()]
     return ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+
+def _redis_readiness_status() -> str:
+    redis_url = os.environ.get("REDIS_URL")
+    if not redis_url:
+        return "not_configured"
+    try:
+        from redis import Redis
+
+        Redis.from_url(redis_url).ping()
+    except Exception:
+        return "error"
+    return "ok"
