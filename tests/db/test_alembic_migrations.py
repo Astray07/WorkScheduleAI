@@ -18,6 +18,7 @@ EXPECTED_TABLES = {
     "schedule_runs",
     "schedule_input_snapshots",
     "override_approvals",
+    "schedule_recalculation_requests",
 }
 
 
@@ -74,6 +75,18 @@ def test_alembic_upgrade_head_creates_named_constraints(tmp_path):
     approval_check_names = {
         item["name"] for item in inspector.get_check_constraints("override_approvals")
     }
+    recalc_unique_names = {
+        item["name"]
+        for item in inspector.get_unique_constraints(
+            "schedule_recalculation_requests"
+        )
+    }
+    recalc_check_names = {
+        item["name"]
+        for item in inspector.get_check_constraints(
+            "schedule_recalculation_requests"
+        )
+    }
 
     assert "uq_employees_organization_employee_code" in employee_unique_names
     assert "uq_roles_organization_name" in role_unique_names
@@ -94,6 +107,8 @@ def test_alembic_upgrade_head_creates_named_constraints(tmp_path):
     assert "uq_schedule_input_snapshots_schedule_run_id" in snapshot_unique_names
     assert "uq_override_approvals_run_proposal" in approval_unique_names
     assert "ck_override_approvals_type" in approval_check_names
+    assert "uq_schedule_recalculations_run_idempotency_key" in recalc_unique_names
+    assert "ck_schedule_recalculations_count" in recalc_check_names
 
 
 def test_alembic_upgrade_head_creates_unavailability_indexes(tmp_path):
@@ -147,6 +162,22 @@ def test_alembic_upgrade_head_creates_override_approval_indexes(tmp_path):
     assert "ix_override_approvals_schedule_run_id" in approval_index_names
 
 
+def test_alembic_upgrade_head_creates_schedule_recalculation_indexes(tmp_path):
+    db_path = tmp_path / "migration-test.sqlite"
+
+    _upgrade_head(db_path)
+
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    inspector = inspect(engine)
+    recalc_index_names = {
+        item["name"]
+        for item in inspector.get_indexes("schedule_recalculation_requests")
+    }
+
+    assert "ix_schedule_recalculations_organization_id" in recalc_index_names
+    assert "ix_schedule_recalculations_schedule_run_id" in recalc_index_names
+
+
 def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
     db_path = tmp_path / "migration-test.sqlite"
 
@@ -158,7 +189,7 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260624_0004"
+    assert version == "20260624_0005"
 
 
 def _upgrade_head(db_path: Path) -> None:

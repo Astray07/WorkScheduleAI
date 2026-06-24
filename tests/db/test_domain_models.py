@@ -14,6 +14,7 @@ from work_schedule_ai.db.models import (
     OverrideApproval,
     PairConstraint,
     Role,
+    ScheduleRecalculationRequest,
     ScheduleRun,
     ScheduleInputSnapshot,
     Unavailability,
@@ -405,6 +406,40 @@ def test_override_approval_is_unique_per_schedule_run_proposal(session):
     session.commit()
 
     session.add(approval)
+    session.commit()
+
+    session.add(duplicate)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_schedule_recalculation_request_is_unique_per_run_idempotency_key(session):
+    org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
+    run = _schedule_run()
+    recalc = ScheduleRecalculationRequest(
+        id="recalc_1",
+        organization_id="org_1",
+        schedule_run_id="run_1",
+        idempotency_key="recalculate-key-1",
+        reason="Approved override",
+        recalculation_count=1,
+    )
+    duplicate = ScheduleRecalculationRequest(
+        id="recalc_2",
+        organization_id="org_1",
+        schedule_run_id="run_1",
+        idempotency_key="recalculate-key-1",
+        reason="Duplicate",
+        recalculation_count=1,
+    )
+    session.add(org)
+    session.commit()
+
+    session.add(run)
+    session.commit()
+
+    session.add(recalc)
     session.commit()
 
     session.add(duplicate)

@@ -458,6 +458,44 @@ class OverrideApproval(Base):
     )
 
 
+class ScheduleRecalculationRequest(Base):
+    __tablename__ = "schedule_recalculation_requests"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "schedule_run_id",
+            "idempotency_key",
+            name="uq_schedule_recalculations_run_idempotency_key",
+        ),
+        CheckConstraint(
+            "recalculation_count >= 1 AND recalculation_count <= 3",
+            name="ck_schedule_recalculations_count",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    schedule_run_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("schedule_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recalculation_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
 def normalize_pair_employee_ids(employee_a_id: str, employee_b_id: str) -> tuple[str, str]:
     if employee_a_id == employee_b_id:
         raise ValueError("Pair constraint cannot reference the same employee twice")

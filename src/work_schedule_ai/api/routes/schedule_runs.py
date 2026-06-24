@@ -17,6 +17,7 @@ from work_schedule_ai.db.models import (
     Organization,
     OverrideApproval,
     Role,
+    ScheduleRecalculationRequest,
     ScheduleInputSnapshot,
     ScheduleRun,
     utc_now,
@@ -66,6 +67,10 @@ class OverrideApprovalResponse(BaseModel):
     type: str
     notification_required: bool
     created_at: datetime
+
+
+class RecalculateScheduleRunRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class ScheduleRunProgress(BaseModel):
@@ -365,6 +370,81 @@ def approve_relaxation_proposal(
     )
 
 
+@router.post(
+    "/{organization_id}/schedule-runs/{schedule_run_id}/recalculate",
+    response_model=ScheduleRunResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def recalculate_schedule_run(
+    organization_id: str,
+    schedule_run_id: str,
+    request: RecalculateScheduleRunRequest,
+    idempotency_key: str | None = Header(
+        default=None,
+        alias="Idempotency-Key",
+        min_length=8,
+        max_length=128,
+    ),
+    db_session: Session = Depends(get_db_session),
+) -> ScheduleRunResponse:
+    run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
+
+    if idempotency_key is not None:
+        existing_request = db_session.execute(
+            select(ScheduleRecalculationRequest).where(
+                ScheduleRecalculationRequest.organization_id == organization_id,
+                ScheduleRecalculationRequest.schedule_run_id == schedule_run_id,
+                ScheduleRecalculationRequest.idempotency_key == idempotency_key,
+            )
+        ).scalar_one_or_none()
+        if existing_request is not None:
+            return _schedule_run_response(run, db_session)
+
+    approved_override_count = db_session.execute(
+        select(OverrideApproval.id).where(
+            OverrideApproval.organization_id == organization_id,
+            OverrideApproval.schedule_run_id == schedule_run_id,
+        )
+    ).first()
+    if approved_override_count is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "NO_APPROVED_OVERRIDE",
+                "message": "At least one approved override is required to recalculate.",
+                "field": "schedule_run_id",
+            },
+        )
+
+    if run.recalculation_count >= 3:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "RECALCULATION_LIMIT_EXCEEDED",
+                "message": "recalculation_count cannot exceed 3.",
+                "field": "recalculation_count",
+            },
+        )
+
+    run.recalculation_count += 1
+    run.updated_at = utc_now()
+    run.status = "succeeded"
+    run.solver_status = "not_started"
+    run.solution_quality = "feasible_not_proven_optimal"
+    recalculation_request = ScheduleRecalculationRequest(
+        id=_new_id("recalc"),
+        organization_id=organization_id,
+        schedule_run_id=schedule_run_id,
+        idempotency_key=idempotency_key,
+        reason=request.reason,
+        recalculation_count=run.recalculation_count,
+    )
+    db_session.add(recalculation_request)
+    db_session.commit()
+
+    return _schedule_run_response(run, db_session)
+
+
 class _MockArtifacts(BaseModel):
     slots: list[ShiftSlotResponse]
     requirements: list[ShiftRequirementResponse]
@@ -447,6 +527,7 @@ def _mock_result_artifacts(
     requirements: list[ShiftRequirementResponse] = []
     assignments: list[AssignmentResponse] = []
     assignment_no = 1
+    should_resolve_unfilled = _should_resolve_mock_unfilled(run, db_session)
     skipped_unfilled = False
     for slot in slots:
         for role in roles:
@@ -458,7 +539,7 @@ def _mock_result_artifacts(
                 required_count=1,
             )
             requirements.append(requirement)
-            if role.name == "부사수" and not skipped_unfilled:
+            if role.name == "부사수" and not skipped_unfilled and not should_resolve_unfilled:
                 skipped_unfilled = True
                 continue
             if not employees:
@@ -504,6 +585,21 @@ def _mock_result_artifacts(
         proposals=proposals,
         score_summary=score_summary,
     )
+
+
+def _should_resolve_mock_unfilled(
+    run: ScheduleRun,
+    db_session: Session,
+) -> bool:
+    if run.recalculation_count <= 0:
+        return False
+    approved_override = db_session.execute(
+        select(OverrideApproval.id).where(
+            OverrideApproval.organization_id == run.organization_id,
+            OverrideApproval.schedule_run_id == run.id,
+        )
+    ).first()
+    return approved_override is not None
 
 
 def _mock_slots(run: ScheduleRun) -> list[ShiftSlotResponse]:
