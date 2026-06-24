@@ -11,6 +11,7 @@ Address verified implementation-gate review findings that can block the next pus
 - Move recalculation execution onto the same queue/worker path as initial generation, unless existing contracts make that unsafe.
 - Reduce Railway worker deployment ambiguity with explicit configuration/documentation.
 - Update release checklist drift introduced by completed Redis worker and 100-person baseline work.
+- Address second-check P2 stale artifact contract for `/result` while a recalculation is queued/running.
 
 ## Non-Goals
 
@@ -27,6 +28,7 @@ Address verified implementation-gate review findings that can block the next pus
 - Recalculation requests enqueue work and return a queued state consistently with initial generation.
 - Railway worker start command is explicit enough to avoid accidentally running the API process for the worker service.
 - Release checklist reflects current completed hardening and remaining public-release blockers.
+- Recalculating `queued`/`running` result responses do not expose previous persisted artifacts as if they were the new result.
 
 ## Verification Plan
 

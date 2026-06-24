@@ -7,6 +7,7 @@ Implementation-gate review remediation is implemented and verified locally:
 - Frontend now polls `/result` until ScheduleRun reaches `succeeded` or `infeasible` and surfaces `failed`/`canceled` errors.
 - Worker executor exceptions now rollback partial work and persist `ScheduleRun.status=failed`, `solver_status=error`, and `finished_at`.
 - `POST /recalculate` now enqueues the ScheduleRun instead of running solver artifacts inline.
+- `/result` now returns empty artifacts for `queued`/`running` runs before consulting persisted artifacts, so recalculation polling does not expose stale previous results.
 - `railway.worker.json` captures the worker start command.
 - `docs/release/first-release-checklist.md` now reflects local integration-candidate status, staging worker requirements, and auth as a public-release gate.
 

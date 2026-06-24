@@ -11,6 +11,11 @@
   - GREEN after implementation: `1 passed`.
 - `python -m pytest tests/api/test_schedule_runs_api.py -q`
   - `36 passed`.
+- `python -m pytest tests/api/test_schedule_runs_api.py::test_recalculating_result_hides_previous_persisted_artifacts -q`
+  - RED before implementation: failed because queued recalculation result returned previous persisted assignments.
+  - GREEN after implementation: `1 passed`.
+- `python -m pytest tests/api/test_schedule_runs_api.py -q`
+  - `37 passed`.
 - `python -m pytest tests/api/test_p0_vertical_slice_api.py -q`
   - `1 passed`.
 - `python -m pytest tests/deployment/test_railway_config.py -q`
@@ -34,6 +39,13 @@
   - Success.
 - `git diff --check`
   - Exit 0. Existing LF/CRLF warnings only.
+- After second-check stale artifact remediation:
+  - `python -m pytest -q`
+    - `126 passed, 1 skipped in 8.46s`.
+  - `npm run build` in `frontend/`
+    - Success.
+  - `git diff --check`
+    - Exit 0. Existing LF/CRLF warnings only.
 
 ## Remaining Risks
 

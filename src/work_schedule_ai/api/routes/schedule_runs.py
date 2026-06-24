@@ -969,11 +969,11 @@ def _result_artifacts_for_run(
     run: ScheduleRun,
     db_session: Session,
 ) -> _MockArtifacts:
+    if run.status in {"queued", "running"}:
+        return _empty_result_artifacts()
     stored = _load_persisted_artifacts(run, db_session)
     if stored is not None:
         return stored
-    if run.status in {"queued", "running"}:
-        return _empty_result_artifacts()
     return _mock_result_artifacts(run, db_session)
 
 
