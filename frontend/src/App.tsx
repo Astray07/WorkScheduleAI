@@ -6,9 +6,11 @@ import {
   Clock3,
   Download,
   FileSpreadsheet,
+  Plus,
   Play,
   RefreshCw,
   ShieldCheck,
+  Trash2,
   Users,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -18,9 +20,6 @@ import {
   MIN_EMPLOYEE_COUNT,
   PERIOD_DAY_OPTIONS,
   addDaysIso,
-  buildDefaultPairDrafts,
-  buildDefaultVacationDrafts,
-  buildScenarioEmployees,
   dateDisplayLabel,
   slotDisplayLabel,
   normalizeScenarioConfig,
@@ -28,15 +27,31 @@ import {
   type ScenarioConfig,
 } from "./scenario";
 import {
-  buildDraftSummary,
-  formatEmployeeDraft,
-  formatPairDraft,
-  formatVacationDraft,
-  parseEmployeeDraft,
-  parsePairDraft,
-  parseVacationDraft,
-  type ScenarioDraftEmployee,
-} from "./scenarioDraft";
+  PAIR_SEVERITY_OPTIONS,
+  ROLE_OPTIONS,
+  VACATION_TYPE_OPTIONS,
+  appendEmployeeRow,
+  appendPairRow,
+  appendVacationRow,
+  buildEmployeeTableRows,
+  buildPairTableRows,
+  buildVacationTableRows,
+  employeeRowsToBulkRows,
+  normalizePairRowsForEmployees,
+  normalizeVacationRowsForEmployees,
+  pairRowsToDrafts,
+  removeEmployeeRow,
+  removePairRow,
+  removeVacationRow,
+  setEmployeeRole,
+  updateEmployeeRow,
+  updatePairRow,
+  updateVacationRow,
+  vacationRowsToDrafts,
+  type EmployeeTableRow,
+  type PairTableRow,
+  type VacationTableRow,
+} from "./scenarioTables";
 import { canRecalculate } from "./scheduleActions";
 import {
   DEFAULT_SHIFT_COVERAGE,
@@ -170,15 +185,13 @@ type DemoState = {
 export function App() {
   const [scenario, setScenario] = useState<ScenarioConfig>(DEFAULT_SCENARIO_CONFIG);
   const [shiftCoverage, setShiftCoverage] = useState<ShiftCoverage>(DEFAULT_SHIFT_COVERAGE);
-  const [employeeDraft, setEmployeeDraft] = useState(() =>
-    formatEmployeeDraft(buildScenarioEmployees(DEFAULT_SCENARIO_CONFIG.employeeCount)),
+  const [employeeRows, setEmployeeRows] = useState(() =>
+    buildEmployeeTableRows(DEFAULT_SCENARIO_CONFIG.employeeCount),
   );
-  const [vacationDraft, setVacationDraft] = useState(() =>
-    formatVacationDraft(buildDefaultVacationDrafts(DEFAULT_SCENARIO_CONFIG)),
+  const [vacationRows, setVacationRows] = useState(() =>
+    buildVacationTableRows(DEFAULT_SCENARIO_CONFIG),
   );
-  const [pairDraft, setPairDraft] = useState(() =>
-    formatPairDraft(buildDefaultPairDrafts(DEFAULT_SCENARIO_CONFIG)),
-  );
+  const [pairRows, setPairRows] = useState(() => buildPairTableRows(DEFAULT_SCENARIO_CONFIG));
   const [demo, setDemo] = useState<DemoState | null>(null);
   const [result, setResult] = useState<ScheduleResult | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
@@ -194,19 +207,14 @@ export function App() {
   );
   const scenarioSummary = useMemo(
     () =>
-      `${buildDraftSummary({
-        employeeDraft,
-        vacationDraft,
-        pairDraft,
-        periodDays: normalizedScenario.periodDays,
-      })} · ${shiftCoverageSummary(normalizedShiftCoverage)}`,
-    [employeeDraft, normalizedScenario.periodDays, normalizedShiftCoverage, pairDraft, vacationDraft],
+      `직원 ${employeeRows.length}명, 휴가 ${vacationRows.length}건, 상극 ${pairRows.length}건, ${normalizedScenario.periodDays}일 생성 · ${shiftCoverageSummary(normalizedShiftCoverage)}`,
+    [employeeRows.length, normalizedScenario.periodDays, normalizedShiftCoverage, pairRows.length, vacationRows.length],
   );
   const operationSections = useMemo(
     () => [
       { label: "조직", value: normalizedScenario.organizationName, icon: Building2 },
-      { label: "직원", value: `${parseDraftRowCount(employeeDraft)}명`, icon: Users },
-      { label: "휴가/상극", value: `${parseDraftRowCount(vacationDraft)}건 / ${parseDraftRowCount(pairDraft)}건`, icon: ClipboardList },
+      { label: "직원", value: `${employeeRows.length}명`, icon: Users },
+      { label: "휴가/상극", value: `${vacationRows.length}건 / ${pairRows.length}건`, icon: ClipboardList },
       {
         label: "근무유형",
         value: shiftCoverageSummary(normalizedShiftCoverage),
@@ -214,7 +222,7 @@ export function App() {
       },
       { label: "생성기간", value: `${normalizedScenario.periodDays}일`, icon: FileSpreadsheet },
     ],
-    [employeeDraft, normalizedScenario, normalizedShiftCoverage, pairDraft, vacationDraft],
+    [employeeRows.length, normalizedScenario, normalizedShiftCoverage, pairRows.length, vacationRows.length],
   );
   const roles = useMemo(() => {
     const seen = new Map<string, string>();
@@ -249,17 +257,15 @@ export function App() {
     const nextScenario = normalizeScenarioConfig({ ...scenario, ...patch });
     setScenario(nextScenario);
     if (patch.employeeCount !== undefined) {
-      setEmployeeDraft(formatEmployeeDraft(buildScenarioEmployees(nextScenario.employeeCount)));
-    }
-    if (
-      patch.employeeCount !== undefined ||
+      const nextEmployeeRows = buildEmployeeTableRows(nextScenario.employeeCount);
+      setEmployeeRows(nextEmployeeRows);
+      setVacationRows(buildVacationTableRows(nextScenario));
+      setPairRows(buildPairTableRows(nextScenario));
+    } else if (
       patch.startDate !== undefined ||
       patch.periodDays !== undefined
     ) {
-      setVacationDraft(formatVacationDraft(buildDefaultVacationDrafts(nextScenario)));
-    }
-    if (patch.employeeCount !== undefined) {
-      setPairDraft(formatPairDraft(buildDefaultPairDrafts(nextScenario)));
+      setVacationRows(buildVacationTableRows(nextScenario));
     }
     clearRunState();
   }
@@ -269,18 +275,21 @@ export function App() {
     clearRunState();
   }
 
-  function updateEmployeeDraft(value: string) {
-    setEmployeeDraft(value);
+  function replaceEmployeeRows(nextRows: EmployeeTableRow[]) {
+    setEmployeeRows(nextRows);
+    setScenario(normalizeScenarioConfig({ ...scenario, employeeCount: nextRows.length }));
+    setVacationRows((currentRows) => normalizeVacationRowsForEmployees(currentRows, nextRows));
+    setPairRows((currentRows) => normalizePairRowsForEmployees(currentRows, nextRows));
     clearRunState();
   }
 
-  function updateVacationDraft(value: string) {
-    setVacationDraft(value);
+  function replaceVacationRows(nextRows: VacationTableRow[]) {
+    setVacationRows(nextRows);
     clearRunState();
   }
 
-  function updatePairDraft(value: string) {
-    setPairDraft(value);
+  function replacePairRows(nextRows: PairTableRow[]) {
+    setPairRows(nextRows);
     clearRunState();
   }
 
@@ -291,9 +300,11 @@ export function App() {
     try {
       const activeScenario = normalizeScenarioConfig(scenario);
       const activeShiftCoverage = normalizeShiftCoverage(shiftCoverage);
-      const activeEmployees = parseEmployeeDraft(employeeDraft);
-      const activeVacations = parseVacationDraft(vacationDraft);
-      const activePairs = parsePairDraft(pairDraft);
+      const activeEmployees = employeeRowsToBulkRows(employeeRows);
+      const activeVacations = vacationRowsToDrafts(
+        normalizeVacationRowsForEmployees(vacationRows, employeeRows),
+      );
+      const activePairs = pairRowsToDrafts(normalizePairRowsForEmployees(pairRows, employeeRows));
       if (activeEmployees.length < MIN_EMPLOYEE_COUNT) {
         throw new Error(`직원은 최소 ${MIN_EMPLOYEE_COUNT}명 이상 입력해야 합니다.`);
       }
@@ -313,7 +324,7 @@ export function App() {
           method: "POST",
           body: {
             mode: "upsert",
-            rows: activeEmployees.map(employeeRow),
+            rows: activeEmployees,
           },
         },
       );
@@ -521,22 +532,22 @@ export function App() {
             <ScenarioControls
               config={normalizedScenario}
               disabled={busy === "demo"}
-              employeeDraft={employeeDraft}
+              employeeRows={employeeRows}
               onChange={updateScenario}
-              onEmployeeDraftChange={updateEmployeeDraft}
-              onPairDraftChange={updatePairDraft}
+              onEmployeeRowsChange={replaceEmployeeRows}
+              onPairRowsChange={replacePairRows}
               onShiftCoverageChange={updateShiftCoverage}
-              onVacationDraftChange={updateVacationDraft}
-              pairDraft={pairDraft}
+              onVacationRowsChange={replaceVacationRows}
+              pairRows={pairRows}
               shiftCoverage={normalizedShiftCoverage}
-              vacationDraft={vacationDraft}
+              vacationRows={vacationRows}
             />
             <SectionTitle title="입력 상태" />
             <Metric label="조직명" value={normalizedScenario.organizationName} />
             <Metric label="조직 ID" value={demo?.organizationId ?? "대기"} />
             <Metric
               label="직원"
-              value={demo ? `${demo.employees.length}명` : `${parseDraftRowCount(employeeDraft)}명 입력`}
+              value={demo ? `${demo.employees.length}명` : `${employeeRows.length}명 입력`}
             />
             <Metric
               label="기간"
@@ -804,27 +815,27 @@ function AssignmentSummary({
 function ScenarioControls({
   config,
   disabled,
-  employeeDraft,
+  employeeRows,
   onChange,
-  onEmployeeDraftChange,
-  onPairDraftChange,
+  onEmployeeRowsChange,
+  onPairRowsChange,
   onShiftCoverageChange,
-  onVacationDraftChange,
-  pairDraft,
+  onVacationRowsChange,
+  pairRows,
   shiftCoverage,
-  vacationDraft,
+  vacationRows,
 }: {
   config: ScenarioConfig;
   disabled: boolean;
-  employeeDraft: string;
+  employeeRows: EmployeeTableRow[];
   onChange: (patch: Partial<ScenarioConfig>) => void;
-  onEmployeeDraftChange: (value: string) => void;
-  onPairDraftChange: (value: string) => void;
+  onEmployeeRowsChange: (rows: EmployeeTableRow[]) => void;
+  onPairRowsChange: (rows: PairTableRow[]) => void;
   onShiftCoverageChange: (coverage: ShiftCoverage) => void;
-  onVacationDraftChange: (value: string) => void;
-  pairDraft: string;
+  onVacationRowsChange: (rows: VacationTableRow[]) => void;
+  pairRows: PairTableRow[];
   shiftCoverage: ShiftCoverage;
-  vacationDraft: string;
+  vacationRows: VacationTableRow[];
 }) {
   return (
     <div className="scenario-controls">
@@ -879,39 +890,430 @@ function ScenarioControls({
         disabled={disabled}
         onChange={onShiftCoverageChange}
       />
-      <div className="draft-grid">
-        <label className="field-row">
-          <span>직원 기준 정보</span>
-          <textarea
-            disabled={disabled}
-            onChange={(event) => onEmployeeDraftChange(event.target.value)}
-            rows={7}
-            spellCheck={false}
-            value={employeeDraft}
-          />
-        </label>
-        <label className="field-row">
-          <span>휴가/출장 일정</span>
-          <textarea
-            disabled={disabled}
-            onChange={(event) => onVacationDraftChange(event.target.value)}
-            rows={5}
-            spellCheck={false}
-            value={vacationDraft}
-          />
-        </label>
-        <label className="field-row">
-          <span>상극 조합</span>
-          <textarea
-            disabled={disabled}
-            onChange={(event) => onPairDraftChange(event.target.value)}
-            rows={5}
-            spellCheck={false}
-            value={pairDraft}
-          />
-        </label>
+      <ReferenceDataTables
+        config={config}
+        disabled={disabled}
+        employeeRows={employeeRows}
+        onEmployeeRowsChange={onEmployeeRowsChange}
+        onPairRowsChange={onPairRowsChange}
+        onVacationRowsChange={onVacationRowsChange}
+        pairRows={pairRows}
+        vacationRows={vacationRows}
+      />
+    </div>
+  );
+}
+
+function ReferenceDataTables({
+  config,
+  disabled,
+  employeeRows,
+  onEmployeeRowsChange,
+  onPairRowsChange,
+  onVacationRowsChange,
+  pairRows,
+  vacationRows,
+}: {
+  config: ScenarioConfig;
+  disabled: boolean;
+  employeeRows: EmployeeTableRow[];
+  onEmployeeRowsChange: (rows: EmployeeTableRow[]) => void;
+  onPairRowsChange: (rows: PairTableRow[]) => void;
+  onVacationRowsChange: (rows: VacationTableRow[]) => void;
+  pairRows: PairTableRow[];
+  vacationRows: VacationTableRow[];
+}) {
+  return (
+    <div className="reference-data">
+      <EmployeeTable
+        disabled={disabled}
+        rows={employeeRows}
+        onChange={onEmployeeRowsChange}
+      />
+      <VacationTable
+        config={config}
+        disabled={disabled}
+        employeeRows={employeeRows}
+        rows={vacationRows}
+        onChange={onVacationRowsChange}
+      />
+      <PairConstraintTable
+        disabled={disabled}
+        employeeRows={employeeRows}
+        rows={pairRows}
+        onChange={onPairRowsChange}
+      />
+    </div>
+  );
+}
+
+function EmployeeTable({
+  disabled,
+  onChange,
+  rows,
+}: {
+  disabled: boolean;
+  onChange: (rows: EmployeeTableRow[]) => void;
+  rows: EmployeeTableRow[];
+}) {
+  return (
+    <div className="table-editor">
+      <div className="table-editor-heading">
+        <SectionTitle title="직원 기준정보" />
+        <button
+          disabled={disabled || rows.length >= MAX_EMPLOYEE_COUNT}
+          onClick={() => onChange(appendEmployeeRow(rows))}
+          type="button"
+        >
+          <Plus size={15} />
+          직원 추가
+        </button>
+      </div>
+      <div className="table-scroll">
+        <table className="editor-table employee-editor-table">
+          <thead>
+            <tr>
+              <th>직원코드</th>
+              <th>이름</th>
+              <th>역할</th>
+              <th>주 최대</th>
+              <th>삭제</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <td>
+                  <input
+                    disabled={disabled}
+                    onChange={(event) =>
+                      onChange(updateEmployeeRow(rows, row.id, { employeeCode: event.target.value }))
+                    }
+                    type="text"
+                    value={row.employeeCode}
+                  />
+                </td>
+                <td>
+                  <input
+                    disabled={disabled}
+                    onChange={(event) =>
+                      onChange(updateEmployeeRow(rows, row.id, { name: event.target.value }))
+                    }
+                    type="text"
+                    value={row.name}
+                  />
+                </td>
+                <td>
+                  <div className="role-toggle-group">
+                    {ROLE_OPTIONS.map((roleName) => (
+                      <label className="inline-check" key={roleName}>
+                        <input
+                          checked={row.roleNames.includes(roleName)}
+                          disabled={disabled}
+                          onChange={(event) =>
+                            onChange(setEmployeeRole(rows, row.id, roleName, event.target.checked))
+                          }
+                          type="checkbox"
+                        />
+                        <span>{roleName}</span>
+                      </label>
+                    ))}
+                  </div>
+                </td>
+                <td>
+                  <input
+                    disabled={disabled}
+                    min={1}
+                    onChange={(event) =>
+                      onChange(
+                        updateEmployeeRow(rows, row.id, {
+                          maxShiftsPerWeek: Number(event.target.value),
+                        }),
+                      )
+                    }
+                    type="number"
+                    value={row.maxShiftsPerWeek}
+                  />
+                </td>
+                <td>
+                  <button
+                    className="icon-button danger-button"
+                    disabled={disabled || rows.length <= MIN_EMPLOYEE_COUNT}
+                    onClick={() => onChange(removeEmployeeRow(rows, row.id))}
+                    title="직원 삭제"
+                    type="button"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
+  );
+}
+
+function VacationTable({
+  config,
+  disabled,
+  employeeRows,
+  onChange,
+  rows,
+}: {
+  config: ScenarioConfig;
+  disabled: boolean;
+  employeeRows: EmployeeTableRow[];
+  onChange: (rows: VacationTableRow[]) => void;
+  rows: VacationTableRow[];
+}) {
+  return (
+    <div className="table-editor">
+      <div className="table-editor-heading">
+        <SectionTitle title="휴가/출장 일정" />
+        <button
+          disabled={disabled}
+          onClick={() => onChange(appendVacationRow(rows, employeeRows, config.startDate))}
+          type="button"
+        >
+          <Plus size={15} />
+          일정 추가
+        </button>
+      </div>
+      <div className="table-scroll">
+        <table className="editor-table vacation-editor-table">
+          <thead>
+            <tr>
+              <th>직원</th>
+              <th>시작일</th>
+              <th>종료일</th>
+              <th>유형</th>
+              <th>예외</th>
+              <th>삭제</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <td>
+                  <EmployeeSelect
+                    disabled={disabled}
+                    employeeRows={employeeRows}
+                    onChange={(employeeCode) =>
+                      onChange(updateVacationRow(rows, row.id, { employeeCode }))
+                    }
+                    value={row.employeeCode}
+                  />
+                </td>
+                <td>
+                  <input
+                    disabled={disabled}
+                    onChange={(event) =>
+                      onChange(updateVacationRow(rows, row.id, { startDate: event.target.value }))
+                    }
+                    type="date"
+                    value={row.startDate}
+                  />
+                </td>
+                <td>
+                  <input
+                    disabled={disabled}
+                    onChange={(event) =>
+                      onChange(updateVacationRow(rows, row.id, { endDate: event.target.value }))
+                    }
+                    type="date"
+                    value={row.endDate}
+                  />
+                </td>
+                <td>
+                  <select
+                    disabled={disabled}
+                    onChange={(event) =>
+                      onChange(updateVacationRow(rows, row.id, { type: event.target.value }))
+                    }
+                    value={row.type}
+                  >
+                    {VACATION_TYPE_OPTIONS.map((type) => (
+                      <option key={type} value={type}>
+                        {vacationTypeLabel(type)}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <label className="inline-check">
+                    <input
+                      checked={row.overrideAllowed}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        onChange(
+                          updateVacationRow(rows, row.id, {
+                            overrideAllowed: event.target.checked,
+                          }),
+                        )
+                      }
+                      type="checkbox"
+                    />
+                    <span>허용</span>
+                  </label>
+                </td>
+                <td>
+                  <button
+                    className="icon-button danger-button"
+                    disabled={disabled || rows.length <= 1}
+                    onClick={() => onChange(removeVacationRow(rows, row.id))}
+                    title="일정 삭제"
+                    type="button"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function PairConstraintTable({
+  disabled,
+  employeeRows,
+  onChange,
+  rows,
+}: {
+  disabled: boolean;
+  employeeRows: EmployeeTableRow[];
+  onChange: (rows: PairTableRow[]) => void;
+  rows: PairTableRow[];
+}) {
+  return (
+    <div className="table-editor">
+      <div className="table-editor-heading">
+        <SectionTitle title="상극 조합" />
+        <button
+          disabled={disabled}
+          onClick={() => onChange(appendPairRow(rows, employeeRows))}
+          type="button"
+        >
+          <Plus size={15} />
+          조합 추가
+        </button>
+      </div>
+      <div className="table-scroll">
+        <table className="editor-table pair-editor-table">
+          <thead>
+            <tr>
+              <th>직원 A</th>
+              <th>직원 B</th>
+              <th>심각도</th>
+              <th>예외</th>
+              <th>삭제</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <td>
+                  <EmployeeSelect
+                    disabled={disabled}
+                    employeeRows={employeeRows}
+                    onChange={(employeeACode) =>
+                      onChange(updatePairRow(rows, row.id, { employeeACode }, employeeRows))
+                    }
+                    value={row.employeeACode}
+                  />
+                </td>
+                <td>
+                  <EmployeeSelect
+                    disabled={disabled}
+                    employeeRows={employeeRows}
+                    onChange={(employeeBCode) =>
+                      onChange(updatePairRow(rows, row.id, { employeeBCode }, employeeRows))
+                    }
+                    value={row.employeeBCode}
+                  />
+                </td>
+                <td>
+                  <select
+                    disabled={disabled}
+                    onChange={(event) =>
+                      onChange(updatePairRow(rows, row.id, { severity: event.target.value }, employeeRows))
+                    }
+                    value={row.severity}
+                  >
+                    {PAIR_SEVERITY_OPTIONS.map((severity) => (
+                      <option key={severity} value={severity}>
+                        {severityLabel(severity)}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <label className="inline-check">
+                    <input
+                      checked={row.overrideAllowed}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        onChange(
+                          updatePairRow(
+                            rows,
+                            row.id,
+                            { overrideAllowed: event.target.checked },
+                            employeeRows,
+                          ),
+                        )
+                      }
+                      type="checkbox"
+                    />
+                    <span>허용</span>
+                  </label>
+                </td>
+                <td>
+                  <button
+                    className="icon-button danger-button"
+                    disabled={disabled || rows.length <= 1}
+                    onClick={() => onChange(removePairRow(rows, row.id))}
+                    title="조합 삭제"
+                    type="button"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function EmployeeSelect({
+  disabled,
+  employeeRows,
+  onChange,
+  value,
+}: {
+  disabled: boolean;
+  employeeRows: EmployeeTableRow[];
+  onChange: (employeeCode: string) => void;
+  value: string;
+}) {
+  return (
+    <select
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+      value={value}
+    >
+      {employeeRows.map((employee) => (
+        <option key={employee.id} value={employee.employeeCode}>
+          {employee.employeeCode} · {employee.name}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -970,20 +1372,6 @@ function ShiftCoverageMatrix({
   );
 }
 
-function employeeRow(employee: ScenarioDraftEmployee) {
-  return {
-    row_no: employee.rowNo,
-    employee_code: employee.employeeCode,
-    name: employee.name,
-    role_names: employee.roleNames,
-    max_shifts_per_week: employee.maxShiftsPerWeek,
-  };
-}
-
-function parseDraftRowCount(text: string) {
-  return text.split(/\r?\n/).filter((line) => line.trim()).length;
-}
-
 async function fetchResult(organizationId: string, runId: string) {
   return api<ScheduleResult>(`/organizations/${organizationId}/schedule-runs/${runId}/result`);
 }
@@ -1032,6 +1420,16 @@ function severityLabel(value: string) {
     medium: "주의",
     high: "높음",
     critical: "매우 높음",
+  };
+  return labels[value] ?? value;
+}
+
+function vacationTypeLabel(value: string) {
+  const labels: Record<string, string> = {
+    vacation: "휴가",
+    business_trip: "출장",
+    training: "교육",
+    personal: "개인",
   };
   return labels[value] ?? value;
 }

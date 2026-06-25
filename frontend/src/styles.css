@@ -261,12 +261,6 @@ button:disabled {
   color: #9aa8a1;
 }
 
-.draft-grid {
-  display: grid;
-  gap: 10px;
-  margin-top: 14px;
-}
-
 .shift-coverage {
   border-top: 1px solid #edf1ef;
   display: grid;
@@ -342,6 +336,138 @@ button:disabled {
   color: #61716a;
   font-size: 12px;
   font-weight: 800;
+}
+
+.reference-data {
+  border-top: 1px solid #edf1ef;
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.table-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.table-editor-heading {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.table-editor-heading .section-title {
+  margin-bottom: 0;
+}
+
+.table-editor-heading button {
+  font-size: 12px;
+  min-height: 34px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.table-scroll {
+  border: 1px solid #dfe6e2;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.editor-table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.employee-editor-table {
+  min-width: 760px;
+}
+
+.vacation-editor-table {
+  min-width: 820px;
+}
+
+.pair-editor-table {
+  min-width: 700px;
+}
+
+.editor-table th,
+.editor-table td {
+  border-bottom: 1px solid #edf1ef;
+  padding: 8px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.editor-table tbody tr:last-child th,
+.editor-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.editor-table th {
+  background: #f2f5f4;
+  color: #687870;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.editor-table input,
+.editor-table select {
+  appearance: none;
+  background: #ffffff;
+  border: 1px solid #cfd8d3;
+  border-radius: 8px;
+  color: #17211d;
+  font: inherit;
+  font-size: 13px;
+  min-height: 34px;
+  min-width: 0;
+  padding: 0 9px;
+  width: 100%;
+}
+
+.editor-table input:disabled,
+.editor-table select:disabled {
+  background: #f7f9f8;
+  color: #9aa8a1;
+}
+
+.role-toggle-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.inline-check {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  min-height: 32px;
+}
+
+.inline-check input {
+  accent-color: #1f7a55;
+  height: 16px;
+  width: 16px;
+}
+
+.inline-check span {
+  color: #61716a;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.icon-button {
+  min-height: 34px;
+  padding: 0;
+  width: 36px;
+}
+
+.danger-button {
+  color: #9a3412;
 }
 
 .metric-row {
