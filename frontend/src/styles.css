@@ -811,6 +811,14 @@ button:disabled {
   font-size: 12px;
 }
 
+.fairness-row small {
+  color: #84928c;
+  display: block;
+  font-size: 11px;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
 .fairness-row b {
   color: #1f7a55;
   font-size: 13px;
@@ -883,6 +891,31 @@ button:disabled {
 .audit-row {
   display: grid;
   gap: 4px;
+}
+
+.long-term-fairness-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.fairness-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.fairness-controls label {
+  display: grid;
+  gap: 4px;
+}
+
+.fairness-controls label span {
+  color: #61716a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.fairness-controls button {
+  justify-content: center;
 }
 
 .manual-edit-panel,

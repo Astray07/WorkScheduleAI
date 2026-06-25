@@ -96,7 +96,14 @@ import {
   type ScheduleRunComparison,
   type ScheduleRunHistory,
 } from "./runComparison";
-import { auditActionLabel, fairnessDeltaLabel, fairnessSpreadLabel } from "./visibility";
+import {
+  auditActionLabel,
+  fairnessDeltaLabel,
+  fairnessSpreadLabel,
+  longTermFairnessSourceLabel,
+  sortedLongTermFairnessRows,
+  type LongTermFairnessSource,
+} from "./visibility";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "infeasible"]);
@@ -262,6 +269,34 @@ type FairnessSummary = {
   rows: FairnessEmployeeRow[];
 };
 
+type LongTermFairnessRow = {
+  employee_id: string;
+  employee_code: string;
+  employee_name: string;
+  assignment_count: number;
+  night_count: number;
+  weekend_count: number;
+  role_counts: Record<string, number>;
+  delta_from_average: number;
+};
+
+type LongTermFairnessSummary = {
+  organization_id: string;
+  source: LongTermFairnessSource;
+  period_start: string | null;
+  period_end: string | null;
+  schedule_count: number;
+  publication_count: number;
+  run_count: number;
+  employee_count: number;
+  total_assignments: number;
+  average_assignments: number;
+  min_assignments: number;
+  max_assignments: number;
+  spread: number;
+  rows: LongTermFairnessRow[];
+};
+
 type FieldError = {
   field: string;
   code: string;
@@ -324,6 +359,15 @@ export function App() {
   const [result, setResult] = useState<ScheduleResult | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [fairness, setFairness] = useState<FairnessSummary | null>(null);
+  const [longTermFairness, setLongTermFairness] = useState<LongTermFairnessSummary | null>(null);
+  const [longTermFairnessSource, setLongTermFairnessSource] =
+    useState<LongTermFairnessSource>("publications");
+  const [longTermPeriodStart, setLongTermPeriodStart] = useState(
+    DEFAULT_SCENARIO_CONFIG.startDate,
+  );
+  const [longTermPeriodEnd, setLongTermPeriodEnd] = useState(
+    periodEndFor(DEFAULT_SCENARIO_CONFIG.startDate, DEFAULT_SCENARIO_CONFIG.periodDays),
+  );
   const [runHistory, setRunHistory] = useState<ScheduleRunHistory["runs"]>([]);
   const [comparisonBaseRunId, setComparisonBaseRunId] = useState("");
   const [comparisonCandidateRunId, setComparisonCandidateRunId] = useState("");
@@ -388,6 +432,7 @@ export function App() {
     setResult(null);
     setAuditLogs([]);
     setFairness(null);
+    setLongTermFairness(null);
     setRunHistory([]);
     setComparisonBaseRunId("");
     setComparisonCandidateRunId("");
@@ -399,6 +444,11 @@ export function App() {
   function updateScenario(patch: Partial<ScenarioConfig>) {
     const nextScenario = normalizeScenarioConfig({ ...scenario, ...patch });
     setScenario(nextScenario);
+    if (patch.startDate !== undefined || patch.periodDays !== undefined) {
+      setLongTermPeriodStart(nextScenario.startDate);
+      setLongTermPeriodEnd(periodEndFor(nextScenario.startDate, nextScenario.periodDays));
+      setLongTermFairness(null);
+    }
     if (patch.employeeCount !== undefined) {
       const nextEmployeeRows = buildEmployeeTableRows(nextScenario.employeeCount);
       setEmployeeRows(nextEmployeeRows);
@@ -843,6 +893,34 @@ export function App() {
       setError(messageFromError(caught));
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function loadLongTermFairness({
+    organizationId = demo?.organizationId ?? workspaceOrganization?.id,
+    showBusy = true,
+  }: {
+    organizationId?: string;
+    showBusy?: boolean;
+  } = {}) {
+    if (!organizationId) return;
+    if (showBusy) setBusy("long-term-fairness");
+    if (showBusy) setError(null);
+    try {
+      const params = new URLSearchParams({
+        source: longTermFairnessSource,
+        period_start: longTermPeriodStart,
+        period_end: longTermPeriodEnd,
+      });
+      const summary = await api<LongTermFairnessSummary>(
+        `/operations/organizations/${organizationId}/fairness/long-term?${params.toString()}`,
+      );
+      setLongTermFairness(summary);
+    } catch (caught) {
+      setLongTermFairness(null);
+      if (showBusy) setError(messageFromError(caught));
+    } finally {
+      if (showBusy) setBusy(null);
     }
   }
 
@@ -1344,6 +1422,26 @@ export function App() {
             <IssueList issues={result?.issues ?? []} />
             <ProposalList proposals={result?.proposals ?? []} />
             <FairnessPanel summary={fairness} />
+            <LongTermFairnessPanel
+              busy={busy}
+              periodEnd={longTermPeriodEnd}
+              periodStart={longTermPeriodStart}
+              source={longTermFairnessSource}
+              summary={longTermFairness}
+              onPeriodEndChange={(value) => {
+                setLongTermPeriodEnd(value);
+                setLongTermFairness(null);
+              }}
+              onPeriodStartChange={(value) => {
+                setLongTermPeriodStart(value);
+                setLongTermFairness(null);
+              }}
+              onRefresh={() => loadLongTermFairness()}
+              onSourceChange={(value) => {
+                setLongTermFairnessSource(value);
+                setLongTermFairness(null);
+              }}
+            />
             <RunComparisonPanel
               baseRunId={comparisonBaseRunId}
               busy={busy}
@@ -1411,6 +1509,7 @@ export function App() {
       }
       return historyResponse.runs.find((run) => run.id !== runId)?.id ?? "";
     });
+    void loadLongTermFairness({ organizationId, showBusy: false });
   }
 }
 
@@ -2515,7 +2614,7 @@ function ProposalList({ proposals }: { proposals: Proposal[] }) {
 function FairnessPanel({ summary }: { summary: FairnessSummary | null }) {
   return (
     <div className="visibility-panel">
-      <SectionTitle title="공정성" />
+      <SectionTitle title="현재 실행 공정성" />
       {!summary ? (
         <div className="subtle-box">공정성 요약이 없습니다.</div>
       ) : (
@@ -2531,6 +2630,95 @@ function FairnessPanel({ summary }: { summary: FairnessSummary | null }) {
                 <div>
                   <strong>{row.employee_name}</strong>
                   <span>{row.employee_code}</span>
+                </div>
+                <b>{row.assignment_count}회</b>
+                <em>{fairnessDeltaLabel(row.delta_from_average)}</em>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function LongTermFairnessPanel({
+  busy,
+  onPeriodEndChange,
+  onPeriodStartChange,
+  onRefresh,
+  onSourceChange,
+  periodEnd,
+  periodStart,
+  source,
+  summary,
+}: {
+  busy: string | null;
+  onPeriodEndChange: (value: string) => void;
+  onPeriodStartChange: (value: string) => void;
+  onRefresh: () => void;
+  onSourceChange: (value: LongTermFairnessSource) => void;
+  periodEnd: string;
+  periodStart: string;
+  source: LongTermFairnessSource;
+  summary: LongTermFairnessSummary | null;
+}) {
+  const rows = summary ? sortedLongTermFairnessRows(summary.rows) : [];
+  return (
+    <div className="visibility-panel long-term-fairness-panel">
+      <SectionTitle title="장기 공정성" />
+      <div className="fairness-controls">
+        <label>
+          <span>기준</span>
+          <select
+            value={source}
+            onChange={(event) => onSourceChange(event.target.value as LongTermFairnessSource)}
+          >
+            <option value="publications">{longTermFairnessSourceLabel("publications")}</option>
+            <option value="runs">{longTermFairnessSourceLabel("runs")}</option>
+          </select>
+        </label>
+        <label>
+          <span>시작</span>
+          <input
+            max={periodEnd}
+            onChange={(event) => onPeriodStartChange(event.target.value)}
+            type="date"
+            value={periodStart}
+          />
+        </label>
+        <label>
+          <span>종료</span>
+          <input
+            min={periodStart}
+            onChange={(event) => onPeriodEndChange(event.target.value)}
+            type="date"
+            value={periodEnd}
+          />
+        </label>
+        <button disabled={busy === "long-term-fairness"} onClick={onRefresh} type="button">
+          <RefreshCw size={16} />
+          갱신
+        </button>
+      </div>
+      {!summary ? (
+        <div className="subtle-box">장기 공정성 요약이 없습니다.</div>
+      ) : (
+        <>
+          <div className="summary-metrics">
+            <Metric label="기준" value={longTermFairnessSourceLabel(summary.source)} />
+            <Metric label="총 배정" value={`${summary.total_assignments}회`} />
+            <Metric label="편차" value={fairnessSpreadLabel(summary)} />
+          </div>
+          <div className="fairness-list">
+            {rows.slice(0, 8).map((row) => (
+              <div className="fairness-row long-term-row" key={row.employee_id}>
+                <div>
+                  <strong>{row.employee_name}</strong>
+                  <span>
+                    {row.employee_code} · 야간 {row.night_count} · 주말 {row.weekend_count}
+                  </span>
+                  <small>{roleCountsLabel(row.role_counts)}</small>
                 </div>
                 <b>{row.assignment_count}회</b>
                 <em>{fairnessDeltaLabel(row.delta_from_average)}</em>
@@ -3368,6 +3556,12 @@ function optionalSourceLabel(source: string | null) {
 
 function optionalLockLabel(lockedByUser: boolean | null) {
   return lockedByUser === null ? "없음" : assignmentLockLabel({ locked_by_user: lockedByUser });
+}
+
+function roleCountsLabel(roleCounts: Record<string, number>) {
+  const entries = Object.entries(roleCounts);
+  if (!entries.length) return "역할 배정 없음";
+  return entries.map(([roleName, count]) => `${roleName} ${count}`).join(" · ");
 }
 
 function dateInputValue(value: string) {

@@ -47,6 +47,37 @@ try {
   assert.equal(visibility.fairnessSpreadLabel({ spread: 2 }), "편차 2회");
   assert.equal(visibility.fairnessDeltaLabel(1.334), "+1.33");
   assert.equal(visibility.fairnessDeltaLabel(-0.667), "-0.67");
+  assert.equal(visibility.longTermFairnessSourceLabel("publications"), "확정본");
+  assert.equal(visibility.longTermFairnessSourceLabel("runs"), "실행 기록");
+  assert.deepEqual(
+    visibility.sortedLongTermFairnessRows([
+      {
+        employee_code: "E002",
+        employee_name: "이서연",
+        assignment_count: 3,
+        night_count: 0,
+        weekend_count: 0,
+        delta_from_average: 0.5,
+      },
+      {
+        employee_code: "E001",
+        employee_name: "김민준",
+        assignment_count: 6,
+        night_count: 2,
+        weekend_count: 1,
+        delta_from_average: 3.5,
+      },
+      {
+        employee_code: "E003",
+        employee_name: "박지훈",
+        assignment_count: 0,
+        night_count: 0,
+        weekend_count: 0,
+        delta_from_average: -2.5,
+      },
+    ]).map((row) => row.employee_code),
+    ["E001", "E003", "E002"],
+  );
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }

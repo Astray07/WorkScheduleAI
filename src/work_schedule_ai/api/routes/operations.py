@@ -1,16 +1,24 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 import json
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
-from work_schedule_ai.db.models import Assignment, AuditLog, Employee, ScheduleRun
+from work_schedule_ai.db.models import (
+    Assignment,
+    AuditLog,
+    Employee,
+    Role,
+    SchedulePublication,
+    ScheduleRun,
+    ShiftSlot,
+)
 
 
 router = APIRouter(prefix="/operations", tags=["operations"])
@@ -66,6 +74,34 @@ class FairnessSummaryResponse(BaseModel):
     max_assignments: int
     spread: int
     rows: list[FairnessEmployeeRow]
+
+
+class LongTermFairnessEmployeeRow(BaseModel):
+    employee_id: str
+    employee_code: str
+    employee_name: str
+    assignment_count: int
+    night_count: int
+    weekend_count: int
+    role_counts: dict[str, int]
+    delta_from_average: float
+
+
+class LongTermFairnessResponse(BaseModel):
+    organization_id: str
+    source: Literal["publications", "runs"]
+    period_start: date | None
+    period_end: date | None
+    schedule_count: int
+    publication_count: int
+    run_count: int
+    employee_count: int
+    total_assignments: int
+    average_assignments: float
+    min_assignments: int
+    max_assignments: int
+    spread: int
+    rows: list[LongTermFairnessEmployeeRow]
 
 
 @router.get(
@@ -129,6 +165,76 @@ def get_organization_audit_logs(
 
 
 @router.get(
+    "/organizations/{organization_id}/fairness/long-term",
+    response_model=LongTermFairnessResponse,
+)
+def get_organization_long_term_fairness(
+    organization_id: str,
+    period_start: date | None = None,
+    period_end: date | None = None,
+    source: Literal["publications", "runs"] = "publications",
+    db_session: Session = Depends(get_db_session),
+) -> LongTermFairnessResponse:
+    if period_start is not None and period_end is not None and period_start > period_end:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="period_start must be on or before period_end",
+        )
+    employees = _active_employees(organization_id, db_session)
+    role_names = _role_names_by_id(organization_id, db_session)
+    counts = _empty_long_term_counts(employees)
+    if source == "publications":
+        publication_count, run_count = _aggregate_publication_fairness(
+            organization_id,
+            period_start,
+            period_end,
+            role_names,
+            counts,
+            db_session,
+        )
+    else:
+        publication_count, run_count = _aggregate_run_fairness(
+            organization_id,
+            period_start,
+            period_end,
+            role_names,
+            counts,
+            db_session,
+        )
+    rows = _long_term_fairness_rows(employees, counts)
+    total_assignments = sum(row.assignment_count for row in rows)
+    employee_count = len(employees)
+    average = round(total_assignments / employee_count, 3) if employee_count else 0.0
+    rows = [
+        row.model_copy(
+            update={
+                "delta_from_average": round(row.assignment_count - average, 3),
+            }
+        )
+        for row in rows
+    ]
+    rows.sort(key=lambda row: (-abs(row.delta_from_average), -row.assignment_count, row.employee_code))
+    min_assignments = min((row.assignment_count for row in rows), default=0)
+    max_assignments = max((row.assignment_count for row in rows), default=0)
+    return LongTermFairnessResponse(
+        organization_id=organization_id,
+        source=source,
+        period_start=period_start,
+        period_end=period_end,
+        schedule_count=publication_count if source == "publications" else run_count,
+        publication_count=publication_count,
+        run_count=run_count,
+        employee_count=employee_count,
+        total_assignments=total_assignments,
+        average_assignments=average,
+        min_assignments=min_assignments,
+        max_assignments=max_assignments,
+        spread=max_assignments - min_assignments,
+        rows=rows,
+    )
+
+
+@router.get(
     "/organizations/{organization_id}/fairness/summary",
     response_model=FairnessSummaryResponse,
 )
@@ -185,6 +291,210 @@ def get_organization_fairness_summary(
         spread=max_assignments - min_assignments,
         rows=rows,
     )
+
+
+def _active_employees(
+    organization_id: str,
+    db_session: Session,
+) -> list[Employee]:
+    return list(
+        db_session.execute(
+            select(Employee)
+            .where(Employee.organization_id == organization_id, Employee.active.is_(True))
+            .order_by(Employee.employee_code)
+        ).scalars()
+    )
+
+
+def _role_names_by_id(
+    organization_id: str,
+    db_session: Session,
+) -> dict[str, str]:
+    return {
+        role.id: role.name
+        for role in db_session.execute(
+            select(Role).where(Role.organization_id == organization_id)
+        ).scalars()
+    }
+
+
+def _empty_long_term_counts(
+    employees: list[Employee],
+) -> dict[str, dict[str, Any]]:
+    return {
+        employee.id: {
+            "assignment_count": 0,
+            "night_count": 0,
+            "weekend_count": 0,
+            "role_counts": {},
+        }
+        for employee in employees
+    }
+
+
+def _aggregate_publication_fairness(
+    organization_id: str,
+    period_start: date | None,
+    period_end: date | None,
+    role_names: dict[str, str],
+    counts: dict[str, dict[str, Any]],
+    db_session: Session,
+) -> tuple[int, int]:
+    query = select(SchedulePublication).where(
+        SchedulePublication.organization_id == organization_id,
+        SchedulePublication.status == "published",
+    )
+    if period_start is not None:
+        query = query.where(SchedulePublication.period_end >= period_start)
+    if period_end is not None:
+        query = query.where(SchedulePublication.period_start <= period_end)
+    publications = db_session.execute(query).scalars()
+    included_publication_ids: set[str] = set()
+    for publication in publications:
+        try:
+            snapshot = json.loads(publication.result_snapshot_json or "{}")
+        except json.JSONDecodeError:
+            continue
+        slots = {
+            slot.get("id"): slot
+            for slot in snapshot.get("slots", [])
+            if isinstance(slot, dict) and slot.get("id")
+        }
+        for assignment in snapshot.get("assignments", []):
+            if not isinstance(assignment, dict):
+                continue
+            slot = slots.get(assignment.get("slot_id"))
+            if slot is None:
+                continue
+            slot_date = _snapshot_slot_date(slot)
+            if not _date_in_period(slot_date, period_start, period_end):
+                continue
+            if _add_long_term_assignment(
+                counts=counts,
+                employee_id=str(assignment.get("employee_id", "")),
+                role_name=role_names.get(
+                    str(assignment.get("role_id", "")),
+                    str(assignment.get("role_id", "")),
+                ),
+                slot_date=slot_date,
+                label=str(slot.get("label", "")),
+                starts_at=str(slot.get("starts_at", "")),
+            ):
+                included_publication_ids.add(publication.id)
+    return len(included_publication_ids), 0
+
+
+def _aggregate_run_fairness(
+    organization_id: str,
+    period_start: date | None,
+    period_end: date | None,
+    role_names: dict[str, str],
+    counts: dict[str, dict[str, Any]],
+    db_session: Session,
+) -> tuple[int, int]:
+    query = (
+        select(Assignment, ShiftSlot)
+        .join(ShiftSlot, Assignment.shift_slot_id == ShiftSlot.id)
+        .join(ScheduleRun, Assignment.schedule_run_id == ScheduleRun.id)
+        .where(
+            Assignment.organization_id == organization_id,
+            ShiftSlot.organization_id == organization_id,
+            ScheduleRun.organization_id == organization_id,
+            ScheduleRun.status.in_(("succeeded", "infeasible")),
+        )
+    )
+    if period_start is not None:
+        query = query.where(ShiftSlot.local_date >= period_start)
+    if period_end is not None:
+        query = query.where(ShiftSlot.local_date <= period_end)
+    included_run_ids: set[str] = set()
+    for assignment, slot in db_session.execute(query):
+        if _add_long_term_assignment(
+            counts=counts,
+            employee_id=assignment.employee_id,
+            role_name=role_names.get(assignment.role_id, assignment.role_id),
+            slot_date=slot.local_date,
+            label=slot.label,
+            starts_at=slot.starts_at,
+        ):
+            included_run_ids.add(assignment.schedule_run_id)
+    return 0, len(included_run_ids)
+
+
+def _add_long_term_assignment(
+    *,
+    counts: dict[str, dict[str, Any]],
+    employee_id: str,
+    role_name: str,
+    slot_date: date,
+    label: str,
+    starts_at: str,
+) -> bool:
+    employee_counts = counts.get(employee_id)
+    if employee_counts is None:
+        return False
+    employee_counts["assignment_count"] += 1
+    if _is_night_slot(label, starts_at):
+        employee_counts["night_count"] += 1
+    if slot_date.weekday() >= 5:
+        employee_counts["weekend_count"] += 1
+    role_counts = employee_counts["role_counts"]
+    role_counts[role_name] = role_counts.get(role_name, 0) + 1
+    return True
+
+
+def _long_term_fairness_rows(
+    employees: list[Employee],
+    counts: dict[str, dict[str, Any]],
+) -> list[LongTermFairnessEmployeeRow]:
+    rows: list[LongTermFairnessEmployeeRow] = []
+    for employee in employees:
+        employee_counts = counts[employee.id]
+        rows.append(
+            LongTermFairnessEmployeeRow(
+                employee_id=employee.id,
+                employee_code=employee.employee_code,
+                employee_name=employee.name,
+                assignment_count=int(employee_counts["assignment_count"]),
+                night_count=int(employee_counts["night_count"]),
+                weekend_count=int(employee_counts["weekend_count"]),
+                role_counts=dict(sorted(employee_counts["role_counts"].items())),
+                delta_from_average=0.0,
+            )
+        )
+    return rows
+
+
+def _snapshot_slot_date(slot: dict[str, Any]) -> date:
+    value = slot.get("local_date")
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))
+
+
+def _date_in_period(
+    value: date,
+    period_start: date | None,
+    period_end: date | None,
+) -> bool:
+    if period_start is not None and value < period_start:
+        return False
+    if period_end is not None and value > period_end:
+        return False
+    return True
+
+
+def _is_night_slot(label: str, starts_at: str) -> bool:
+    if "야간" in label:
+        return True
+    start_time = _time_part(starts_at)
+    return bool(start_time and (start_time >= "18:00" or start_time < "06:00"))
+
+
+def _time_part(value: str) -> str | None:
+    if "T" not in value:
+        return None
+    return value.split("T", 1)[1][:5]
 
 
 def _parse_metadata(raw_metadata: str) -> dict[str, Any]:
