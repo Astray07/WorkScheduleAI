@@ -12,6 +12,26 @@ def test_health_endpoint_returns_ok():
     assert response.json() == {"status": "ok"}
 
 
+def test_health_version_exposes_deployment_and_solver_policy(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "staging")
+    monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "abc123")
+    monkeypatch.setenv("RAILWAY_GIT_BRANCH", "feature/test")
+    client = TestClient(create_app())
+
+    response = client.get("/health/version")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "app_env": "staging",
+        "railway_environment": None,
+        "railway_service": None,
+        "railway_deployment_id": None,
+        "git_commit": "abc123",
+        "git_branch": "feature/test",
+        "solver_policy_version": "weekly_cap_fairness_v1",
+    }
+
+
 def test_cors_allows_configured_frontend_origin(monkeypatch):
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://frontend.example")
     client = TestClient(create_app())

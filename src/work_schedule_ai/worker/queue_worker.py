@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from contextlib import AbstractContextManager
 from collections.abc import Callable
 
@@ -7,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import SessionLocal
 from work_schedule_ai.db.models import ScheduleRun
+from work_schedule_ai.version import build_info
 from work_schedule_ai.worker.queue import ScheduleRunQueue, get_schedule_run_queue
 from work_schedule_ai.worker.schedule_worker import (
     ScheduleRunExecutor,
@@ -55,6 +57,11 @@ def _default_schedule_run_executor(
 
 
 def main() -> int:
+    print(
+        "Starting schedule queue worker "
+        f"{json.dumps(build_info(), sort_keys=True)}",
+        flush=True,
+    )
     run_queue_worker()
     return 0
 

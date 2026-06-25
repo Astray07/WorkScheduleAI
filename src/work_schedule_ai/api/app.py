@@ -23,6 +23,7 @@ from work_schedule_ai.contracts import (
     missing_core_schemas,
     missing_p0_paths,
 )
+from work_schedule_ai.version import build_info
 
 
 def create_app() -> FastAPI:
@@ -54,6 +55,10 @@ def create_app() -> FastAPI:
             "database": "ok",
             "redis": _redis_readiness_status(),
         }
+
+    @app.get("/health/version")
+    async def version() -> dict[str, str | None]:
+        return build_info()
 
     @app.get("/contracts/m0/summary")
     async def m0_contract_summary() -> dict[str, object]:
