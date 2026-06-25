@@ -46,8 +46,30 @@ try {
   ]);
   assert.equal(preview.valid, false);
   assert.equal(preview.errors[0].field, "name");
+  const shiftTypePreview = importPreview.validateImportRows("shift_types", [
+    {
+      shift_type: "야간 근무",
+      local_start_time: "22:00",
+      local_end_time: "06:00",
+      timezone: "Asia/Seoul",
+      crosses_midnight: "true",
+      active_weekdays: "0|1|2|3|4",
+      active: "true",
+      role_name: "",
+      required_count: "",
+      unfilled_weight_override: "",
+    },
+  ]);
+  assert.equal(shiftTypePreview.valid, false);
+  assert.deepEqual(
+    shiftTypePreview.errors.map((error) => error.field),
+    ["role_name", "required_count"],
+  );
   assert.equal(importPreview.parseImportBoolean("true"), true);
   assert.equal(importPreview.parseImportBoolean("불가"), false);
+  assert.equal(importPreview.isXlsxFileName("template.xlsx"), true);
+  assert.equal(importPreview.isXlsxFileName("template.csv"), false);
+  assert.equal(importPreview.bytesToBase64(new Uint8Array([65, 66])), "QUI=");
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }

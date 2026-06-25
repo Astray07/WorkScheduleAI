@@ -60,7 +60,15 @@ import {
   openManualEditDraft,
   type ManualEditDraft,
 } from "./manualEdits";
-import { parseDelimitedText, validateImportRows, type ImportType } from "./importPreview";
+import {
+  bytesToBase64,
+  isXlsxFileName,
+  parseDelimitedText,
+  validateImportRows,
+  type ImportFormat,
+  type ImportPreview,
+  type ImportType,
+} from "./importPreview";
 import {
   DEFAULT_POLICY,
   normalizePolicy,
@@ -294,14 +302,13 @@ export function App() {
   const [managedShiftTypes, setManagedShiftTypes] = useState<ManagedShiftType[]>([]);
   const [policy, setPolicy] = useState<SchedulePolicy>(DEFAULT_POLICY);
   const [importType, setImportType] = useState<ImportType>("employees");
+  const [importFormat, setImportFormat] = useState<ImportFormat>("delimited");
   const [importContent, setImportContent] = useState(
     "employee_code,name,roles,max_shifts_per_week\nE013,신규직원,사수|부사수,5",
   );
-  const [importPreview, setImportPreview] = useState<{
-    valid: boolean;
-    rows: Record<string, string>[];
-    errors: { field: string | null; row_no: number | null; message: string }[];
-  } | null>(null);
+  const [importContentBase64, setImportContentBase64] = useState("");
+  const [importSheetName, setImportSheetName] = useState("");
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [manualEditDraft, setManualEditDraft] = useState<ManualEditDraft | null>(null);
   const [manualEditValidation, setManualEditValidation] = useState<ManualEditValidation | null>(null);
   const [demo, setDemo] = useState<DemoState | null>(null);
@@ -1082,16 +1089,18 @@ export function App() {
     setError(null);
     try {
       const organization = await ensureWorkspaceOrganization();
-      const localPreview = validateImportRows(importType, parseDelimitedText(importContent));
-      if (!localPreview.valid) {
-        setImportPreview(localPreview);
-        return;
+      if (importFormat === "delimited") {
+        const localPreview = validateImportRows(importType, parseDelimitedText(importContent));
+        if (!localPreview.valid) {
+          setImportPreview(localPreview);
+          return;
+        }
       }
-      const serverPreview = await api<typeof importPreview>(
+      const serverPreview = await api<ImportPreview>(
         `/organizations/${organization.id}/imports/preview`,
         {
           method: "POST",
-          body: { type: importType, content: importContent },
+          body: importRequestBody(),
         },
       );
       setImportPreview(serverPreview);
@@ -1107,11 +1116,11 @@ export function App() {
     setError(null);
     try {
       const organization = await ensureWorkspaceOrganization();
-      const response = await api<typeof importPreview>(
+      const response = await api<ImportPreview>(
         `/organizations/${organization.id}/imports/apply`,
         {
           method: "POST",
-          body: { type: importType, mode: "upsert", content: importContent },
+          body: { ...importRequestBody(), mode: "upsert" },
         },
       );
       setImportPreview(response);
@@ -1121,6 +1130,22 @@ export function App() {
     } finally {
       setBusy(null);
     }
+  }
+
+  function importRequestBody() {
+    if (importFormat === "xlsx") {
+      return {
+        type: importType,
+        format: importFormat,
+        content_base64: importContentBase64,
+        sheet_name: importSheetName || undefined,
+      };
+    }
+    return {
+      type: importType,
+      format: importFormat,
+      content: importContent,
+    };
   }
 
   return (
@@ -1198,6 +1223,9 @@ export function App() {
               onDeleteUnavailability={deleteManagedUnavailability}
               onEmployeesChange={setManagedEmployees}
               onImportContentChange={setImportContent}
+              onImportContentBase64Change={setImportContentBase64}
+              onImportFormatChange={setImportFormat}
+              onImportSheetNameChange={setImportSheetName}
               onImportTypeChange={setImportType}
               onLoadReferenceData={loadReferenceData}
               onPairConstraintsChange={setManagedPairConstraints}
@@ -1214,6 +1242,9 @@ export function App() {
               onUnavailabilitiesChange={setManagedUnavailabilities}
               pairConstraints={managedPairConstraints}
               policy={policy}
+              importContentBase64={importContentBase64}
+              importFormat={importFormat}
+              importSheetName={importSheetName}
               shiftTypes={managedShiftTypes}
               unavailabilities={managedUnavailabilities}
               workspace={workspaceOrganization}
@@ -1509,7 +1540,10 @@ function OperationsSetupTabs({
   busy,
   employees,
   importContent,
+  importContentBase64,
+  importFormat,
   importPreview,
+  importSheetName,
   importType,
   onAddEmployee,
   onAddPairConstraint,
@@ -1521,7 +1555,10 @@ function OperationsSetupTabs({
   onDeleteShiftType,
   onDeleteUnavailability,
   onEmployeesChange,
+  onImportContentBase64Change,
   onImportContentChange,
+  onImportFormatChange,
+  onImportSheetNameChange,
   onImportTypeChange,
   onLoadReferenceData,
   onPairConstraintsChange,
@@ -1546,11 +1583,10 @@ function OperationsSetupTabs({
   busy: string | null;
   employees: ManagedEmployee[];
   importContent: string;
-  importPreview: {
-    valid: boolean;
-    rows: Record<string, string>[];
-    errors: { field: string | null; row_no: number | null; message: string }[];
-  } | null;
+  importContentBase64: string;
+  importFormat: ImportFormat;
+  importPreview: ImportPreview | null;
+  importSheetName: string;
   importType: ImportType;
   onAddEmployee: () => void;
   onAddPairConstraint: () => void;
@@ -1562,7 +1598,10 @@ function OperationsSetupTabs({
   onDeleteShiftType: (shiftTypeId: string) => void;
   onDeleteUnavailability: (unavailabilityId: string) => void;
   onEmployeesChange: (employees: ManagedEmployee[]) => void;
+  onImportContentBase64Change: (content: string) => void;
   onImportContentChange: (content: string) => void;
+  onImportFormatChange: (format: ImportFormat) => void;
+  onImportSheetNameChange: (sheetName: string) => void;
   onImportTypeChange: (type: ImportType) => void;
   onLoadReferenceData: () => void;
   onPairConstraintsChange: (pairs: ManagedPairConstraint[]) => void;
@@ -1640,10 +1679,16 @@ function OperationsSetupTabs({
       {activeTab === "import" ? (
         <ImportManager
           content={importContent}
+          contentBase64={importContentBase64}
+          importFormat={importFormat}
+          importSheetName={importSheetName}
           importType={importType}
           onApply={onApplyImport}
+          onContentBase64Change={onImportContentBase64Change}
           onContentChange={onImportContentChange}
+          onFormatChange={onImportFormatChange}
           onPreview={onPreviewImport}
+          onSheetNameChange={onImportSheetNameChange}
           onTypeChange={onImportTypeChange}
           preview={importPreview}
         />
@@ -2227,54 +2272,96 @@ function NumberPolicyInput({
 
 function ImportManager({
   content,
+  contentBase64,
+  importFormat,
+  importSheetName,
   importType,
   onApply,
+  onContentBase64Change,
   onContentChange,
+  onFormatChange,
   onPreview,
+  onSheetNameChange,
   onTypeChange,
   preview,
 }: {
   content: string;
+  contentBase64: string;
+  importFormat: ImportFormat;
+  importSheetName: string;
   importType: ImportType;
   onApply: () => void;
+  onContentBase64Change: (content: string) => void;
   onContentChange: (content: string) => void;
+  onFormatChange: (format: ImportFormat) => void;
   onPreview: () => void;
+  onSheetNameChange: (sheetName: string) => void;
   onTypeChange: (type: ImportType) => void;
-  preview: {
-    valid: boolean;
-    rows: Record<string, string>[];
-    errors: { field: string | null; row_no: number | null; message: string }[];
-  } | null;
+  preview: ImportPreview | null;
 }) {
   return (
     <div className="import-manager">
-      <SectionTitle title="Excel CSV/TSV 가져오기" />
+      <SectionTitle title="Excel 가져오기" />
       <label className="field-row field-row-wide">
         <span>대상</span>
         <select onChange={(event) => onTypeChange(event.target.value as ImportType)} value={importType}>
           <option value="employees">직원</option>
           <option value="unavailabilities">휴가/출장</option>
           <option value="pair_constraints">상극 조합</option>
+          <option value="shift_types">근무유형/필요 인원</option>
           <option value="policy">정책</option>
         </select>
       </label>
       <label className="field-row field-row-wide">
-        <span>Excel CSV/TSV 파일</span>
+        <span>형식</span>
+        <select onChange={(event) => onFormatChange(event.target.value as ImportFormat)} value={importFormat}>
+          <option value="delimited">CSV/TSV</option>
+          <option value="xlsx">.xlsx</option>
+        </select>
+      </label>
+      {importFormat === "xlsx" ? (
+        <label className="field-row field-row-wide">
+          <span>시트명</span>
+          <input
+            onChange={(event) => onSheetNameChange(event.target.value)}
+            placeholder={importType}
+            value={importSheetName}
+          />
+        </label>
+      ) : null}
+      <label className="field-row field-row-wide">
+        <span>파일</span>
         <input
-          accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values"
+          accept=".csv,.tsv,.txt,.xlsx,text/csv,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           onChange={(event) => {
             const file = event.target.files?.[0];
             if (!file) return;
+            if (isXlsxFileName(file.name)) {
+              onFormatChange("xlsx");
+              onContentChange(file.name);
+              void file.arrayBuffer().then((buffer) => {
+                onContentBase64Change(bytesToBase64(new Uint8Array(buffer)));
+              });
+              return;
+            }
+            onFormatChange("delimited");
+            onContentBase64Change("");
             void file.text().then(onContentChange);
           }}
           type="file"
         />
       </label>
-      <textarea
-        onChange={(event) => onContentChange(event.target.value)}
-        spellCheck={false}
-        value={content}
-      />
+      {importFormat === "xlsx" ? (
+        <div className={contentBase64 ? "success-box" : "subtle-box"}>
+          {contentBase64 ? `${content} 파일을 불러왔습니다.` : "선택된 .xlsx 파일 없음"}
+        </div>
+      ) : (
+        <textarea
+          onChange={(event) => onContentChange(event.target.value)}
+          spellCheck={false}
+          value={content}
+        />
+      )}
       <div className="button-row">
         <button onClick={onPreview} type="button">미리보기</button>
         <button className="primary-action" disabled={!preview?.valid} onClick={onApply} type="button">반영</button>
@@ -2308,9 +2395,15 @@ function ImportManager({
           ) : null}
           {!preview.valid
             ? preview.errors.map((error) => (
-                <div className="validation-row blocking" key={`${error.row_no}-${error.field}-${error.message}`}>
-                  <strong>{error.row_no ?? "-"}행 {error.field ?? ""}</strong>
-                  <span>{error.message}</span>
+                <div
+                  className="validation-row blocking"
+                  key={`${error.sheet ?? ""}-${error.row_no}-${error.column ?? error.field}-${error.code}-${error.message}`}
+                >
+                  <strong>
+                    {error.sheet ? `${error.sheet} · ` : ""}
+                    {error.row_no ?? "-"}행 {error.column ?? error.field ?? ""}
+                  </strong>
+                  <span>{error.code} · {error.message}</span>
                 </div>
               ))
             : null}

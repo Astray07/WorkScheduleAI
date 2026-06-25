@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import base64
 import csv
 from datetime import datetime
-from io import StringIO
+from io import BytesIO, StringIO
+import posixpath
+import re
 from typing import Literal
 from uuid import uuid4
+import zipfile
+import xml.etree.ElementTree as ET
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
-from sqlalchemy import select
+from pydantic import BaseModel, model_validator
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
@@ -20,6 +25,8 @@ from work_schedule_ai.db.models import (
     PairConstraint,
     Role,
     SchedulePolicy,
+    ShiftRequirement,
+    ShiftType,
     Unavailability,
     utc_now,
 )
@@ -27,9 +34,17 @@ from work_schedule_ai.db.models import (
 
 router = APIRouter(prefix="/organizations", tags=["imports"])
 
-ImportType = Literal["employees", "unavailabilities", "pair_constraints", "policy"]
+ImportType = Literal[
+    "employees",
+    "unavailabilities",
+    "pair_constraints",
+    "policy",
+    "shift_types",
+]
+ImportFormat = Literal["delimited", "xlsx"]
 
 EMPLOYEE_MAX_SHIFTS_PER_WEEK_RANGE = (0, 31)
+TIME_PATTERN = re.compile(r"^\d{2}:\d{2}$")
 POLICY_INTEGER_RANGES: dict[str, tuple[int, int]] = {
     "min_rest_hours": (0, 48),
     "max_consecutive_shifts": (1, 31),
@@ -44,7 +59,18 @@ POLICY_INTEGER_RANGES: dict[str, tuple[int, int]] = {
 
 class ImportRequest(BaseModel):
     type: ImportType
-    content: str = Field(min_length=1)
+    content: str = ""
+    format: ImportFormat = "delimited"
+    content_base64: str | None = None
+    sheet_name: str | None = None
+
+    @model_validator(mode="after")
+    def validate_content_for_format(self):
+        if self.format == "delimited" and not self.content.strip():
+            raise ValueError("content is required for delimited imports")
+        if self.format == "xlsx" and not self.content_base64:
+            raise ValueError("content_base64 is required for xlsx imports")
+        return self
 
 
 class ImportApplyRequest(ImportRequest):
@@ -54,7 +80,9 @@ class ImportApplyRequest(ImportRequest):
 class ImportErrorResponse(BaseModel):
     code: str
     message: str
+    sheet: str | None = None
     field: str | None = None
+    column: str | None = None
     row_no: int | None = None
 
 
@@ -83,12 +111,25 @@ REQUIRED_COLUMNS: dict[ImportType, tuple[str, ...]] = {
         "override_allowed",
     ),
     "policy": ("key", "value"),
+    "shift_types": (
+        "shift_type",
+        "local_start_time",
+        "local_end_time",
+        "timezone",
+        "crosses_midnight",
+        "active_weekdays",
+        "active",
+        "role_name",
+        "required_count",
+        "unfilled_weight_override",
+    ),
 }
 
 
 @router.post(
     "/{organization_id}/imports/preview",
     response_model=ImportPreviewResponse,
+    response_model_exclude_none=True,
 )
 def preview_import(
     organization_id: str,
@@ -96,12 +137,16 @@ def preview_import(
     db_session: Session = Depends(get_db_session),
 ) -> ImportPreviewResponse:
     _get_organization_or_404(organization_id, db_session)
-    rows = _parse_rows(request.content)
+    rows, sheet_name, row_numbers, header_row_no, include_column = _parse_import_rows(request)
     errors = _validate_rows(
         organization_id=organization_id,
         import_type=request.type,
         rows=rows,
         db_session=db_session,
+        sheet_name=sheet_name,
+        row_numbers=row_numbers,
+        header_row_no=header_row_no,
+        include_column=include_column,
     )
     return ImportPreviewResponse(
         type=request.type,
@@ -114,6 +159,7 @@ def preview_import(
 @router.post(
     "/{organization_id}/imports/apply",
     response_model=ImportPreviewResponse,
+    response_model_exclude_none=True,
 )
 def apply_import(
     organization_id: str,
@@ -122,7 +168,13 @@ def apply_import(
 ) -> ImportPreviewResponse:
     preview = preview_import(
         organization_id=organization_id,
-        request=ImportRequest(type=request.type, content=request.content),
+        request=ImportRequest(
+            type=request.type,
+            content=request.content,
+            format=request.format,
+            content_base64=request.content_base64,
+            sheet_name=request.sheet_name,
+        ),
         db_session=db_session,
     )
     if not preview.valid:
@@ -138,12 +190,27 @@ def apply_import(
         )
     elif request.type == "pair_constraints":
         applied_count = _apply_pair_rows(organization_id, preview.rows, db_session)
-    else:
+    elif request.type == "policy":
         applied_count = _apply_policy_rows(organization_id, preview.rows, db_session)
+    else:
+        applied_count = _apply_shift_type_rows(organization_id, preview.rows, db_session)
 
     db_session.commit()
     preview.applied_count = applied_count
     return preview
+
+
+def _parse_import_rows(
+    request: ImportRequest,
+) -> tuple[list[dict[str, str]], str | None, list[int] | None, int, bool]:
+    if request.format == "xlsx":
+        sheet_name = request.sheet_name or request.type
+        rows, row_numbers, header_row_no = _parse_xlsx_rows(
+            request.content_base64,
+            sheet_name,
+        )
+        return rows, sheet_name, row_numbers, header_row_no, True
+    return _parse_rows(request.content), None, None, 1, False
 
 
 def _parse_rows(content: str) -> list[dict[str, str]]:
@@ -159,12 +226,170 @@ def _parse_rows(content: str) -> list[dict[str, str]]:
     return rows
 
 
+def _parse_xlsx_rows(
+    content_base64: str | None,
+    sheet_name: str,
+) -> tuple[list[dict[str, str]], list[int], int]:
+    if not content_base64:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "XLSX_CONTENT_REQUIRED",
+                "message": "content_base64 is required for xlsx imports.",
+                "field": "content_base64",
+            },
+        )
+    try:
+        workbook_bytes = base64.b64decode(content_base64, validate=True)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "INVALID_XLSX_BASE64",
+                "message": "content_base64 must be valid base64.",
+                "field": "content_base64",
+            },
+        ) from exc
+
+    try:
+        with zipfile.ZipFile(BytesIO(workbook_bytes)) as workbook:
+            worksheet_path = _xlsx_worksheet_path(workbook, sheet_name)
+            shared_strings = _xlsx_shared_strings(workbook)
+            table = _xlsx_worksheet_table(workbook, worksheet_path, shared_strings)
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "INVALID_XLSX_FILE",
+                "message": "Uploaded content is not a readable .xlsx file.",
+                "field": "content_base64",
+            },
+        ) from exc
+
+    if not table:
+        return [], [], 1
+    header_row_no, header_values = table[0]
+    headers = [header.strip() for header in header_values]
+    rows: list[dict[str, str]] = []
+    row_numbers: list[int] = []
+    for row_no, values in table[1:]:
+        if not any(value.strip() for value in values):
+            continue
+        rows.append(
+            {
+                header: (values[index] if index < len(values) else "").strip()
+                for index, header in enumerate(headers)
+                if header
+            }
+        )
+        row_numbers.append(row_no)
+    return rows, row_numbers, header_row_no
+
+
+def _xlsx_worksheet_path(workbook: zipfile.ZipFile, sheet_name: str) -> str:
+    workbook_xml = ET.fromstring(workbook.read("xl/workbook.xml"))
+    relationships = ET.fromstring(workbook.read("xl/_rels/workbook.xml.rels"))
+    target_by_id = {
+        relationship.attrib["Id"]: relationship.attrib["Target"]
+        for relationship in relationships
+    }
+    for sheet in workbook_xml.findall(f".//{_xlsx_tag('sheet')}"):
+        if sheet.attrib.get("name") != sheet_name:
+            continue
+        relationship_id = sheet.attrib.get(
+            "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+        )
+        if relationship_id is None or relationship_id not in target_by_id:
+            break
+        target = target_by_id[relationship_id]
+        if target.startswith("/"):
+            return target.lstrip("/")
+        return posixpath.normpath(posixpath.join("xl", target))
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "code": "XLSX_SHEET_NOT_FOUND",
+            "message": f"Sheet '{sheet_name}' was not found.",
+            "field": "sheet_name",
+        },
+    )
+
+
+def _xlsx_shared_strings(workbook: zipfile.ZipFile) -> list[str]:
+    if "xl/sharedStrings.xml" not in workbook.namelist():
+        return []
+    shared_xml = ET.fromstring(workbook.read("xl/sharedStrings.xml"))
+    values: list[str] = []
+    for item in shared_xml.findall(f".//{_xlsx_tag('si')}"):
+        values.append("".join(text.text or "" for text in item.findall(f".//{_xlsx_tag('t')}")))
+    return values
+
+
+def _xlsx_worksheet_table(
+    workbook: zipfile.ZipFile,
+    worksheet_path: str,
+    shared_strings: list[str],
+) -> list[tuple[int, list[str]]]:
+    worksheet_xml = ET.fromstring(workbook.read(worksheet_path))
+    rows: list[tuple[int, list[str]]] = []
+    for row in worksheet_xml.findall(f".//{_xlsx_tag('row')}"):
+        row_number = _parse_int(row.attrib.get("r", "")) or len(rows) + 1
+        values_by_index: dict[int, str] = {}
+        for cell in row.findall(_xlsx_tag("c")):
+            cell_ref = cell.attrib.get("r", "")
+            column_index = _xlsx_column_index(cell_ref)
+            if column_index is None:
+                column_index = len(values_by_index) + 1
+            values_by_index[column_index] = _xlsx_cell_value(cell, shared_strings)
+        if values_by_index:
+            max_index = max(values_by_index)
+            rows.append(
+                (
+                    row_number,
+                    [values_by_index.get(index, "") for index in range(1, max_index + 1)],
+                )
+            )
+    return rows
+
+
+def _xlsx_cell_value(cell: ET.Element, shared_strings: list[str]) -> str:
+    cell_type = cell.attrib.get("t")
+    if cell_type == "inlineStr":
+        return "".join(text.text or "" for text in cell.findall(f".//{_xlsx_tag('t')}"))
+
+    value_element = cell.find(_xlsx_tag("v"))
+    raw_value = value_element.text if value_element is not None else ""
+    if cell_type == "s" and raw_value:
+        index = _parse_int(raw_value)
+        if index is not None and 0 <= index < len(shared_strings):
+            return shared_strings[index]
+    return raw_value or ""
+
+
+def _xlsx_tag(name: str) -> str:
+    return f"{{http://schemas.openxmlformats.org/spreadsheetml/2006/main}}{name}"
+
+
+def _xlsx_column_index(cell_ref: str) -> int | None:
+    match = re.match(r"([A-Z]+)", cell_ref)
+    if match is None:
+        return None
+    index = 0
+    for letter in match.group(1):
+        index = index * 26 + (ord(letter) - 64)
+    return index
+
+
 def _validate_rows(
     *,
     organization_id: str,
     import_type: ImportType,
     rows: list[dict[str, str]],
     db_session: Session,
+    sheet_name: str | None = None,
+    row_numbers: list[int] | None = None,
+    header_row_no: int = 1,
+    include_column: bool = False,
 ) -> list[ImportErrorResponse]:
     errors: list[ImportErrorResponse] = []
     if not rows:
@@ -172,6 +397,7 @@ def _validate_rows(
             ImportErrorResponse(
                 code="NO_ROWS",
                 message="Import content must include at least one data row.",
+                sheet=sheet_name,
             )
         ]
 
@@ -183,8 +409,10 @@ def _validate_rows(
                 ImportErrorResponse(
                     code="MISSING_COLUMN",
                     message="Required column is missing.",
+                    sheet=sheet_name,
                     field=column,
-                    row_no=1,
+                    column=column if include_column else None,
+                    row_no=header_row_no,
                 )
             )
     if errors:
@@ -195,16 +423,37 @@ def _validate_rows(
         "unavailabilities": _validate_unavailability_row,
         "pair_constraints": _validate_pair_row,
         "policy": _validate_policy_row,
+        "shift_types": _validate_shift_type_row,
     }
-    for index, row in enumerate(rows, start=1):
-        errors.extend(
-            validators[import_type](
+    for index, row in enumerate(rows):
+        row_no = row_numbers[index] if row_numbers is not None else index + 1
+        row_errors = validators[import_type](
                 organization_id,
-                index,
+                row_no,
                 row,
                 db_session,
+        )
+        errors.extend(_with_import_context(row_errors, sheet_name, include_column))
+    if import_type == "shift_types":
+        errors.extend(
+            _with_import_context(
+                _validate_shift_type_batch(rows, row_numbers),
+                sheet_name,
+                include_column,
             )
         )
+    return errors
+
+
+def _with_import_context(
+    errors: list[ImportErrorResponse],
+    sheet_name: str | None,
+    include_column: bool,
+) -> list[ImportErrorResponse]:
+    for error in errors:
+        error.sheet = sheet_name
+        if include_column and error.field is not None:
+            error.column = error.field
     return errors
 
 
@@ -319,6 +568,133 @@ def _validate_policy_row(
             )
         )
     return errors
+
+
+def _validate_shift_type_row(
+    organization_id: str,
+    row_no: int,
+    row: dict[str, str],
+    db_session: Session,
+) -> list[ImportErrorResponse]:
+    errors = _required_value_errors(
+        row_no,
+        row,
+        (
+            "shift_type",
+            "local_start_time",
+            "local_end_time",
+            "timezone",
+            "crosses_midnight",
+            "active_weekdays",
+            "active",
+            "role_name",
+            "required_count",
+        ),
+    )
+    role_by_name = _role_by_name(organization_id, db_session)
+    if row.get("role_name") and row["role_name"] not in role_by_name:
+        errors.append(_row_error(row_no, "role_name", "UNKNOWN_ROLE", "Unknown role name."))
+
+    starts_at = row.get("local_start_time", "")
+    ends_at = row.get("local_end_time", "")
+    if starts_at and not _valid_local_time(starts_at):
+        errors.append(_row_error(row_no, "local_start_time", "INVALID_TIME", "Invalid local_start_time."))
+    if ends_at and not _valid_local_time(ends_at):
+        errors.append(_row_error(row_no, "local_end_time", "INVALID_TIME", "Invalid local_end_time."))
+    if starts_at and ends_at and starts_at == ends_at:
+        errors.append(
+            _row_error(
+                row_no,
+                "local_end_time",
+                "INVALID_TIME_RANGE",
+                "local_start_time and local_end_time must differ.",
+            )
+        )
+
+    if row.get("crosses_midnight") and _parse_bool(row["crosses_midnight"]) is None:
+        errors.append(_row_error(row_no, "crosses_midnight", "INVALID_BOOLEAN", "Invalid boolean."))
+    if row.get("active") and _parse_bool(row["active"]) is None:
+        errors.append(_row_error(row_no, "active", "INVALID_BOOLEAN", "Invalid boolean."))
+    if row.get("active_weekdays") and _parse_active_weekdays(row["active_weekdays"]) is None:
+        errors.append(
+            _row_error(
+                row_no,
+                "active_weekdays",
+                "INVALID_WEEKDAYS",
+                "active_weekdays must contain unique values between 0 and 6.",
+            )
+        )
+    if row.get("required_count"):
+        errors.extend(
+            _integer_range_errors(
+                row_no=row_no,
+                field="required_count",
+                raw_value=row["required_count"],
+                bounds=(1, 20),
+            )
+        )
+    if row.get("unfilled_weight_override"):
+        errors.extend(
+            _integer_range_errors(
+                row_no=row_no,
+                field="unfilled_weight_override",
+                raw_value=row["unfilled_weight_override"],
+                bounds=(0, 10000),
+            )
+        )
+    return errors
+
+
+def _validate_shift_type_batch(
+    rows: list[dict[str, str]],
+    row_numbers: list[int] | None = None,
+) -> list[ImportErrorResponse]:
+    errors: list[ImportErrorResponse] = []
+    seen: set[tuple[str, str]] = set()
+    definition_by_shift_type: dict[str, tuple[str, ...]] = {}
+    for index, row in enumerate(rows):
+        row_no = row_numbers[index] if row_numbers is not None else index + 1
+        shift_type = row.get("shift_type", "")
+        definition = _shift_type_definition_key(row)
+        if shift_type and shift_type in definition_by_shift_type:
+            if definition_by_shift_type[shift_type] != definition:
+                errors.append(
+                    _row_error(
+                        row_no,
+                        "shift_type",
+                        "CONFLICTING_SHIFT_TYPE_DEFINITION",
+                        "Rows for the same shift_type must use the same shift definition.",
+                    )
+                )
+        elif shift_type:
+            definition_by_shift_type[shift_type] = definition
+
+        key = (row.get("shift_type", ""), row.get("role_name", ""))
+        if not all(key):
+            continue
+        if key in seen:
+            errors.append(
+                _row_error(
+                    row_no,
+                    "role_name",
+                    "DUPLICATE_REQUIREMENT",
+                    "shift_type and role_name must be unique within the import.",
+                )
+            )
+        seen.add(key)
+    return errors
+
+
+def _shift_type_definition_key(row: dict[str, str]) -> tuple[str, ...]:
+    weekdays = _parse_active_weekdays(row.get("active_weekdays", ""))
+    return (
+        row.get("local_start_time", ""),
+        row.get("local_end_time", ""),
+        row.get("timezone", ""),
+        str(_parse_bool(row.get("crosses_midnight", ""))),
+        _serialize_active_weekdays(weekdays or []),
+        str(_parse_bool(row.get("active", ""))),
+    )
 
 
 def _integer_range_errors(
@@ -511,9 +887,99 @@ def _apply_policy_rows(
     return len(rows)
 
 
+def _apply_shift_type_rows(
+    organization_id: str,
+    rows: list[dict[str, str]],
+    db_session: Session,
+) -> int:
+    role_by_name = _role_by_name(organization_id, db_session)
+    existing_shift_types = {
+        shift_type.name: shift_type
+        for shift_type in db_session.execute(
+            select(ShiftType).where(ShiftType.organization_id == organization_id)
+        ).scalars()
+    }
+    rows_by_shift_type: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        rows_by_shift_type.setdefault(row["shift_type"], []).append(row)
+
+    for shift_type_name, shift_rows in rows_by_shift_type.items():
+        first_row = shift_rows[0]
+        shift_type = existing_shift_types.get(shift_type_name)
+        if shift_type is None:
+            shift_type = ShiftType(
+                id=_new_id("shift_type"),
+                organization_id=organization_id,
+                name=shift_type_name,
+                local_start_time=first_row["local_start_time"],
+                local_end_time=first_row["local_end_time"],
+                timezone=first_row["timezone"],
+                crosses_midnight=bool(_parse_bool(first_row["crosses_midnight"])),
+                active_weekdays=_serialize_active_weekdays(
+                    _parse_active_weekdays(first_row["active_weekdays"]) or []
+                ),
+                active=bool(_parse_bool(first_row["active"])),
+            )
+            db_session.add(shift_type)
+            db_session.flush()
+            existing_shift_types[shift_type_name] = shift_type
+        else:
+            shift_type.local_start_time = first_row["local_start_time"]
+            shift_type.local_end_time = first_row["local_end_time"]
+            shift_type.timezone = first_row["timezone"]
+            shift_type.crosses_midnight = bool(_parse_bool(first_row["crosses_midnight"]))
+            shift_type.active_weekdays = _serialize_active_weekdays(
+                _parse_active_weekdays(first_row["active_weekdays"]) or []
+            )
+            shift_type.active = bool(_parse_bool(first_row["active"]))
+
+        db_session.execute(
+            delete(ShiftRequirement).where(
+                ShiftRequirement.organization_id == organization_id,
+                ShiftRequirement.shift_type_id == shift_type.id,
+            )
+        )
+        db_session.add_all(
+            [
+                ShiftRequirement(
+                    id=_new_id("shift_requirement"),
+                    organization_id=organization_id,
+                    shift_type_id=shift_type.id,
+                    role_id=role_by_name[row["role_name"]].id,
+                    required_count=int(row["required_count"]),
+                    unfilled_weight_override=_parse_int(row.get("unfilled_weight_override", "")),
+                )
+                for row in shift_rows
+            ]
+        )
+    return len(rows)
+
+
 def _role_names(raw_value: str) -> list[str]:
     delimiter = "|" if "|" in raw_value else ";"
     return [role_name.strip() for role_name in raw_value.split(delimiter) if role_name.strip()]
+
+
+def _parse_active_weekdays(raw_value: str) -> list[int] | None:
+    delimiter = "|" if "|" in raw_value else ";" if ";" in raw_value else ","
+    weekdays: list[int] = []
+    for part in raw_value.split(delimiter):
+        value = _parse_int(part.strip())
+        if value is None or value < 0 or value > 6 or value in weekdays:
+            return None
+        weekdays.append(value)
+    return sorted(weekdays) if weekdays else None
+
+
+def _serialize_active_weekdays(weekdays: list[int]) -> str:
+    return ",".join(str(day) for day in sorted(weekdays))
+
+
+def _valid_local_time(raw_value: str) -> bool:
+    if not TIME_PATTERN.match(raw_value):
+        return False
+    hour, minute = raw_value.split(":")
+    return 0 <= int(hour) <= 23 and 0 <= int(minute) <= 59
 
 
 def _role_by_name(

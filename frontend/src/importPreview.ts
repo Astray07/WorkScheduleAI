@@ -1,9 +1,18 @@
-export type ImportType = "employees" | "unavailabilities" | "pair_constraints" | "policy";
+export type ImportType =
+  | "employees"
+  | "unavailabilities"
+  | "pair_constraints"
+  | "policy"
+  | "shift_types";
+
+export type ImportFormat = "delimited" | "xlsx";
 
 export type ImportError = {
   code: string;
   message: string;
+  sheet?: string | null;
   field: string | null;
+  column?: string | null;
   row_no: number | null;
 };
 
@@ -11,6 +20,7 @@ export type ImportPreview = {
   valid: boolean;
   rows: Record<string, string>[];
   errors: ImportError[];
+  applied_count?: number;
 };
 
 const REQUIRED_COLUMNS: Record<ImportType, string[]> = {
@@ -24,6 +34,25 @@ const REQUIRED_COLUMNS: Record<ImportType, string[]> = {
     "override_allowed",
   ],
   policy: ["key", "value"],
+  shift_types: [
+    "shift_type",
+    "local_start_time",
+    "local_end_time",
+    "timezone",
+    "crosses_midnight",
+    "active_weekdays",
+    "active",
+    "role_name",
+    "required_count",
+    "unfilled_weight_override",
+  ],
+};
+
+const REQUIRED_VALUE_COLUMNS: Record<ImportType, string[]> = {
+  ...REQUIRED_COLUMNS,
+  shift_types: REQUIRED_COLUMNS.shift_types.filter(
+    (column) => column !== "unfilled_weight_override",
+  ),
 };
 
 export function detectDelimiter(text: string): "," | "\t" {
@@ -72,8 +101,9 @@ export function validateImportRows(
       });
     }
   }
+  const requiredValueColumns = REQUIRED_VALUE_COLUMNS[type];
   rows.forEach((row, index) => {
-    requiredColumns.forEach((column) => {
+    requiredValueColumns.forEach((column) => {
       if (!row[column]) {
         errors.push({
           code: "REQUIRED",
@@ -92,4 +122,17 @@ export function parseImportBoolean(rawValue: string): boolean | null {
   if (["true", "1", "yes", "y", "허용"].includes(normalized)) return true;
   if (["false", "0", "no", "n", "불가"].includes(normalized)) return false;
   return null;
+}
+
+export function isXlsxFileName(fileName: string): boolean {
+  return fileName.trim().toLowerCase().endsWith(".xlsx");
+}
+
+export function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
 }
