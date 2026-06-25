@@ -189,6 +189,11 @@ class ShiftType(Base):
     local_end_time: Mapped[str] = mapped_column(Text, nullable=False)
     timezone: Mapped[str] = mapped_column(Text, nullable=False)
     crosses_midnight: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    active_weekdays: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="0,1,2,3,4,5,6",
+    )
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

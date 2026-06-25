@@ -1,12 +1,13 @@
 import {
   AlertTriangle,
-  CalendarDays,
+  Building2,
   CheckCircle2,
+  ClipboardList,
+  Clock3,
   Download,
   FileSpreadsheet,
   Play,
   RefreshCw,
-  Rocket,
   ShieldCheck,
   Users,
 } from "lucide-react";
@@ -17,6 +18,7 @@ import {
   MIN_EMPLOYEE_COUNT,
   PERIOD_DAY_OPTIONS,
   addDaysIso,
+  buildDefaultVacationDrafts,
   buildScenarioEmployees,
   dateDisplayLabel,
   slotDisplayLabel,
@@ -35,6 +37,16 @@ import {
   type ScenarioDraftEmployee,
 } from "./scenarioDraft";
 import { canRecalculate } from "./scheduleActions";
+import {
+  DEFAULT_SHIFT_COVERAGE,
+  SHIFT_DAY_GROUP_OPTIONS,
+  SHIFT_PRESETS,
+  buildShiftTypeRequests,
+  normalizeShiftCoverage,
+  setShiftCoverageEnabled,
+  shiftCoverageSummary,
+  type ShiftCoverage,
+} from "./shiftProfile";
 import { auditActionLabel, fairnessDeltaLabel, fairnessSpreadLabel } from "./visibility";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -156,19 +168,12 @@ type DemoState = {
 
 export function App() {
   const [scenario, setScenario] = useState<ScenarioConfig>(DEFAULT_SCENARIO_CONFIG);
+  const [shiftCoverage, setShiftCoverage] = useState<ShiftCoverage>(DEFAULT_SHIFT_COVERAGE);
   const [employeeDraft, setEmployeeDraft] = useState(() =>
     formatEmployeeDraft(buildScenarioEmployees(DEFAULT_SCENARIO_CONFIG.employeeCount)),
   );
   const [vacationDraft, setVacationDraft] = useState(() =>
-    formatVacationDraft([
-      {
-        employeeCode: DEFAULT_SCENARIO_CONFIG.vacationEmployeeCode,
-        startDate: DEFAULT_SCENARIO_CONFIG.vacationDate,
-        endDate: DEFAULT_SCENARIO_CONFIG.vacationEndDate,
-        type: "vacation",
-        overrideAllowed: true,
-      },
-    ]),
+    formatVacationDraft(buildDefaultVacationDrafts(DEFAULT_SCENARIO_CONFIG)),
   );
   const [pairDraft, setPairDraft] = useState(() =>
     formatPairDraft([
@@ -189,32 +194,37 @@ export function App() {
   const [downloadState, setDownloadState] = useState("대기");
 
   const normalizedScenario = useMemo(() => normalizeScenarioConfig(scenario), [scenario]);
+  const normalizedShiftCoverage = useMemo(
+    () => normalizeShiftCoverage(shiftCoverage),
+    [shiftCoverage],
+  );
   const scenarioEmployees = useMemo(
     () => buildScenarioEmployees(normalizedScenario.employeeCount),
     [normalizedScenario.employeeCount],
   );
   const scenarioSummary = useMemo(
     () =>
-      buildDraftSummary({
+      `${buildDraftSummary({
         employeeDraft,
         vacationDraft,
         pairDraft,
         periodDays: normalizedScenario.periodDays,
-      }),
-    [employeeDraft, normalizedScenario.periodDays, pairDraft, vacationDraft],
+      })} · ${shiftCoverageSummary(normalizedShiftCoverage)}`,
+    [employeeDraft, normalizedScenario.periodDays, normalizedShiftCoverage, pairDraft, vacationDraft],
   );
-  const steps = useMemo(
+  const operationSections = useMemo(
     () => [
-      { label: "조직 생성", icon: Rocket },
-      { label: `직원 ${normalizedScenario.employeeCount}명 bulk paste`, icon: Users },
-      { label: `휴가 ${normalizedScenario.vacationEmployeeCode}`, icon: CalendarDays },
+      { label: "조직", value: normalizedScenario.organizationName, icon: Building2 },
+      { label: "직원", value: `${parseDraftRowCount(employeeDraft)}명`, icon: Users },
+      { label: "휴가/상극", value: `${parseDraftRowCount(vacationDraft)}건 / ${parseDraftRowCount(pairDraft)}건`, icon: ClipboardList },
       {
-        label: `상극 ${normalizedScenario.pairEmployeeACode}/${normalizedScenario.pairEmployeeBCode}`,
-        icon: ShieldCheck,
+        label: "근무유형",
+        value: shiftCoverageSummary(normalizedShiftCoverage),
+        icon: Clock3,
       },
-      { label: `${normalizedScenario.periodDays}일 근무표 생성`, icon: FileSpreadsheet },
+      { label: "생성기간", value: `${normalizedScenario.periodDays}일`, icon: FileSpreadsheet },
     ],
-    [normalizedScenario],
+    [employeeDraft, normalizedScenario, normalizedShiftCoverage, pairDraft, vacationDraft],
   );
   const roles = useMemo(() => {
     const seen = new Map<string, string>();
@@ -252,21 +262,11 @@ export function App() {
       setEmployeeDraft(formatEmployeeDraft(buildScenarioEmployees(nextScenario.employeeCount)));
     }
     if (
-      patch.vacationEmployeeCode !== undefined ||
-      patch.vacationDate !== undefined ||
-      patch.vacationEndDate !== undefined
+      patch.employeeCount !== undefined ||
+      patch.startDate !== undefined ||
+      patch.periodDays !== undefined
     ) {
-      setVacationDraft(
-        formatVacationDraft([
-          {
-            employeeCode: nextScenario.vacationEmployeeCode,
-            startDate: nextScenario.vacationDate,
-            endDate: nextScenario.vacationEndDate,
-            type: "vacation",
-            overrideAllowed: true,
-          },
-        ]),
-      );
+      setVacationDraft(formatVacationDraft(buildDefaultVacationDrafts(nextScenario)));
     }
     if (patch.pairEmployeeACode !== undefined || patch.pairEmployeeBCode !== undefined) {
       setPairDraft(
@@ -280,6 +280,11 @@ export function App() {
         ]),
       );
     }
+    clearRunState();
+  }
+
+  function updateShiftCoverage(nextCoverage: ShiftCoverage) {
+    setShiftCoverage(normalizeShiftCoverage(nextCoverage));
     clearRunState();
   }
 
@@ -304,6 +309,7 @@ export function App() {
     setDownloadState("대기");
     try {
       const activeScenario = normalizeScenarioConfig(scenario);
+      const activeShiftCoverage = normalizeShiftCoverage(shiftCoverage);
       const activeEmployees = parseEmployeeDraft(employeeDraft);
       const activeVacations = parseVacationDraft(vacationDraft);
       const activePairs = parsePairDraft(pairDraft);
@@ -315,7 +321,7 @@ export function App() {
         {
           method: "POST",
           body: {
-            name: `Operator Scenario ${Date.now()}`,
+            name: activeScenario.organizationName,
             timezone: "Asia/Seoul",
           },
         },
@@ -333,19 +339,17 @@ export function App() {
       const seniorRole = organization.default_roles.find((role) => role.name === "사수");
       const juniorRole = organization.default_roles.find((role) => role.name === "부사수");
       if (!seniorRole || !juniorRole) throw new Error("Default roles are missing.");
-      await api(`/organizations/${organization.id}/shift-types`, {
-        method: "POST",
-        body: {
-          name: "주간 근무",
-          local_start_time: "09:00",
-          local_end_time: "18:00",
-          timezone: "Asia/Seoul",
-          requirements: [
-            { role_id: seniorRole.id, required_count: 1 },
-            { role_id: juniorRole.id, required_count: 1 },
-          ],
-        },
-      });
+      await Promise.all(
+        buildShiftTypeRequests(activeShiftCoverage, {
+          seniorRoleId: seniorRole.id,
+          juniorRoleId: juniorRole.id,
+        }).map((request) =>
+          api(`/organizations/${organization.id}/shift-types`, {
+            method: "POST",
+            body: request,
+          }),
+        ),
+      );
       const employeesByCode = new Map(
         employeePayload.employees.map((employee) => [employee.employee_code, employee]),
       );
@@ -496,16 +500,21 @@ export function App() {
           <div className="brand-mark">W</div>
           <div>
             <strong>WorkScheduleAI</strong>
-            <span>1차 릴리즈 콘솔</span>
+            <span>스케줄 운영 플랫폼</span>
           </div>
         </div>
+        <div className="tenant-card">
+          <span>현재 조직</span>
+          <strong>{normalizedScenario.organizationName}</strong>
+        </div>
         <nav className="nav-list">
-          {steps.map((step, index) => {
-            const Icon = step.icon;
+          {operationSections.map((section) => {
+            const Icon = section.icon;
             return (
-              <div className="nav-row" key={step.label}>
+              <div className="nav-row" key={section.label}>
                 <Icon size={18} />
-                <span>{index + 1}. {step.label}</span>
+                <span>{section.label}</span>
+                <strong>{section.value}</strong>
               </div>
             );
           })}
@@ -515,12 +524,12 @@ export function App() {
       <section className="workspace">
         <header className="topbar">
           <div>
-            <h1>근무표 생성/검토</h1>
+            <h1>근무표 운영 콘솔</h1>
             <p>{scenarioSummary}</p>
           </div>
           <button className="primary-action" disabled={busy === "demo"} onClick={runDemo}>
             <Play size={17} />
-            {busy === "demo" ? "생성 중" : "시나리오 생성"}
+            {busy === "demo" ? "생성 중" : "근무표 생성"}
           </button>
         </header>
 
@@ -536,12 +545,15 @@ export function App() {
               onChange={updateScenario}
               onEmployeeDraftChange={updateEmployeeDraft}
               onPairDraftChange={updatePairDraft}
+              onShiftCoverageChange={updateShiftCoverage}
               onVacationDraftChange={updateVacationDraft}
               pairDraft={pairDraft}
+              shiftCoverage={normalizedShiftCoverage}
               vacationDraft={vacationDraft}
             />
             <SectionTitle title="입력 상태" />
-            <Metric label="조직" value={demo?.organizationId ?? "대기"} />
+            <Metric label="조직명" value={normalizedScenario.organizationName} />
+            <Metric label="조직 ID" value={demo?.organizationId ?? "대기"} />
             <Metric
               label="직원"
               value={demo ? `${demo.employees.length}명` : `${parseDraftRowCount(employeeDraft)}명 입력`}
@@ -553,6 +565,7 @@ export function App() {
                 normalizedScenario.periodDays,
               )}`}
             />
+            <Metric label="근무유형" value={shiftCoverageSummary(normalizedShiftCoverage)} />
             <Metric label="생성 상태" value={result?.status ?? "대기"} />
             <Metric label="재계산" value={`${result?.recalculation_count ?? 0}회`} />
             <Metric label="다운로드" value={downloadState} />
@@ -816,8 +829,10 @@ function ScenarioControls({
   onChange,
   onEmployeeDraftChange,
   onPairDraftChange,
+  onShiftCoverageChange,
   onVacationDraftChange,
   pairDraft,
+  shiftCoverage,
   vacationDraft,
 }: {
   config: ScenarioConfig;
@@ -827,14 +842,25 @@ function ScenarioControls({
   onChange: (patch: Partial<ScenarioConfig>) => void;
   onEmployeeDraftChange: (value: string) => void;
   onPairDraftChange: (value: string) => void;
+  onShiftCoverageChange: (coverage: ShiftCoverage) => void;
   onVacationDraftChange: (value: string) => void;
   pairDraft: string;
+  shiftCoverage: ShiftCoverage;
   vacationDraft: string;
 }) {
   return (
     <div className="scenario-controls">
-      <SectionTitle title="시나리오 설정" />
+      <SectionTitle title="운영 설정" />
       <div className="field-grid">
+        <label className="field-row field-row-wide">
+          <span>회사/조직명</span>
+          <input
+            disabled={disabled}
+            onChange={(event) => onChange({ organizationName: event.target.value })}
+            type="text"
+            value={config.organizationName}
+          />
+        </label>
         <label className="field-row">
           <span>직원 수</span>
           <input
@@ -870,33 +896,6 @@ function ScenarioControls({
           />
         </label>
         <label className="field-row">
-          <span>휴가자</span>
-          <EmployeeSelect
-            disabled={disabled}
-            employees={employees}
-            onChange={(value) => onChange({ vacationEmployeeCode: value })}
-            value={config.vacationEmployeeCode}
-          />
-        </label>
-        <label className="field-row">
-          <span>휴가 시작일</span>
-          <input
-            disabled={disabled}
-            onChange={(event) => onChange({ vacationDate: event.target.value })}
-            type="date"
-            value={config.vacationDate}
-          />
-        </label>
-        <label className="field-row">
-          <span>휴가 종료일</span>
-          <input
-            disabled={disabled}
-            onChange={(event) => onChange({ vacationEndDate: event.target.value })}
-            type="date"
-            value={config.vacationEndDate}
-          />
-        </label>
-        <label className="field-row">
           <span>상극 A</span>
           <EmployeeSelect
             disabled={disabled}
@@ -916,9 +915,14 @@ function ScenarioControls({
           />
         </label>
       </div>
+      <ShiftCoverageMatrix
+        coverage={shiftCoverage}
+        disabled={disabled}
+        onChange={onShiftCoverageChange}
+      />
       <div className="draft-grid">
         <label className="field-row">
-          <span>직원 입력</span>
+          <span>직원 기준 정보</span>
           <textarea
             disabled={disabled}
             onChange={(event) => onEmployeeDraftChange(event.target.value)}
@@ -928,17 +932,17 @@ function ScenarioControls({
           />
         </label>
         <label className="field-row">
-          <span>휴가 입력</span>
+          <span>휴가/출장 일정</span>
           <textarea
             disabled={disabled}
             onChange={(event) => onVacationDraftChange(event.target.value)}
-            rows={3}
+            rows={5}
             spellCheck={false}
             value={vacationDraft}
           />
         </label>
         <label className="field-row">
-          <span>상극 입력</span>
+          <span>상극 조합</span>
           <textarea
             disabled={disabled}
             onChange={(event) => onPairDraftChange(event.target.value)}
@@ -947,6 +951,61 @@ function ScenarioControls({
             value={pairDraft}
           />
         </label>
+      </div>
+    </div>
+  );
+}
+
+function ShiftCoverageMatrix({
+  coverage,
+  disabled,
+  onChange,
+}: {
+  coverage: ShiftCoverage;
+  disabled: boolean;
+  onChange: (coverage: ShiftCoverage) => void;
+}) {
+  return (
+    <div className="shift-coverage">
+      <div className="coverage-heading">
+        <SectionTitle title="근무유형" />
+        <span>{shiftCoverageSummary(coverage)}</span>
+      </div>
+      <div className="shift-matrix">
+        <div className="shift-matrix-head">시간대</div>
+        {SHIFT_DAY_GROUP_OPTIONS.map((dayGroup) => (
+          <div className="shift-matrix-head" key={dayGroup.id}>
+            {dayGroup.label}
+          </div>
+        ))}
+        {SHIFT_PRESETS.map((preset) => (
+          <div className="shift-matrix-row" key={preset.id}>
+            <span>{preset.label}</span>
+            {SHIFT_DAY_GROUP_OPTIONS.map((dayGroup) => {
+              const checked = coverage[dayGroup.id].includes(preset.id);
+              return (
+                <label className="check-cell" key={`${dayGroup.id}-${preset.id}`}>
+                  <input
+                    checked={checked}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      onChange(
+                        setShiftCoverageEnabled(
+                          coverage,
+                          dayGroup.id,
+                          preset.id,
+                          event.target.checked,
+                        ),
+                      )
+                    }
+                    type="checkbox"
+                  />
+                  <span>{checked ? "사용" : "미사용"}</span>
+                </label>
+              );
+            })}
+          </div>
+        ))}
       </div>
     </div>
   );

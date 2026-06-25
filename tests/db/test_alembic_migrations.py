@@ -309,6 +309,20 @@ def test_alembic_upgrade_head_creates_audit_log_indexes(tmp_path):
     assert "ix_audit_logs_target" in audit_index_names
 
 
+def test_alembic_upgrade_head_creates_shift_type_active_weekdays(tmp_path):
+    db_path = tmp_path / "migration-test.sqlite"
+
+    _upgrade_head(db_path)
+
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    inspector = inspect(engine)
+    shift_type_columns = {
+        item["name"] for item in inspector.get_columns("shift_types")
+    }
+
+    assert "active_weekdays" in shift_type_columns
+
+
 def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
     db_path = tmp_path / "migration-test.sqlite"
 
@@ -320,7 +334,7 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260624_0012"
+    assert version == "20260625_0013"
 
 
 def test_postgresql_rls_migration_defines_tenant_policies():
@@ -353,6 +367,17 @@ def test_schedule_runs_canceled_at_repair_migration_is_idempotent():
     assert '"canceled_at"' in content
     assert "op.add_column" in content
     assert "if _has_column" in content
+
+
+def test_shift_type_active_weekdays_migration_adds_default_column():
+    migration = Path("alembic/versions/20260625_0013_shift_type_active_weekdays.py")
+
+    content = migration.read_text(encoding="utf-8")
+
+    assert 'revision: str = "20260625_0013"' in content
+    assert 'down_revision: str | None = "20260624_0012"' in content
+    assert '"active_weekdays"' in content
+    assert 'server_default="0,1,2,3,4,5,6"' in content
 
 
 def _upgrade_head(db_path: Path) -> None:

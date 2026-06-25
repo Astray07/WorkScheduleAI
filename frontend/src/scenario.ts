@@ -6,6 +6,7 @@ export type PeriodDays = (typeof PERIOD_DAY_OPTIONS)[number];
 
 export type ScenarioConfig = {
   employeeCount: number;
+  organizationName: string;
   periodDays: number;
   startDate: string;
   vacationEmployeeCode: string;
@@ -21,6 +22,14 @@ export type ScenarioEmployee = {
   name: string;
   roleNames: string[];
   maxShiftsPerWeek: number;
+};
+
+export type DefaultVacationDraft = {
+  employeeCode: string;
+  startDate: string;
+  endDate: string;
+  type: string;
+  overrideAllowed: boolean;
 };
 
 const employeeNames = [
@@ -80,6 +89,7 @@ const koreanWeekdays = ["일", "월", "화", "수", "목", "금", "토"] as cons
 
 export const DEFAULT_SCENARIO_CONFIG: ScenarioConfig = {
   employeeCount: 12,
+  organizationName: "하나케어 운영팀",
   periodDays: 31,
   startDate: "2026-07-01",
   vacationEmployeeCode: "E002",
@@ -119,6 +129,7 @@ export function normalizeScenarioConfig(config: ScenarioConfig): ScenarioConfig 
   return {
     ...config,
     employeeCount,
+    organizationName: (config.organizationName ?? "").trim() || DEFAULT_SCENARIO_CONFIG.organizationName,
     periodDays,
     vacationEmployeeCode: codeWithinRange(config.vacationEmployeeCode, employeeCount)
       ? config.vacationEmployeeCode
@@ -130,6 +141,38 @@ export function normalizeScenarioConfig(config: ScenarioConfig): ScenarioConfig 
     pairEmployeeACode,
     pairEmployeeBCode,
   };
+}
+
+export function buildDefaultVacationDrafts(config: ScenarioConfig): DefaultVacationDraft[] {
+  const normalized = normalizeScenarioConfig(config);
+  const employeeCodes = distinctEmployeeCodes(
+    [2, 7, 10].map((employeeNumber) => Math.min(employeeNumber, normalized.employeeCount)),
+    normalized.employeeCount,
+  );
+  const maxOffset = Math.max(0, normalized.periodDays - 1);
+  return [
+    {
+      employeeCode: employeeCodes[0],
+      startDate: addDaysIso(normalized.startDate, Math.min(1, maxOffset)),
+      endDate: addDaysIso(normalized.startDate, Math.min(3, maxOffset)),
+      type: "vacation",
+      overrideAllowed: true,
+    },
+    {
+      employeeCode: employeeCodes[1],
+      startDate: addDaysIso(normalized.startDate, Math.min(14, maxOffset)),
+      endDate: addDaysIso(normalized.startDate, Math.min(16, maxOffset)),
+      type: "vacation",
+      overrideAllowed: true,
+    },
+    {
+      employeeCode: employeeCodes[2],
+      startDate: addDaysIso(normalized.startDate, Math.min(19, maxOffset)),
+      endDate: addDaysIso(normalized.startDate, Math.min(19, maxOffset)),
+      type: "personal",
+      overrideAllowed: true,
+    },
+  ];
 }
 
 export function addDaysIso(isoDate: string, days: number): string {
@@ -198,6 +241,23 @@ function nextEmployeeCode(currentCode: string, employeeCount: number): string {
   const currentNumber = match ? Number(match[1]) : 1;
   const nextNumber = currentNumber >= employeeCount ? 1 : currentNumber + 1;
   return employeeCodeFor(nextNumber);
+}
+
+function distinctEmployeeCodes(preferredNumbers: number[], employeeCount: number): string[] {
+  const used = new Set<number>();
+  return preferredNumbers.map((preferredNumber) => {
+    let employeeNumber = Math.min(Math.max(preferredNumber, 1), employeeCount);
+    if (used.has(employeeNumber)) {
+      for (let candidate = 1; candidate <= employeeCount; candidate += 1) {
+        if (!used.has(candidate)) {
+          employeeNumber = candidate;
+          break;
+        }
+      }
+    }
+    used.add(employeeNumber);
+    return employeeCodeFor(employeeNumber);
+  });
 }
 
 function weekdayLabel(isoDate: string): string | null {

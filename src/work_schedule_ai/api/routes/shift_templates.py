@@ -20,6 +20,7 @@ from work_schedule_ai.db.models import (
 router = APIRouter(prefix="/organizations", tags=["shift-types"])
 
 TIME_PATTERN = re.compile(r"^\d{2}:\d{2}$")
+DEFAULT_ACTIVE_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6]
 
 
 class ShiftRequirementCreateRequest(BaseModel):
@@ -34,6 +35,11 @@ class ShiftTypeCreateRequest(BaseModel):
     local_end_time: str = Field(pattern=TIME_PATTERN.pattern)
     timezone: str = Field(min_length=1, max_length=80)
     crosses_midnight: bool = False
+    active_weekdays: list[int] = Field(
+        default_factory=lambda: DEFAULT_ACTIVE_WEEKDAYS.copy(),
+        min_length=1,
+        max_length=7,
+    )
     active: bool = True
     requirements: list[ShiftRequirementCreateRequest] = Field(min_length=1)
 
@@ -41,6 +47,11 @@ class ShiftTypeCreateRequest(BaseModel):
     def validate_shift_times_and_roles(self):
         if self.local_start_time == self.local_end_time:
             raise ValueError("local_start_time and local_end_time must differ")
+        if len(set(self.active_weekdays)) != len(self.active_weekdays):
+            raise ValueError("active_weekdays cannot contain duplicates")
+        if any(day < 0 or day > 6 for day in self.active_weekdays):
+            raise ValueError("active_weekdays values must be between 0 and 6")
+        self.active_weekdays = sorted(self.active_weekdays)
         seen_role_ids: set[str] = set()
         for requirement in self.requirements:
             if requirement.role_id in seen_role_ids:
@@ -65,6 +76,7 @@ class ShiftTypeResponse(BaseModel):
     local_end_time: str
     timezone: str
     crosses_midnight: bool
+    active_weekdays: list[int]
     active: bool
     requirements: list[ShiftRequirementResponse]
 
@@ -130,6 +142,7 @@ def create_shift_type(
         local_end_time=request.local_end_time,
         timezone=request.timezone,
         crosses_midnight=request.crosses_midnight,
+        active_weekdays=_serialize_active_weekdays(request.active_weekdays),
         active=request.active,
     )
     db_session.add(shift_type)
@@ -228,6 +241,7 @@ def _shift_type_response(
         local_end_time=shift_type.local_end_time,
         timezone=shift_type.timezone,
         crosses_midnight=shift_type.crosses_midnight,
+        active_weekdays=_parse_active_weekdays(shift_type.active_weekdays),
         active=shift_type.active,
         requirements=[
             ShiftRequirementResponse(
@@ -240,6 +254,24 @@ def _shift_type_response(
             for requirement in requirements
         ],
     )
+
+
+def _serialize_active_weekdays(weekdays: list[int]) -> str:
+    return ",".join(str(day) for day in sorted(weekdays))
+
+
+def _parse_active_weekdays(raw_weekdays: str | None) -> list[int]:
+    if not raw_weekdays:
+        return DEFAULT_ACTIVE_WEEKDAYS.copy()
+    parsed: list[int] = []
+    for value in raw_weekdays.split(","):
+        try:
+            day = int(value)
+        except ValueError:
+            continue
+        if 0 <= day <= 6 and day not in parsed:
+            parsed.append(day)
+    return sorted(parsed) or DEFAULT_ACTIVE_WEEKDAYS.copy()
 
 
 def _new_id(prefix: str) -> str:

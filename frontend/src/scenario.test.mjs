@@ -41,6 +41,7 @@ try {
   const employees = scenario.buildScenarioEmployees(12);
 
   assert.equal(scenario.DEFAULT_SCENARIO_CONFIG.periodDays, 31);
+  assert.equal(scenario.DEFAULT_SCENARIO_CONFIG.organizationName, "하나케어 운영팀");
   assert.equal(employees.length, 12);
   assert.equal(employees[0].employeeCode, "E001");
   assert.equal(employees[0].name, "김민준");
@@ -55,16 +56,44 @@ try {
   assert.equal(scenario.addDaysIso("2026-07-01", 30), "2026-07-31");
   assert.equal(scenario.periodEndFor("2026-07-01", 31), "2026-07-31");
 
+  const defaultVacations = scenario.buildDefaultVacationDrafts(scenario.DEFAULT_SCENARIO_CONFIG);
+  assert.deepEqual(defaultVacations, [
+    {
+      employeeCode: "E002",
+      startDate: "2026-07-02",
+      endDate: "2026-07-04",
+      type: "vacation",
+      overrideAllowed: true,
+    },
+    {
+      employeeCode: "E007",
+      startDate: "2026-07-15",
+      endDate: "2026-07-17",
+      type: "vacation",
+      overrideAllowed: true,
+    },
+    {
+      employeeCode: "E010",
+      startDate: "2026-07-20",
+      endDate: "2026-07-20",
+      type: "personal",
+      overrideAllowed: true,
+    },
+  ]);
+
   const normalized = scenario.normalizeScenarioConfig({
     employeeCount: 100,
+    organizationName: "",
     periodDays: 99,
     startDate: "2026-07-01",
     vacationEmployeeCode: "E999",
     vacationDate: "2026-07-02",
+    vacationEndDate: "2026-07-04",
     pairEmployeeACode: "E005",
     pairEmployeeBCode: "E005",
   });
 
+  assert.equal(normalized.organizationName, "하나케어 운영팀");
   assert.equal(normalized.employeeCount, 50);
   assert.equal(normalized.periodDays, 31);
   assert.equal(normalized.vacationEmployeeCode, "E002");

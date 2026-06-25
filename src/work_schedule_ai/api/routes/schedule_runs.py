@@ -2055,12 +2055,19 @@ def _generated_slot_pairs(
     while current_date <= period_end:
         date_token = current_date.isoformat().replace("-", "_")
         for shift_type in shift_types:
+            if current_date.weekday() not in _shift_type_active_weekdays(shift_type):
+                continue
+            end_date = (
+                current_date + timedelta(days=1)
+                if shift_type.crosses_midnight
+                else current_date
+            )
             slot = ShiftSlotResponse(
                 id=f"slot_{date_token}_{shift_type.id}",
                 local_date=current_date,
                 label=shift_type.name,
                 starts_at=_local_datetime(current_date, shift_type.local_start_time),
-                ends_at=_local_datetime(current_date, shift_type.local_end_time),
+                ends_at=_local_datetime(end_date, shift_type.local_end_time),
             )
             slot_pairs.append((slot, shift_type))
         current_date += timedelta(days=1)
@@ -2122,6 +2129,21 @@ def _generated_snapshot_artifacts(
 def _local_datetime(local_date: date, local_time: str) -> str:
     hour_minute = local_time if len(local_time) == 5 else local_time[:5]
     return f"{local_date.isoformat()}T{hour_minute}:00+09:00"
+
+
+def _shift_type_active_weekdays(shift_type: ShiftType) -> list[int]:
+    raw_weekdays = getattr(shift_type, "active_weekdays", None)
+    if not raw_weekdays:
+        return [0, 1, 2, 3, 4, 5, 6]
+    parsed: list[int] = []
+    for value in raw_weekdays.split(","):
+        try:
+            weekday = int(value)
+        except ValueError:
+            continue
+        if 0 <= weekday <= 6 and weekday not in parsed:
+            parsed.append(weekday)
+    return sorted(parsed) or [0, 1, 2, 3, 4, 5, 6]
 
 
 def _role_ids_by_employee(
@@ -2568,6 +2590,7 @@ def _build_snapshot_payload(
                     "local_end_time": shift_type.local_end_time,
                     "timezone": shift_type.timezone,
                     "crosses_midnight": shift_type.crosses_midnight,
+                    "active_weekdays": _shift_type_active_weekdays(shift_type),
                     "active": shift_type.active,
                 }
                 for shift_type in shift_types

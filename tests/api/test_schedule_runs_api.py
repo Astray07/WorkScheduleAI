@@ -1484,6 +1484,63 @@ def test_schedule_input_snapshot_includes_generated_slots_and_requirements(
     }
 
 
+def test_schedule_input_snapshot_respects_shift_type_weekdays_and_cross_midnight(
+    client: TestClient,
+    db_session: Session,
+):
+    weekday_response = client.post(
+        "/organizations/org_1/shift-types",
+        json={
+            "name": "평일 오전",
+            "local_start_time": "06:00",
+            "local_end_time": "14:00",
+            "timezone": "Asia/Seoul",
+            "active_weekdays": [0, 1, 2, 3, 4],
+            "requirements": [
+                {"role_id": "role_senior", "required_count": 1},
+                {"role_id": "role_junior", "required_count": 1},
+            ],
+        },
+    )
+    weekend_response = client.post(
+        "/organizations/org_1/shift-types",
+        json={
+            "name": "주말 야간",
+            "local_start_time": "22:00",
+            "local_end_time": "06:00",
+            "timezone": "Asia/Seoul",
+            "crosses_midnight": True,
+            "active_weekdays": [5, 6],
+            "requirements": [
+                {"role_id": "role_senior", "required_count": 1},
+                {"role_id": "role_junior", "required_count": 1},
+            ],
+        },
+    )
+    assert weekday_response.status_code == 201
+    assert weekend_response.status_code == 201
+
+    response = client.post(
+        "/organizations/org_1/schedule-runs",
+        json={"period_start": "2026-07-03", "period_end": "2026-07-06"},
+    )
+
+    assert response.status_code == 202
+    snapshot = db_session.query(ScheduleInputSnapshot).one()
+    payload = json.loads(snapshot.payload_json)
+    slot_pairs = [
+        (slot["local_date"], slot["label"], slot["starts_at"], slot["ends_at"])
+        for slot in payload["generated_shift_slots"]
+    ]
+    assert slot_pairs == [
+        ("2026-07-03", "평일 오전", "2026-07-03T06:00:00+09:00", "2026-07-03T14:00:00+09:00"),
+        ("2026-07-04", "주말 야간", "2026-07-04T22:00:00+09:00", "2026-07-05T06:00:00+09:00"),
+        ("2026-07-05", "주말 야간", "2026-07-05T22:00:00+09:00", "2026-07-06T06:00:00+09:00"),
+        ("2026-07-06", "평일 오전", "2026-07-06T06:00:00+09:00", "2026-07-06T14:00:00+09:00"),
+    ]
+    assert len(payload["generated_schedule_requirements"]) == 8
+
+
 def test_publish_schedule_run_creates_publication_and_marks_result_read_only(
     client: TestClient,
     db_session: Session,

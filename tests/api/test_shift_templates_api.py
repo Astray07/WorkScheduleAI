@@ -59,6 +59,7 @@ def test_create_shift_type_with_role_requirements(
             "timezone": "Asia/Seoul",
             "crosses_midnight": False,
             "active": True,
+            "active_weekdays": [0, 1, 2, 3, 4],
             "requirements": [
                 {"role_id": "role_senior", "required_count": 1},
                 {"role_id": "role_junior", "required_count": 1},
@@ -72,11 +73,13 @@ def test_create_shift_type_with_role_requirements(
     assert payload["name"] == "주간 근무"
     assert payload["local_start_time"] == "09:00"
     assert payload["local_end_time"] == "18:00"
+    assert payload["active_weekdays"] == [0, 1, 2, 3, 4]
     assert [item["role_name"] for item in payload["requirements"]] == [
         "사수",
         "부사수",
     ]
-    assert db_session.query(db_models.ShiftType).count() == 1
+    shift_type = db_session.query(db_models.ShiftType).one()
+    assert shift_type.active_weekdays == "0,1,2,3,4"
     assert db_session.query(db_models.ShiftRequirement).count() == 2
 
 
@@ -102,6 +105,7 @@ def test_list_shift_types_returns_requirements(client: TestClient):
     payload = response.json()
     assert len(payload) == 1
     assert payload[0]["name"] == "주간 근무"
+    assert payload[0]["active_weekdays"] == [0, 1, 2, 3, 4, 5, 6]
     assert [item["required_count"] for item in payload[0]["requirements"]] == [1, 1]
 
 
@@ -148,3 +152,25 @@ def test_create_shift_type_rejects_duplicate_name(
     assert second_response.status_code == 409
     assert second_response.json()["detail"]["code"] == "SHIFT_TYPE_DUPLICATE"
     assert db_session.query(db_models.ShiftType).count() == 1
+
+
+def test_create_shift_type_rejects_invalid_active_weekdays(
+    client: TestClient,
+    db_session: Session,
+):
+    response = client.post(
+        "/organizations/org_1/shift-types",
+        json={
+            "name": "잘못된 요일",
+            "local_start_time": "09:00",
+            "local_end_time": "18:00",
+            "timezone": "Asia/Seoul",
+            "active_weekdays": [0, 7],
+            "requirements": [
+                {"role_id": "role_senior", "required_count": 1},
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert db_session.query(db_models.ShiftType).count() == 0
