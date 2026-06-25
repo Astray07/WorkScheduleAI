@@ -87,6 +87,15 @@ import {
   shiftCoverageSummary,
   type ShiftCoverage,
 } from "./shiftProfile";
+import {
+  changedFairnessRows,
+  changeTypeLabel,
+  comparisonSummaryMetrics,
+  deltaLabel,
+  issueChangeTypeLabel,
+  type ScheduleRunComparison,
+  type ScheduleRunHistory,
+} from "./runComparison";
 import { auditActionLabel, fairnessDeltaLabel, fairnessSpreadLabel } from "./visibility";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -315,6 +324,10 @@ export function App() {
   const [result, setResult] = useState<ScheduleResult | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [fairness, setFairness] = useState<FairnessSummary | null>(null);
+  const [runHistory, setRunHistory] = useState<ScheduleRunHistory["runs"]>([]);
+  const [comparisonBaseRunId, setComparisonBaseRunId] = useState("");
+  const [comparisonCandidateRunId, setComparisonCandidateRunId] = useState("");
+  const [runComparison, setRunComparison] = useState<ScheduleRunComparison | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloadState, setDownloadState] = useState("대기");
@@ -375,6 +388,10 @@ export function App() {
     setResult(null);
     setAuditLogs([]);
     setFairness(null);
+    setRunHistory([]);
+    setComparisonBaseRunId("");
+    setComparisonCandidateRunId("");
+    setRunComparison(null);
     setDownloadState("대기");
     setError(null);
   }
@@ -799,6 +816,29 @@ export function App() {
       await refreshReferenceData(demo.organizationId);
       setManualEditDraft(null);
       setManualEditValidation(null);
+    } catch (caught) {
+      setError(messageFromError(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function loadRunComparison(
+    baseRunId = comparisonBaseRunId,
+    candidateRunId = comparisonCandidateRunId,
+  ) {
+    if (!demo || !baseRunId || !candidateRunId || baseRunId === candidateRunId) return;
+    setBusy("compare");
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        base_run_id: baseRunId,
+        candidate_run_id: candidateRunId,
+      });
+      const comparison = await api<ScheduleRunComparison>(
+        `/organizations/${demo.organizationId}/schedule-runs/compare?${params.toString()}`,
+      );
+      setRunComparison(comparison);
     } catch (caught) {
       setError(messageFromError(caught));
     } finally {
@@ -1304,6 +1344,22 @@ export function App() {
             <IssueList issues={result?.issues ?? []} />
             <ProposalList proposals={result?.proposals ?? []} />
             <FairnessPanel summary={fairness} />
+            <RunComparisonPanel
+              baseRunId={comparisonBaseRunId}
+              busy={busy}
+              candidateRunId={comparisonCandidateRunId}
+              comparison={runComparison}
+              history={runHistory}
+              onBaseChange={(runId) => {
+                setComparisonBaseRunId(runId);
+                setRunComparison(null);
+              }}
+              onCandidateChange={(runId) => {
+                setComparisonCandidateRunId(runId);
+                setRunComparison(null);
+              }}
+              onCompare={() => loadRunComparison()}
+            />
             <AuditLogPanel entries={auditLogs} />
             <div className="action-stack">
               <button disabled={!result?.proposals.length || busy === "approve"} onClick={approveProposal}>
@@ -1338,14 +1394,23 @@ export function App() {
   );
 
   async function refreshVisibility(organizationId: string, runId: string) {
-    const [fairnessResponse, auditResponse] = await Promise.all([
+    const [fairnessResponse, auditResponse, historyResponse] = await Promise.all([
       api<FairnessSummary>(
         `/operations/organizations/${organizationId}/fairness/summary?schedule_run_id=${runId}`,
       ),
       api<AuditLogList>(`/operations/organizations/${organizationId}/audit-logs`),
+      api<ScheduleRunHistory>(`/organizations/${organizationId}/schedule-runs`),
     ]);
     setFairness(fairnessResponse);
     setAuditLogs(auditResponse.entries);
+    setRunHistory(historyResponse.runs);
+    setComparisonCandidateRunId(runId);
+    setComparisonBaseRunId((currentRunId) => {
+      if (currentRunId !== runId && historyResponse.runs.some((run) => run.id === currentRunId)) {
+        return currentRunId;
+      }
+      return historyResponse.runs.find((run) => run.id !== runId)?.id ?? "";
+    });
   }
 }
 
@@ -2478,6 +2543,127 @@ function FairnessPanel({ summary }: { summary: FairnessSummary | null }) {
   );
 }
 
+function RunComparisonPanel({
+  baseRunId,
+  busy,
+  candidateRunId,
+  comparison,
+  history,
+  onBaseChange,
+  onCandidateChange,
+  onCompare,
+}: {
+  baseRunId: string;
+  busy: string | null;
+  candidateRunId: string;
+  comparison: ScheduleRunComparison | null;
+  history: ScheduleRunHistory["runs"];
+  onBaseChange: (runId: string) => void;
+  onCandidateChange: (runId: string) => void;
+  onCompare: () => void;
+}) {
+  const canCompare = Boolean(baseRunId && candidateRunId && baseRunId !== candidateRunId);
+  const fairnessRows = comparison ? changedFairnessRows(comparison) : [];
+  return (
+    <div className="visibility-panel run-comparison-panel">
+      <SectionTitle title="생성 이력 비교" />
+      {history.length < 2 ? (
+        <div className="subtle-box">비교할 생성 이력이 부족합니다.</div>
+      ) : (
+        <>
+          <div className="history-controls">
+            <label>
+              <span>기준</span>
+              <select value={baseRunId} onChange={(event) => onBaseChange(event.target.value)}>
+                <option value="">선택</option>
+                {history.map((run) => (
+                  <option key={run.id} value={run.id}>
+                    {runHistoryOptionLabel(run)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>대상</span>
+              <select
+                value={candidateRunId}
+                onChange={(event) => onCandidateChange(event.target.value)}
+              >
+                <option value="">선택</option>
+                {history.map((run) => (
+                  <option key={run.id} value={run.id}>
+                    {runHistoryOptionLabel(run)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button disabled={!canCompare || busy === "compare"} onClick={onCompare} type="button">
+              <ClipboardList size={16} />
+              비교
+            </button>
+          </div>
+          {comparison ? (
+            <>
+              <div className="summary-metrics">
+                {comparisonSummaryMetrics(comparison).map((metric) => (
+                  <Metric key={metric.label} label={metric.label} value={metric.value} />
+                ))}
+              </div>
+              <div className="comparison-list">
+                {comparison.assignment_changes.slice(0, 6).map((row) => (
+                  <div
+                    className="comparison-row"
+                    key={`${row.change_type}-${row.slot_id}-${row.role_id}-${row.employee_id}`}
+                  >
+                    <strong>
+                      {changeTypeLabel(row.change_type)} · {row.employee_name}
+                    </strong>
+                    <span>
+                      {row.slot_id} · {row.role_name} · {optionalSourceLabel(row.before_source)} →{" "}
+                      {optionalSourceLabel(row.after_source)}
+                    </span>
+                    <em>
+                      {optionalLockLabel(row.before_locked_by_user)} →{" "}
+                      {optionalLockLabel(row.after_locked_by_user)}
+                    </em>
+                  </div>
+                ))}
+              </div>
+              <div className="comparison-list">
+                {comparison.issue_changes.slice(0, 4).map((row) => (
+                  <div
+                    className="comparison-row"
+                    key={`${row.change_type}-${row.slot_id ?? "all"}-${row.role_id ?? "all"}-${row.reason_code}`}
+                  >
+                    <strong>
+                      {issueChangeTypeLabel(row.change_type)} · {row.role_name ?? "전체"}
+                    </strong>
+                    <span>{row.slot_id ?? "전체"} · {row.reason_code}</span>
+                    <em>{deltaLabel(row.missing_delta)}명</em>
+                  </div>
+                ))}
+              </div>
+              <div className="comparison-list">
+                {fairnessRows.slice(0, 4).map((row) => (
+                  <div className="comparison-row" key={row.employee_id}>
+                    <strong>{row.employee_name}</strong>
+                    <span>
+                      {row.before_assignment_count}회 → {row.after_assignment_count}회
+                    </span>
+                    <em>{deltaLabel(row.assignment_delta)}</em>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="subtle-box">기준과 대상을 선택하면 차이가 표시됩니다.</div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function AuditLogPanel({ entries }: { entries: AuditLogEntry[] }) {
   return (
     <div className="visibility-panel">
@@ -3170,6 +3356,18 @@ function formatDateTime(value: string) {
     dateStyle: "short",
     timeStyle: "short",
   });
+}
+
+function runHistoryOptionLabel(run: ScheduleRunHistory["runs"][number]) {
+  return `${run.period_start}~${run.period_end} · ${formatDateTime(run.created_at)} · ${run.assignment_count}건`;
+}
+
+function optionalSourceLabel(source: string | null) {
+  return source ? assignmentSourceLabel({ source }) : "없음";
+}
+
+function optionalLockLabel(lockedByUser: boolean | null) {
+  return lockedByUser === null ? "없음" : assignmentLockLabel({ locked_by_user: lockedByUser });
 }
 
 function dateInputValue(value: string) {

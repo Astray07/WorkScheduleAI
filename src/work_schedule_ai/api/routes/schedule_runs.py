@@ -11,7 +11,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
@@ -255,6 +255,90 @@ class ScheduleRunResultResponse(BaseModel):
     llm_explanation: LLMExplanation
 
 
+class ScheduleRunHistoryItem(BaseModel):
+    id: str
+    organization_id: str
+    period_start: date
+    period_end: date
+    status: str
+    solver_status: str | None
+    solution_quality: str
+    current_attempt_no: int
+    recalculation_count: int
+    created_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None
+    assignment_count: int
+    issue_count: int
+    manual_locked_count: int
+
+
+class ScheduleRunHistoryResponse(BaseModel):
+    organization_id: str
+    runs: list[ScheduleRunHistoryItem]
+
+
+class ScheduleRunComparisonSummary(BaseModel):
+    assignment_added_count: int
+    assignment_removed_count: int
+    assignment_unchanged_count: int
+    manual_lock_maintained_count: int
+    issue_added_count: int
+    issue_resolved_count: int
+    fairness_changed_employee_count: int
+
+
+class AssignmentComparisonRow(BaseModel):
+    change_type: Literal["added", "removed", "unchanged"]
+    slot_id: str
+    role_id: str
+    role_name: str
+    employee_id: str
+    employee_name: str
+    before_source: str | None
+    after_source: str | None
+    before_locked_by_user: bool | None
+    after_locked_by_user: bool | None
+    manual_lock_maintained: bool
+
+
+class IssueComparisonRow(BaseModel):
+    change_type: Literal["added", "resolved", "changed"]
+    slot_id: str | None
+    role_id: str | None
+    role_name: str | None
+    type: str
+    reason_code: str
+    before_missing_count: int
+    after_missing_count: int
+    missing_delta: int
+    before_severity: str | None
+    after_severity: str | None
+    before_display_message: str | None
+    after_display_message: str | None
+
+
+class FairnessComparisonRow(BaseModel):
+    employee_id: str
+    employee_code: str
+    employee_name: str
+    before_assignment_count: int
+    after_assignment_count: int
+    assignment_delta: int
+
+
+class ScheduleRunComparisonResponse(BaseModel):
+    organization_id: str
+    base_run_id: str
+    candidate_run_id: str
+    base_run: ScheduleRunHistoryItem
+    candidate_run: ScheduleRunHistoryItem
+    summary: ScheduleRunComparisonSummary
+    assignment_changes: list[AssignmentComparisonRow]
+    issue_changes: list[IssueComparisonRow]
+    fairness_changes: list[FairnessComparisonRow]
+
+
 @router.post(
     "/{organization_id}/schedule-runs",
     response_model=ScheduleRunResponse,
@@ -344,6 +428,55 @@ def create_schedule_run(
     enqueue_schedule_run(run.id)
 
     return _schedule_run_response(run, db_session)
+
+
+@router.get(
+    "/{organization_id}/schedule-runs",
+    response_model=ScheduleRunHistoryResponse,
+)
+def list_schedule_runs(
+    organization_id: str,
+    limit: int = 20,
+    db_session: Session = Depends(get_db_session),
+) -> ScheduleRunHistoryResponse:
+    organization = db_session.get(Organization, organization_id)
+    if organization is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found",
+        )
+    bounded_limit = max(1, min(limit, 100))
+    runs = list(
+        db_session.execute(
+            select(ScheduleRun)
+            .where(ScheduleRun.organization_id == organization_id)
+            .order_by(ScheduleRun.created_at.desc(), ScheduleRun.id.desc())
+            .limit(bounded_limit)
+        ).scalars()
+    )
+    return ScheduleRunHistoryResponse(
+        organization_id=organization_id,
+        runs=[_schedule_run_history_item(run, db_session) for run in runs],
+    )
+
+
+@router.get(
+    "/{organization_id}/schedule-runs/compare",
+    response_model=ScheduleRunComparisonResponse,
+)
+def compare_schedule_runs(
+    organization_id: str,
+    base_run_id: str,
+    candidate_run_id: str,
+    db_session: Session = Depends(get_db_session),
+) -> ScheduleRunComparisonResponse:
+    base_run = _get_schedule_run_or_404(organization_id, base_run_id, db_session)
+    candidate_run = _get_schedule_run_or_404(
+        organization_id,
+        candidate_run_id,
+        db_session,
+    )
+    return _schedule_run_comparison_response(base_run, candidate_run, db_session)
 
 
 @router.get(
@@ -983,6 +1116,310 @@ def _schedule_publication_response(
         issue_snapshot_hash=publication.issue_snapshot_hash,
         published_at=publication.published_at,
     )
+
+
+def _schedule_run_history_item(
+    run: ScheduleRun,
+    db_session: Session,
+) -> ScheduleRunHistoryItem:
+    assignment_count = db_session.execute(
+        select(func.count())
+        .select_from(AssignmentRecord)
+        .where(
+            AssignmentRecord.organization_id == run.organization_id,
+            AssignmentRecord.schedule_run_id == run.id,
+        )
+    ).scalar_one()
+    issue_count = db_session.execute(
+        select(func.count())
+        .select_from(ScheduleIssueRecord)
+        .where(
+            ScheduleIssueRecord.organization_id == run.organization_id,
+            ScheduleIssueRecord.schedule_run_id == run.id,
+        )
+    ).scalar_one()
+    manual_locked_count = db_session.execute(
+        select(func.count())
+        .select_from(AssignmentRecord)
+        .where(
+            AssignmentRecord.organization_id == run.organization_id,
+            AssignmentRecord.schedule_run_id == run.id,
+            AssignmentRecord.locked_by_user.is_(True),
+        )
+    ).scalar_one()
+    return ScheduleRunHistoryItem(
+        id=run.id,
+        organization_id=run.organization_id,
+        period_start=run.period_start,
+        period_end=run.period_end,
+        status=run.status,
+        solver_status=run.solver_status,
+        solution_quality=run.solution_quality,
+        current_attempt_no=run.current_attempt_no,
+        recalculation_count=run.recalculation_count,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+        finished_at=run.finished_at,
+        assignment_count=assignment_count,
+        issue_count=issue_count,
+        manual_locked_count=manual_locked_count,
+    )
+
+
+def _schedule_run_comparison_response(
+    base_run: ScheduleRun,
+    candidate_run: ScheduleRun,
+    db_session: Session,
+) -> ScheduleRunComparisonResponse:
+    role_names = _role_names_by_id(base_run.organization_id, db_session)
+    assignment_changes = _assignment_comparison_rows(
+        base_run,
+        candidate_run,
+        role_names,
+        db_session,
+    )
+    issue_changes = _issue_comparison_rows(
+        base_run,
+        candidate_run,
+        role_names,
+        db_session,
+    )
+    fairness_changes = _fairness_comparison_rows(
+        base_run,
+        candidate_run,
+        db_session,
+    )
+    return ScheduleRunComparisonResponse(
+        organization_id=base_run.organization_id,
+        base_run_id=base_run.id,
+        candidate_run_id=candidate_run.id,
+        base_run=_schedule_run_history_item(base_run, db_session),
+        candidate_run=_schedule_run_history_item(candidate_run, db_session),
+        summary=ScheduleRunComparisonSummary(
+            assignment_added_count=sum(
+                1 for row in assignment_changes if row.change_type == "added"
+            ),
+            assignment_removed_count=sum(
+                1 for row in assignment_changes if row.change_type == "removed"
+            ),
+            assignment_unchanged_count=sum(
+                1 for row in assignment_changes if row.change_type == "unchanged"
+            ),
+            manual_lock_maintained_count=sum(
+                1 for row in assignment_changes if row.manual_lock_maintained
+            ),
+            issue_added_count=sum(
+                1 for row in issue_changes if row.change_type == "added"
+            ),
+            issue_resolved_count=sum(
+                1 for row in issue_changes if row.change_type == "resolved"
+            ),
+            fairness_changed_employee_count=sum(
+                1 for row in fairness_changes if row.assignment_delta != 0
+            ),
+        ),
+        assignment_changes=assignment_changes,
+        issue_changes=issue_changes,
+        fairness_changes=fairness_changes,
+    )
+
+
+def _assignment_comparison_rows(
+    base_run: ScheduleRun,
+    candidate_run: ScheduleRun,
+    role_names: dict[str, str],
+    db_session: Session,
+) -> list[AssignmentComparisonRow]:
+    base_assignments = _assignments_by_comparison_key(base_run, db_session)
+    candidate_assignments = _assignments_by_comparison_key(candidate_run, db_session)
+    rows: list[AssignmentComparisonRow] = []
+    for key in sorted(set(base_assignments) | set(candidate_assignments)):
+        slot_id, role_id, employee_id = key
+        before = base_assignments.get(key)
+        after = candidate_assignments.get(key)
+        if before is not None and after is not None:
+            change_type = "unchanged"
+        elif after is not None:
+            change_type = "added"
+        else:
+            change_type = "removed"
+        assignment = after or before
+        if assignment is None:
+            continue
+        rows.append(
+            AssignmentComparisonRow(
+                change_type=change_type,
+                slot_id=slot_id,
+                role_id=role_id,
+                role_name=role_names.get(role_id, role_id),
+                employee_id=employee_id,
+                employee_name=assignment.employee_name,
+                before_source=before.source if before is not None else None,
+                after_source=after.source if after is not None else None,
+                before_locked_by_user=(
+                    before.locked_by_user if before is not None else None
+                ),
+                after_locked_by_user=after.locked_by_user if after is not None else None,
+                manual_lock_maintained=(
+                    before is not None
+                    and after is not None
+                    and before.locked_by_user
+                    and after.locked_by_user
+                ),
+            )
+        )
+    return rows
+
+
+def _issue_comparison_rows(
+    base_run: ScheduleRun,
+    candidate_run: ScheduleRun,
+    role_names: dict[str, str],
+    db_session: Session,
+) -> list[IssueComparisonRow]:
+    base_issues = _issues_by_comparison_key(base_run, db_session)
+    candidate_issues = _issues_by_comparison_key(candidate_run, db_session)
+    rows: list[IssueComparisonRow] = []
+    for key in sorted(set(base_issues) | set(candidate_issues)):
+        slot_id, role_id, issue_type, reason_code = key
+        before = base_issues.get(key)
+        after = candidate_issues.get(key)
+        if before is not None and after is not None:
+            if (
+                before.missing_count == after.missing_count
+                and before.severity == after.severity
+                and before.display_message == after.display_message
+            ):
+                continue
+            change_type = "changed"
+        elif after is not None:
+            change_type = "added"
+        else:
+            change_type = "resolved"
+        rows.append(
+            IssueComparisonRow(
+                change_type=change_type,
+                slot_id=slot_id,
+                role_id=role_id,
+                role_name=role_names.get(role_id, role_id) if role_id else None,
+                type=issue_type,
+                reason_code=reason_code,
+                before_missing_count=before.missing_count if before else 0,
+                after_missing_count=after.missing_count if after else 0,
+                missing_delta=(after.missing_count if after else 0)
+                - (before.missing_count if before else 0),
+                before_severity=before.severity if before else None,
+                after_severity=after.severity if after else None,
+                before_display_message=before.display_message if before else None,
+                after_display_message=after.display_message if after else None,
+            )
+        )
+    return rows
+
+
+def _fairness_comparison_rows(
+    base_run: ScheduleRun,
+    candidate_run: ScheduleRun,
+    db_session: Session,
+) -> list[FairnessComparisonRow]:
+    employees = list(
+        db_session.execute(
+            select(Employee)
+            .where(
+                Employee.organization_id == base_run.organization_id,
+                Employee.active.is_(True),
+            )
+            .order_by(Employee.employee_code)
+        ).scalars()
+    )
+    base_counts = _assignment_counts_by_employee(base_run, db_session)
+    candidate_counts = _assignment_counts_by_employee(candidate_run, db_session)
+    rows = [
+        FairnessComparisonRow(
+            employee_id=employee.id,
+            employee_code=employee.employee_code,
+            employee_name=employee.name,
+            before_assignment_count=base_counts.get(employee.id, 0),
+            after_assignment_count=candidate_counts.get(employee.id, 0),
+            assignment_delta=candidate_counts.get(employee.id, 0)
+            - base_counts.get(employee.id, 0),
+        )
+        for employee in employees
+    ]
+    rows.sort(key=lambda row: (-abs(row.assignment_delta), row.employee_code))
+    return rows
+
+
+def _role_names_by_id(
+    organization_id: str,
+    db_session: Session,
+) -> dict[str, str]:
+    return {
+        role.id: role.name
+        for role in db_session.execute(
+            select(Role).where(Role.organization_id == organization_id)
+        ).scalars()
+    }
+
+
+def _assignments_by_comparison_key(
+    run: ScheduleRun,
+    db_session: Session,
+) -> dict[tuple[str, str, str], AssignmentRecord]:
+    assignments = db_session.execute(
+        select(AssignmentRecord).where(
+            AssignmentRecord.organization_id == run.organization_id,
+            AssignmentRecord.schedule_run_id == run.id,
+        )
+    ).scalars()
+    return {
+        (
+            _external_artifact_id(run.id, assignment.shift_slot_id),
+            assignment.role_id,
+            assignment.employee_id,
+        ): assignment
+        for assignment in assignments
+    }
+
+
+def _issues_by_comparison_key(
+    run: ScheduleRun,
+    db_session: Session,
+) -> dict[tuple[str | None, str | None, str, str], ScheduleIssueRecord]:
+    issues = db_session.execute(
+        select(ScheduleIssueRecord).where(
+            ScheduleIssueRecord.organization_id == run.organization_id,
+            ScheduleIssueRecord.schedule_run_id == run.id,
+        )
+    ).scalars()
+    return {
+        (
+            (
+                _external_artifact_id(run.id, issue.shift_slot_id)
+                if issue.shift_slot_id is not None
+                else None
+            ),
+            issue.role_id,
+            issue.type,
+            issue.reason_code,
+        ): issue
+        for issue in issues
+    }
+
+
+def _assignment_counts_by_employee(
+    run: ScheduleRun,
+    db_session: Session,
+) -> dict[str, int]:
+    rows = db_session.execute(
+        select(AssignmentRecord.employee_id, func.count())
+        .where(
+            AssignmentRecord.organization_id == run.organization_id,
+            AssignmentRecord.schedule_run_id == run.id,
+        )
+        .group_by(AssignmentRecord.employee_id)
+    )
+    return {employee_id: count for employee_id, count in rows}
 
 
 def _schedule_run_response(

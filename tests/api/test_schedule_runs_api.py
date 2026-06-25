@@ -1,6 +1,6 @@
 from collections.abc import Generator
 from contextlib import nullcontext
-from datetime import date
+from datetime import date, datetime, timezone
 from io import BytesIO
 import json
 import zipfile
@@ -238,6 +238,121 @@ def test_get_schedule_run_returns_persisted_status(client: TestClient):
     assert response.status_code == 200
     assert response.json()["id"] == run_id
     assert response.json()["status"] == "queued"
+
+
+def test_list_schedule_runs_returns_history_counts(
+    client: TestClient,
+    db_session: Session,
+):
+    _seed_run_history_comparison(db_session)
+
+    response = client.get("/organizations/org_1/schedule-runs")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [run["id"] for run in payload["runs"][:2]] == [
+        "run_history_candidate",
+        "run_history_base",
+    ]
+    candidate = payload["runs"][0]
+    assert candidate["assignment_count"] == 3
+    assert candidate["issue_count"] == 1
+    assert candidate["manual_locked_count"] == 1
+    assert candidate["recalculation_count"] == 1
+
+
+def test_compare_schedule_runs_returns_assignment_issue_fairness_and_lock_changes(
+    client: TestClient,
+    db_session: Session,
+):
+    _seed_run_history_comparison(db_session)
+
+    response = client.get(
+        "/organizations/org_1/schedule-runs/compare",
+        params={
+            "base_run_id": "run_history_base",
+            "candidate_run_id": "run_history_candidate",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["base_run_id"] == "run_history_base"
+    assert payload["candidate_run_id"] == "run_history_candidate"
+    assert payload["summary"] == {
+        "assignment_added_count": 2,
+        "assignment_removed_count": 2,
+        "assignment_unchanged_count": 1,
+        "manual_lock_maintained_count": 1,
+        "issue_added_count": 1,
+        "issue_resolved_count": 1,
+        "fairness_changed_employee_count": 2,
+    }
+
+    removed = next(
+        row
+        for row in payload["assignment_changes"]
+        if row["change_type"] == "removed" and row["employee_id"] == "emp_1"
+    )
+    assert removed["slot_id"] == "slot_day_1"
+    assert removed["role_name"] == "사수"
+    assert removed["before_locked_by_user"] is False
+    assert removed["after_locked_by_user"] is None
+
+    maintained = next(
+        row
+        for row in payload["assignment_changes"]
+        if row["change_type"] == "unchanged" and row["employee_id"] == "emp_2"
+    )
+    assert maintained["manual_lock_maintained"] is True
+    assert maintained["before_source"] == "manual"
+    assert maintained["after_source"] == "manual"
+
+    issue_changes = {
+        (row["change_type"], row["slot_id"], row["role_name"]): row
+        for row in payload["issue_changes"]
+    }
+    assert issue_changes[("resolved", "slot_day_1", "사수")]["missing_delta"] == -1
+    assert issue_changes[("added", "slot_day_2", "사수")]["missing_delta"] == 2
+
+    fairness = {row["employee_id"]: row for row in payload["fairness_changes"]}
+    assert fairness["emp_1"]["assignment_delta"] == -1
+    assert fairness["emp_4"]["assignment_delta"] == 1
+
+
+def test_compare_schedule_runs_rejects_run_from_another_organization(
+    client: TestClient,
+    db_session: Session,
+):
+    _seed_run_history_comparison(db_session)
+    db_session.add(Organization(id="org_other", name="Other", timezone="Asia/Seoul"))
+    db_session.add(
+        ScheduleRun(
+            id="run_other",
+            organization_id="org_other",
+            period_start=date(2026, 7, 1),
+            period_end=date(2026, 7, 1),
+            template="one_shift_per_day",
+            deterministic_mode=True,
+            timeout_seconds=30,
+            status="succeeded",
+            solver_status="cp_sat_optimal",
+            solution_quality="optimal",
+            current_attempt_no=1,
+            recalculation_count=0,
+        )
+    )
+    db_session.commit()
+
+    response = client.get(
+        "/organizations/org_1/schedule-runs/compare",
+        params={
+            "base_run_id": "run_history_base",
+            "candidate_run_id": "run_other",
+        },
+    )
+
+    assert response.status_code == 404
 
 
 def test_cancel_queued_schedule_run_marks_canceled(
@@ -2013,6 +2128,195 @@ def _create_day_shift_type(session: Session) -> None:
     session.add(shift_type)
     session.flush()
     session.add_all(requirements)
+    session.commit()
+
+
+def _seed_run_history_comparison(session: Session) -> None:
+    base_created_at = datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc)
+    candidate_created_at = datetime(2026, 7, 1, 9, 5, tzinfo=timezone.utc)
+    runs = [
+        ScheduleRun(
+            id="run_history_base",
+            organization_id="org_1",
+            period_start=date(2026, 7, 1),
+            period_end=date(2026, 7, 2),
+            template="one_shift_per_day",
+            deterministic_mode=True,
+            timeout_seconds=30,
+            status="succeeded",
+            solver_status="cp_sat_feasible",
+            solution_quality="feasible_not_proven_optimal",
+            current_attempt_no=1,
+            recalculation_count=0,
+            created_at=base_created_at,
+            updated_at=base_created_at,
+            started_at=base_created_at,
+            finished_at=base_created_at,
+        ),
+        ScheduleRun(
+            id="run_history_candidate",
+            organization_id="org_1",
+            period_start=date(2026, 7, 1),
+            period_end=date(2026, 7, 2),
+            template="one_shift_per_day",
+            deterministic_mode=True,
+            timeout_seconds=30,
+            status="succeeded",
+            solver_status="cp_sat_optimal",
+            solution_quality="optimal",
+            current_attempt_no=2,
+            recalculation_count=1,
+            created_at=candidate_created_at,
+            updated_at=candidate_created_at,
+            started_at=candidate_created_at,
+            finished_at=candidate_created_at,
+        ),
+    ]
+    session.add_all(runs)
+    session.flush()
+
+    slots = []
+    for run in runs:
+        for day_index in range(1, 3):
+            local_date = date(2026, 7, day_index)
+            slots.append(
+                ShiftSlot(
+                    id=f"{run.id}__slot_day_{day_index}",
+                    organization_id="org_1",
+                    schedule_run_id=run.id,
+                    shift_type_id=None,
+                    local_date=local_date,
+                    label=f"{local_date.isoformat()} 주간",
+                    starts_at=f"{local_date.isoformat()}T09:00:00+09:00",
+                    ends_at=f"{local_date.isoformat()}T17:00:00+09:00",
+                    timezone="Asia/Seoul",
+                    status="generated",
+                    attempt_no=run.current_attempt_no,
+                )
+            )
+    session.add_all(slots)
+    session.flush()
+
+    session.add_all(
+        [
+            Assignment(
+                id="run_history_base__assign_emp_1_day_1",
+                organization_id="org_1",
+                schedule_run_id="run_history_base",
+                shift_slot_id="run_history_base__slot_day_1",
+                role_id="role_senior",
+                employee_id="emp_1",
+                employee_name="Kim",
+                source="solver",
+                locked_by_user=False,
+                warning_state="none",
+                warning_message=None,
+                attempt_no=1,
+            ),
+            Assignment(
+                id="run_history_base__assign_emp_2_day_1",
+                organization_id="org_1",
+                schedule_run_id="run_history_base",
+                shift_slot_id="run_history_base__slot_day_1",
+                role_id="role_junior",
+                employee_id="emp_2",
+                employee_name="Lee",
+                source="manual",
+                locked_by_user=True,
+                warning_state="manual_warning",
+                warning_message="수동 고정",
+                attempt_no=1,
+            ),
+            Assignment(
+                id="run_history_base__assign_emp_3_day_2",
+                organization_id="org_1",
+                schedule_run_id="run_history_base",
+                shift_slot_id="run_history_base__slot_day_2",
+                role_id="role_senior",
+                employee_id="emp_3",
+                employee_name="Park",
+                source="solver",
+                locked_by_user=False,
+                warning_state="none",
+                warning_message=None,
+                attempt_no=1,
+            ),
+            Assignment(
+                id="run_history_candidate__assign_emp_3_day_1",
+                organization_id="org_1",
+                schedule_run_id="run_history_candidate",
+                shift_slot_id="run_history_candidate__slot_day_1",
+                role_id="role_senior",
+                employee_id="emp_3",
+                employee_name="Park",
+                source="solver",
+                locked_by_user=False,
+                warning_state="none",
+                warning_message=None,
+                attempt_no=2,
+            ),
+            Assignment(
+                id="run_history_candidate__assign_emp_2_day_1",
+                organization_id="org_1",
+                schedule_run_id="run_history_candidate",
+                shift_slot_id="run_history_candidate__slot_day_1",
+                role_id="role_junior",
+                employee_id="emp_2",
+                employee_name="Lee",
+                source="manual",
+                locked_by_user=True,
+                warning_state="manual_warning",
+                warning_message="수동 고정",
+                attempt_no=2,
+            ),
+            Assignment(
+                id="run_history_candidate__assign_emp_4_day_2",
+                organization_id="org_1",
+                schedule_run_id="run_history_candidate",
+                shift_slot_id="run_history_candidate__slot_day_2",
+                role_id="role_senior",
+                employee_id="emp_4",
+                employee_name="Choi",
+                source="solver",
+                locked_by_user=False,
+                warning_state="none",
+                warning_message=None,
+                attempt_no=2,
+            ),
+        ]
+    )
+    session.add_all(
+        [
+            ScheduleIssue(
+                id="run_history_base__issue_unfilled_day_1",
+                organization_id="org_1",
+                schedule_run_id="run_history_base",
+                shift_slot_id="run_history_base__slot_day_1",
+                role_id="role_senior",
+                type="unfilled_requirement",
+                missing_count=1,
+                severity="medium",
+                reason_code="unfilled_requirement",
+                display_message="사수 1명이 부족합니다.",
+                related_proposal_ids_json="[]",
+                attempt_no=1,
+            ),
+            ScheduleIssue(
+                id="run_history_candidate__issue_unfilled_day_2",
+                organization_id="org_1",
+                schedule_run_id="run_history_candidate",
+                shift_slot_id="run_history_candidate__slot_day_2",
+                role_id="role_senior",
+                type="unfilled_requirement",
+                missing_count=2,
+                severity="high",
+                reason_code="unfilled_requirement",
+                display_message="사수 2명이 부족합니다.",
+                related_proposal_ids_json="[]",
+                attempt_no=2,
+            ),
+        ]
+    )
     session.commit()
 
 

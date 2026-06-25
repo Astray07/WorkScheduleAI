@@ -823,6 +823,63 @@ button:disabled {
   font-weight: 800;
 }
 
+.run-comparison-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.history-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.history-controls label {
+  display: grid;
+  gap: 4px;
+}
+
+.history-controls label span {
+  color: #61716a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.history-controls button {
+  justify-content: center;
+}
+
+.comparison-list {
+  display: grid;
+  gap: 8px;
+}
+
+.comparison-row {
+  border: 1px solid #dfe6e2;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+
+.comparison-row strong,
+.comparison-row span,
+.comparison-row em {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.comparison-row span {
+  color: #687870;
+  font-size: 12px;
+}
+
+.comparison-row em {
+  color: #1f7a55;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
 .audit-row {
   display: grid;
   gap: 4px;
