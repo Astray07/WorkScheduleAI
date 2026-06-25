@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import date
 
 from ortools.sat.python import cp_model
 
 from work_schedule_ai.solver.models import (
+    EmployeeInput,
     ScheduleAssignment,
     ScheduleRequirementInput,
     SolveScheduleRequest,
@@ -13,6 +15,7 @@ from work_schedule_ai.solver.models import (
 
 
 ROTATION_TIE_BREAKER_WEIGHT = 1_000
+FAIRNESS_OVER_TARGET_WEIGHT = 50_000
 
 
 def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
@@ -28,6 +31,7 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
     )
     employee_index = {employee.id: index for index, employee in enumerate(employees)}
     slot_index = {slot.id: index for index, slot in enumerate(slots)}
+    week_key_by_slot_id = {slot.id: _week_key(slot.local_date) for slot in slots}
     role_ids = sorted({requirement.role_id for requirement in requirements})
     role_index = {role_id: index for index, role_id in enumerate(role_ids)}
 
@@ -36,6 +40,9 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
     vars_by_employee_slot: dict[tuple[str, str], list[cp_model.IntVar]] = defaultdict(list)
     vars_by_requirement: dict[str, list[cp_model.IntVar]] = defaultdict(list)
     vars_by_employee_slot_for_pair: dict[tuple[str, str], list[cp_model.IntVar]] = (
+        defaultdict(list)
+    )
+    vars_by_employee_week: dict[tuple[str, tuple[int, int]], list[cp_model.IntVar]] = (
         defaultdict(list)
     )
 
@@ -54,6 +61,9 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
             vars_by_employee_slot_for_pair[(employee.id, requirement.slot_id)].append(
                 variable
             )
+            vars_by_employee_week[
+                (employee.id, week_key_by_slot_id[requirement.slot_id])
+            ].append(variable)
 
     unfilled_vars: dict[str, cp_model.IntVar] = {}
     objective_terms: list[cp_model.LinearExpr] = []
@@ -83,6 +93,13 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
             if variables:
                 model.Add(sum(variables) <= 1)
 
+    employee_by_id = {employee.id: employee for employee in employees}
+    for (employee_id, _week_key_value), variables in vars_by_employee_week.items():
+        employee = employee_by_id[employee_id]
+        if employee.max_shifts_per_week is None:
+            continue
+        model.Add(sum(variables) <= employee.max_shifts_per_week)
+
     for requirement in requirements:
         for employee in employees:
             variable = assignment_vars.get((requirement.id, employee.id))
@@ -99,6 +116,29 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
                 + employee_index[employee.id]
             )
             objective_terms.append(variable * tie_breaker)
+
+    fair_assignment_target = _fair_assignment_target(requirements, employees)
+    for employee in employees:
+        variables = [
+            variable
+            for (requirement_id, employee_id), variable in assignment_vars.items()
+            if employee_id == employee.id
+        ]
+        if not variables:
+            continue
+        assignment_count = model.NewIntVar(
+            0,
+            len(variables),
+            f"assignment_count_{employee.id}",
+        )
+        model.Add(assignment_count == sum(variables))
+        over_target = model.NewIntVar(
+            0,
+            len(variables),
+            f"assignment_over_target_{employee.id}",
+        )
+        model.Add(assignment_count - fair_assignment_target <= over_target)
+        objective_terms.append(over_target * FAIRNESS_OVER_TARGET_WEIGHT)
 
     model.Minimize(sum(objective_terms))
 
@@ -210,3 +250,19 @@ def _slot_index(slots: list[object], slot_id: str) -> int:
         if getattr(slot, "id") == slot_id:
             return index
     return len(slots)
+
+
+def _week_key(local_date_text: str) -> tuple[int, int]:
+    local_date = date.fromisoformat(local_date_text)
+    iso_year, iso_week, _ = local_date.isocalendar()
+    return iso_year, iso_week
+
+
+def _fair_assignment_target(
+    requirements: list[ScheduleRequirementInput],
+    employees: list[EmployeeInput],
+) -> int:
+    if not employees:
+        return 0
+    total_required = sum(requirement.required_count for requirement in requirements)
+    return max(1, (total_required + len(employees) - 1) // len(employees))

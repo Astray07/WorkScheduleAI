@@ -8,6 +8,7 @@ class EmployeeInput:
     id: str
     role_ids: frozenset[str]
     unavailable_slot_ids: frozenset[str] = field(default_factory=frozenset)
+    max_shifts_per_week: int | None = None
 
 
 @dataclass(frozen=True)

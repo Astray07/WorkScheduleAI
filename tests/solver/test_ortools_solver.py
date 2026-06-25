@@ -153,6 +153,107 @@ def test_solver_balances_assignments_across_equivalent_employees():
     assert sorted(assignment_counts.values()) == [1, 1, 1, 1]
 
 
+def test_solver_respects_employee_weekly_shift_cap():
+    request = SolveScheduleRequest(
+        employees=[
+            EmployeeInput(
+                id="emp_limited",
+                role_ids=frozenset({"role_any"}),
+                max_shifts_per_week=2,
+            ),
+            EmployeeInput(id="emp_available", role_ids=frozenset({"role_any"})),
+        ],
+        slots=[
+            ScheduleSlotInput(
+                id=f"slot_2026_07_{day:02d}_day",
+                local_date=f"2026-07-{day:02d}",
+            )
+            for day in range(6, 13)
+        ],
+        requirements=[
+            ScheduleRequirementInput(
+                id=f"req_{day}",
+                slot_id=f"slot_2026_07_{day:02d}_day",
+                role_id="role_any",
+                required_count=1,
+                unfilled_weight=100,
+            )
+            for day in range(6, 13)
+        ],
+        blocked_pairs=[],
+        timeout_seconds=5,
+        random_seed=1,
+    )
+
+    result = solve_schedule(request)
+
+    limited_assignments = [
+        assignment
+        for assignment in result.assignments
+        if assignment.employee_id == "emp_limited"
+    ]
+    assert result.issues == []
+    assert len(limited_assignments) <= 2
+
+
+def test_solver_spreads_larger_mixed_role_demo_case():
+    employees = []
+    for index in range(1, 13):
+        if index % 4 == 1:
+            role_ids = frozenset({"role_senior"})
+        elif index % 4 == 2:
+            role_ids = frozenset({"role_junior"})
+        else:
+            role_ids = frozenset({"role_senior", "role_junior"})
+        employees.append(
+            EmployeeInput(
+                id=f"emp_{index:03d}",
+                role_ids=role_ids,
+                max_shifts_per_week=5,
+            )
+        )
+    slots = [
+        ScheduleSlotInput(
+            id=f"slot_2026_07_{day:02d}_day",
+            local_date=f"2026-07-{day:02d}",
+        )
+        for day in range(1, 15)
+    ]
+    requirements = [
+        ScheduleRequirementInput(
+            id=f"req_{slot.id}_{role_id}",
+            slot_id=slot.id,
+            role_id=role_id,
+            required_count=1,
+            unfilled_weight=100,
+        )
+        for slot in slots
+        for role_id in ("role_senior", "role_junior")
+    ]
+    request = SolveScheduleRequest(
+        employees=employees,
+        slots=slots,
+        requirements=requirements,
+        blocked_pairs=[],
+        timeout_seconds=5,
+        random_seed=1,
+    )
+
+    result = solve_schedule(request)
+
+    assignment_counts = {
+        employee.id: sum(
+            1
+            for assignment in result.assignments
+            if assignment.employee_id == employee.id
+        )
+        for employee in request.employees
+    }
+    assert result.issues == []
+    assert max(assignment_counts.values()) <= 3
+    assert sum(count > 0 for count in assignment_counts.values()) >= 10
+
+
 def test_solver_is_deterministic_for_same_input():
     request = _golden_request()
 

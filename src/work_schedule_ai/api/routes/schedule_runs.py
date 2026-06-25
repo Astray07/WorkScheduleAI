@@ -1750,6 +1750,7 @@ def _solver_result_artifacts(
             unavailable_slot_ids=frozenset(
                 unavailable_slot_ids_by_employee.get(employee.id, set())
             ),
+            max_shifts_per_week=employee.max_shifts_per_week,
         )
         for employee in employees
     ]
