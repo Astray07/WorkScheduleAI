@@ -1,3 +1,5 @@
+from datetime import date
+
 from work_schedule_ai.solver.models import (
     BlockedPair,
     EmployeeInput,
@@ -252,6 +254,86 @@ def test_solver_spreads_larger_mixed_role_demo_case():
     assert result.issues == []
     assert max(assignment_counts.values()) <= 3
     assert sum(count > 0 for count in assignment_counts.values()) >= 10
+
+
+def test_solver_discourages_adjacent_day_repeat_assignments():
+    employees = []
+    for index in range(1, 13):
+        if index % 4 == 1:
+            role_ids = frozenset({"role_senior"})
+        elif index % 4 == 2:
+            role_ids = frozenset({"role_junior"})
+        else:
+            role_ids = frozenset({"role_senior", "role_junior"})
+        employees.append(
+            EmployeeInput(
+                id=f"emp_{index:03d}",
+                role_ids=role_ids,
+                unavailable_slot_ids=(
+                    frozenset(
+                        {
+                            "slot_2026_07_02_day",
+                            "slot_2026_07_03_day",
+                            "slot_2026_07_04_day",
+                        }
+                    )
+                    if index == 2
+                    else frozenset()
+                ),
+                max_shifts_per_week=5,
+            )
+        )
+    slots = [
+        ScheduleSlotInput(
+            id=f"slot_2026_07_{day:02d}_day",
+            local_date=f"2026-07-{day:02d}",
+        )
+        for day in range(1, 32)
+    ]
+    requirements = [
+        ScheduleRequirementInput(
+            id=f"req_{slot.id}_{role_id}",
+            slot_id=slot.id,
+            role_id=role_id,
+            required_count=1,
+            unfilled_weight=100,
+        )
+        for slot in slots
+        for role_id in ("role_senior", "role_junior")
+    ]
+    request = SolveScheduleRequest(
+        employees=employees,
+        slots=slots,
+        requirements=requirements,
+        blocked_pairs=[BlockedPair("emp_001", "emp_002")],
+        timeout_seconds=30,
+        random_seed=1,
+    )
+
+    result = solve_schedule(request)
+
+    date_by_slot_id = {
+        slot.id: date.fromisoformat(slot.local_date)
+        for slot in request.slots
+    }
+    assigned_dates_by_employee: dict[str, list[date]] = {
+        employee.id: [] for employee in request.employees
+    }
+    for assignment in result.assignments:
+        assigned_dates_by_employee[assignment.employee_id].append(
+            date_by_slot_id[assignment.slot_id]
+        )
+    adjacent_pairs = {
+        employee_id: [
+            (first, second)
+            for first, second in zip(sorted(dates), sorted(dates)[1:])
+            if (second - first).days == 1
+        ]
+        for employee_id, dates in assigned_dates_by_employee.items()
+    }
+
+    assert result.issues == []
+    assert all(not pairs for pairs in adjacent_pairs.values())
 
 
 def test_solver_is_deterministic_for_same_input():

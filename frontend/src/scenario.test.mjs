@@ -40,8 +40,11 @@ try {
   const scenario = await import(pathToFileURL(join(outDir, "scenario.js")).href);
   const employees = scenario.buildScenarioEmployees(12);
 
+  assert.equal(scenario.DEFAULT_SCENARIO_CONFIG.periodDays, 31);
   assert.equal(employees.length, 12);
   assert.equal(employees[0].employeeCode, "E001");
+  assert.equal(employees[0].name, "김민준");
+  assert.equal(employees[1].name, "이서연");
   assert.equal(employees[11].employeeCode, "E012");
   assert.deepEqual(employees[0].roleNames, ["사수"]);
   assert.deepEqual(employees[1].roleNames, ["부사수"]);

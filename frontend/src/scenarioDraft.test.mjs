@@ -59,10 +59,30 @@ E003,Park,사수|부사수
   const vacations = draft.parseVacationDraft(`
 E002,2026-08-03
 E004,2026-08-05,personal,false
+E005,2026-08-10,2026-08-12,vacation,true
 `);
   assert.deepEqual(vacations, [
-    { employeeCode: "E002", date: "2026-08-03", type: "vacation", overrideAllowed: true },
-    { employeeCode: "E004", date: "2026-08-05", type: "personal", overrideAllowed: false },
+    {
+      employeeCode: "E002",
+      startDate: "2026-08-03",
+      endDate: "2026-08-03",
+      type: "vacation",
+      overrideAllowed: true,
+    },
+    {
+      employeeCode: "E004",
+      startDate: "2026-08-05",
+      endDate: "2026-08-05",
+      type: "personal",
+      overrideAllowed: false,
+    },
+    {
+      employeeCode: "E005",
+      startDate: "2026-08-10",
+      endDate: "2026-08-12",
+      type: "vacation",
+      overrideAllowed: true,
+    },
   ]);
 
   const pairs = draft.parsePairDraft(`
@@ -74,6 +94,10 @@ E003,E004,medium,false
     { employeeACode: "E003", employeeBCode: "E004", severity: "medium", overrideAllowed: false },
   ]);
 
+  assert.equal(
+    draft.formatVacationDraft(vacations),
+    "E002,2026-08-03,2026-08-03,vacation,true\nE004,2026-08-05,2026-08-05,personal,false\nE005,2026-08-10,2026-08-12,vacation,true",
+  );
   assert.equal(
     draft.formatEmployeeDraft(employees),
     "E001,Kim,사수,5\nE002,Lee,부사수,4\nE003,Park,사수|부사수,5",

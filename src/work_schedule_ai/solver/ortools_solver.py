@@ -16,6 +16,7 @@ from work_schedule_ai.solver.models import (
 
 ROTATION_TIE_BREAKER_WEIGHT = 1_000
 FAIRNESS_OVER_TARGET_WEIGHT = 50_000
+ADJACENT_DAY_REPEAT_WEIGHT = 20_000
 
 
 def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
@@ -31,6 +32,10 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
     )
     employee_index = {employee.id: index for index, employee in enumerate(employees)}
     slot_index = {slot.id: index for index, slot in enumerate(slots)}
+    local_date_by_slot_id = {
+        slot.id: date.fromisoformat(slot.local_date)
+        for slot in slots
+    }
     week_key_by_slot_id = {slot.id: _week_key(slot.local_date) for slot in slots}
     role_ids = sorted({requirement.role_id for requirement in requirements})
     role_index = {role_id: index for index, role_id in enumerate(role_ids)}
@@ -43,6 +48,9 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
         defaultdict(list)
     )
     vars_by_employee_week: dict[tuple[str, tuple[int, int]], list[cp_model.IntVar]] = (
+        defaultdict(list)
+    )
+    vars_by_employee_date: dict[tuple[str, date], list[cp_model.IntVar]] = (
         defaultdict(list)
     )
 
@@ -63,6 +71,9 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
             )
             vars_by_employee_week[
                 (employee.id, week_key_by_slot_id[requirement.slot_id])
+            ].append(variable)
+            vars_by_employee_date[
+                (employee.id, local_date_by_slot_id[requirement.slot_id])
             ].append(variable)
 
     unfilled_vars: dict[str, cp_model.IntVar] = {}
@@ -139,6 +150,34 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
         )
         model.Add(assignment_count - fair_assignment_target <= over_target)
         objective_terms.append(over_target * FAIRNESS_OVER_TARGET_WEIGHT)
+
+    assigned_by_employee_date: dict[tuple[str, date], cp_model.IntVar] = {}
+    for (employee_id, local_date), variables in vars_by_employee_date.items():
+        assigned_on_date = model.NewBoolVar(
+            f"assigned_{employee_id}_{local_date.isoformat()}"
+        )
+        model.Add(sum(variables) >= assigned_on_date)
+        model.Add(sum(variables) <= len(variables) * assigned_on_date)
+        assigned_by_employee_date[(employee_id, local_date)] = assigned_on_date
+
+    unique_dates = sorted({slot.local_date for slot in slots})
+    parsed_dates = [date.fromisoformat(local_date) for local_date in unique_dates]
+    for employee in employees:
+        for first_date, second_date in zip(parsed_dates, parsed_dates[1:]):
+            if (second_date - first_date).days != 1:
+                continue
+            first_assigned = assigned_by_employee_date.get((employee.id, first_date))
+            second_assigned = assigned_by_employee_date.get((employee.id, second_date))
+            if first_assigned is None or second_assigned is None:
+                continue
+            adjacent_repeat = model.NewBoolVar(
+                "adjacent_repeat_"
+                f"{employee.id}_{first_date.isoformat()}_{second_date.isoformat()}"
+            )
+            model.Add(adjacent_repeat <= first_assigned)
+            model.Add(adjacent_repeat <= second_assigned)
+            model.Add(adjacent_repeat >= first_assigned + second_assigned - 1)
+            objective_terms.append(adjacent_repeat * ADJACENT_DAY_REPEAT_WEIGHT)
 
     model.Minimize(sum(objective_terms))
 

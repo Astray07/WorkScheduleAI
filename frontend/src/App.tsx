@@ -127,7 +127,8 @@ export function App() {
     formatVacationDraft([
       {
         employeeCode: DEFAULT_SCENARIO_CONFIG.vacationEmployeeCode,
-        date: DEFAULT_SCENARIO_CONFIG.vacationDate,
+        startDate: DEFAULT_SCENARIO_CONFIG.vacationDate,
+        endDate: DEFAULT_SCENARIO_CONFIG.vacationEndDate,
         type: "vacation",
         overrideAllowed: true,
       },
@@ -210,12 +211,17 @@ export function App() {
     if (patch.employeeCount !== undefined) {
       setEmployeeDraft(formatEmployeeDraft(buildScenarioEmployees(nextScenario.employeeCount)));
     }
-    if (patch.vacationEmployeeCode !== undefined || patch.vacationDate !== undefined) {
+    if (
+      patch.vacationEmployeeCode !== undefined ||
+      patch.vacationDate !== undefined ||
+      patch.vacationEndDate !== undefined
+    ) {
       setVacationDraft(
         formatVacationDraft([
           {
             employeeCode: nextScenario.vacationEmployeeCode,
-            date: nextScenario.vacationDate,
+            startDate: nextScenario.vacationDate,
+            endDate: nextScenario.vacationEndDate,
             type: "vacation",
             overrideAllowed: true,
           },
@@ -313,8 +319,8 @@ export function App() {
           body: {
             employee_id: vacationEmployee.id,
             type: vacation.type,
-            starts_at: `${vacation.date}T00:00:00+09:00`,
-            ends_at: `${addDaysIso(vacation.date, 1)}T00:00:00+09:00`,
+            starts_at: `${vacation.startDate}T00:00:00+09:00`,
+            ends_at: `${addDaysIso(vacation.endDate, 1)}T00:00:00+09:00`,
             override_allowed: vacation.overrideAllowed,
             note: "Operator scenario vacation",
           },
@@ -765,12 +771,21 @@ function ScenarioControls({
           />
         </label>
         <label className="field-row">
-          <span>휴가일</span>
+          <span>휴가 시작일</span>
           <input
             disabled={disabled}
             onChange={(event) => onChange({ vacationDate: event.target.value })}
             type="date"
             value={config.vacationDate}
+          />
+        </label>
+        <label className="field-row">
+          <span>휴가 종료일</span>
+          <input
+            disabled={disabled}
+            onChange={(event) => onChange({ vacationEndDate: event.target.value })}
+            type="date"
+            value={config.vacationEndDate}
           />
         </label>
         <label className="field-row">

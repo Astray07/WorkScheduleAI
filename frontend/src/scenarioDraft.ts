@@ -8,7 +8,8 @@ export type ScenarioDraftEmployee = {
 
 export type VacationDraft = {
   employeeCode: string;
-  date: string;
+  startDate: string;
+  endDate: string;
   type: string;
   overrideAllowed: boolean;
 };
@@ -59,16 +60,24 @@ export function parseEmployeeDraft(text: string): ScenarioDraftEmployee[] {
 
 export function parseVacationDraft(text: string): VacationDraft[] {
   return nonEmptyLines(text).map((line, index) => {
-    const [employeeCode, date, type, overrideAllowed] = splitDraftLine(line);
+    const [employeeCode, startDate, third, fourth, fifth] = splitDraftLine(line);
     if (!employeeCode || !isEmployeeCode(employeeCode)) {
       throw new Error(`Invalid vacation employee_code at row ${index + 1}.`);
     }
-    if (!isIsoDate(date)) {
-      throw new Error(`Invalid vacation date at row ${index + 1}.`);
+    if (!isIsoDate(startDate)) {
+      throw new Error(`Invalid vacation start_date at row ${index + 1}.`);
+    }
+    const rangeRow = isIsoDate(third);
+    const endDate = rangeRow ? third : startDate;
+    const type = rangeRow ? fourth : third;
+    const overrideAllowed = rangeRow ? fifth : fourth;
+    if (endDate < startDate) {
+      throw new Error(`Vacation end_date must be on or after start_date at row ${index + 1}.`);
     }
     return {
       employeeCode,
-      date,
+      startDate,
+      endDate,
       type: type || "vacation",
       overrideAllowed: parseBoolean(overrideAllowed, true, `override_allowed at row ${index + 1}`),
     };
@@ -114,7 +123,8 @@ export function formatVacationDraft(vacations: VacationDraft[]): string {
     .map((vacation) =>
       [
         vacation.employeeCode,
-        vacation.date,
+        vacation.startDate,
+        vacation.endDate,
         vacation.type || "vacation",
         vacation.overrideAllowed ? "true" : "false",
       ].join(","),
