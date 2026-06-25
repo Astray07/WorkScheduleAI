@@ -72,6 +72,12 @@ try {
     scenario.buildScenarioSummary(normalized),
     "직원 50명, 휴가 E002, 상극 E005/E006, 31일 생성",
   );
+
+  assert.equal(scenario.dateDisplayLabel("2026-07-01"), "2026-07-01 (수)");
+  assert.equal(scenario.dateDisplayLabel("2026-07-04"), "2026-07-04 (토)");
+  assert.equal(scenario.dayTypeLabel("2026-07-03"), "평일");
+  assert.equal(scenario.dayTypeLabel("2026-07-04"), "주말");
+  assert.equal(scenario.slotDisplayLabel("주간 근무", "2026-07-04"), "주간 근무 · 주말");
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }

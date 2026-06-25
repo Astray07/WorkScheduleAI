@@ -105,6 +105,14 @@ Required variables:
 
 The API service creates `ScheduleRun` rows and enqueues run ids into Redis. The worker service consumes those ids, opens its own database session, runs the OR-Tools artifact executor, and transitions the run from `queued` to a terminal state.
 
+Freshness check:
+
+1. Open the API service public URL and call `/health/version`.
+2. Open the worker service deployment logs.
+3. Confirm the first log line starts with `Starting schedule queue worker` and the JSON `git_commit` matches the API `/health/version` commit.
+
+If the commits differ, redeploy the worker service or confirm the worker service is attached to the same GitHub branch. A stale worker can still consume Redis jobs successfully, but it may run older solver policy code and produce outdated assignment behavior.
+
 ## Database
 
 Add a Railway PostgreSQL service and expose its internal connection URL to the API service as `DATABASE_URL`.

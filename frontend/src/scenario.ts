@@ -75,6 +75,8 @@ const employeeNames = [
   "Eom",
 ];
 
+const koreanWeekdays = ["일", "월", "화", "수", "목", "금", "토"] as const;
+
 export const DEFAULT_SCENARIO_CONFIG: ScenarioConfig = {
   employeeCount: 12,
   periodDays: 14,
@@ -142,6 +144,21 @@ export function buildScenarioSummary(config: ScenarioConfig): string {
   return `직원 ${normalized.employeeCount}명, 휴가 ${normalized.vacationEmployeeCode}, 상극 ${normalized.pairEmployeeACode}/${normalized.pairEmployeeBCode}, ${normalized.periodDays}일 생성`;
 }
 
+export function dateDisplayLabel(isoDate: string): string {
+  const weekday = weekdayLabel(isoDate);
+  return weekday ? `${isoDate} (${weekday})` : isoDate;
+}
+
+export function dayTypeLabel(isoDate: string): string {
+  const day = utcDayOfWeek(isoDate);
+  if (day === null) return "날짜 확인";
+  return day === 0 || day === 6 ? "주말" : "평일";
+}
+
+export function slotDisplayLabel(slotLabel: string, isoDate: string): string {
+  return `${slotLabel} · ${dayTypeLabel(isoDate)}`;
+}
+
 function clampEmployeeCount(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_SCENARIO_CONFIG.employeeCount;
   return Math.min(MAX_EMPLOYEE_COUNT, Math.max(MIN_EMPLOYEE_COUNT, Math.trunc(value)));
@@ -175,4 +192,16 @@ function nextEmployeeCode(currentCode: string, employeeCount: number): string {
   const currentNumber = match ? Number(match[1]) : 1;
   const nextNumber = currentNumber >= employeeCount ? 1 : currentNumber + 1;
   return employeeCodeFor(nextNumber);
+}
+
+function weekdayLabel(isoDate: string): string | null {
+  const day = utcDayOfWeek(isoDate);
+  return day === null ? null : koreanWeekdays[day];
+}
+
+function utcDayOfWeek(isoDate: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day))).getUTCDay();
 }

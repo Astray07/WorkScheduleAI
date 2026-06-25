@@ -18,6 +18,8 @@ import {
   PERIOD_DAY_OPTIONS,
   addDaysIso,
   buildScenarioEmployees,
+  dateDisplayLabel,
+  slotDisplayLabel,
   normalizeScenarioConfig,
   periodEndFor,
   type ScenarioConfig,
@@ -578,8 +580,8 @@ function ScheduleGrid({
           {result.slots.map((slot) => (
             <tr key={slot.id}>
               <th>
-                <strong>{slot.local_date}</strong>
-                <span>{slot.label}</span>
+                <strong>{dateDisplayLabel(slot.local_date)}</strong>
+                <span>{slotDisplayLabel(slot.label, slot.local_date)}</span>
               </th>
               {roles.map((role) => (
                 <td key={role.roleId}>
