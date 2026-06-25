@@ -7,20 +7,6 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 55432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     env:
       TEST_POSTGRES_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:55432/postgres
     steps:
@@ -29,10 +15,39 @@ jobs:
         with:
           python-version: '3.13'
           cache: pip
+      - name: Start PostgreSQL
+        run: |
+          docker run --name work-schedule-ai-postgres \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=postgres \
+            -p 55432:5432 \
+            -d postgres:16
+          for i in {1..30}; do
+            if docker exec work-schedule-ai-postgres pg_isready -U postgres; then
+              docker ps --filter name=work-schedule-ai-postgres
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs work-schedule-ai-postgres
+          exit 1
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev,deploy]"
+      - name: Diagnose backend database URL
+        run: |
+          python - <<'PY'
+          import os
+          from sqlalchemy.engine import make_url
+
+          url = make_url(os.environ["TEST_POSTGRES_URL"])
+          print(
+              f"TEST_POSTGRES_URL host={url.host} "
+              f"port={url.port} database={url.database} username={url.username}"
+          )
+          PY
       - name: Run backend tests
         run: python -m pytest -q
 
