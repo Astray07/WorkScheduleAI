@@ -732,6 +732,102 @@ def test_schedule_run_result_uses_shift_template_solver_path(
     } == {"role_senior", "role_junior"}
 
 
+def test_schedule_run_worker_path_distributes_larger_mixed_role_case(client: TestClient):
+    create_response = client.post(
+        "/organizations",
+        json={"name": "Fairness Clinic", "timezone": "Asia/Seoul"},
+    )
+    assert create_response.status_code == 201
+    organization = create_response.json()
+    organization_id = organization["id"]
+    senior_role_id = next(
+        role["id"] for role in organization["default_roles"] if role["name"] == "사수"
+    )
+    junior_role_id = next(
+        role["id"] for role in organization["default_roles"] if role["name"] == "부사수"
+    )
+    names = [
+        "Kim",
+        "Lee",
+        "Park",
+        "Choi",
+        "Jung",
+        "Kang",
+        "Cho",
+        "Yoon",
+        "Jang",
+        "Lim",
+        "Han",
+        "Oh",
+    ]
+    employee_response = client.post(
+        f"/organizations/{organization_id}/employees/bulk-paste",
+        json={
+            "mode": "upsert",
+            "rows": [
+                {
+                    "row_no": index,
+                    "employee_code": f"E{index:03d}",
+                    "name": names[index - 1],
+                    "role_names": (
+                        ["사수"]
+                        if index % 4 == 1
+                        else ["부사수"]
+                        if index % 4 == 2
+                        else ["사수", "부사수"]
+                    ),
+                    "max_shifts_per_week": 5,
+                }
+                for index in range(1, 13)
+            ],
+        },
+    )
+    assert employee_response.status_code == 200
+    shift_type_response = client.post(
+        f"/organizations/{organization_id}/shift-types",
+        json={
+            "name": "주간 근무",
+            "local_start_time": "09:00",
+            "local_end_time": "18:00",
+            "timezone": "Asia/Seoul",
+            "requirements": [
+                {"role_id": senior_role_id, "required_count": 1},
+                {"role_id": junior_role_id, "required_count": 1},
+            ],
+        },
+    )
+    assert shift_type_response.status_code == 201
+    run_response = client.post(
+        f"/organizations/{organization_id}/schedule-runs",
+        json={
+            "period_start": "2026-07-01",
+            "period_end": "2026-07-14",
+            "template": "one_shift_per_day",
+            "deterministic_mode": True,
+            "timeout_seconds": 30,
+        },
+    )
+    assert run_response.status_code == 202
+    run_id = run_response.json()["id"]
+    _process_next_schedule_run(client)
+
+    result_response = client.get(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
+    )
+    assert result_response.status_code == 200
+    payload = result_response.json()
+    assignment_counts: dict[str, int] = {}
+    for assignment in payload["assignments"]:
+        assignment_counts[assignment["employee_id"]] = (
+            assignment_counts.get(assignment["employee_id"], 0) + 1
+        )
+
+    assert payload["issues"] == []
+    assert len(payload["assignments"]) == 28
+    assert max(assignment_counts.values()) <= 3
+    assert sum(count > 0 for count in assignment_counts.values()) >= 10
+
+
 def test_schedule_run_result_maps_solver_unfilled_issue(client: TestClient):
     create_response = client.post(
         "/organizations",

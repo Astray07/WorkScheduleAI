@@ -32,6 +32,7 @@ import {
   parseVacationDraft,
   type ScenarioDraftEmployee,
 } from "./scenarioDraft";
+import { canRecalculate } from "./scheduleActions";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "infeasible"]);
@@ -526,7 +527,15 @@ export function App() {
                 <CheckCircle2 size={16} />
                 완화안 승인
               </button>
-              <button disabled={!demo || busy === "recalculate"} onClick={recalculate}>
+              <button
+                disabled={!demo || !canRecalculate(result) || busy === "recalculate"}
+                onClick={recalculate}
+                title={
+                  canRecalculate(result)
+                    ? undefined
+                    : "승인된 완화안이 있을 때만 재계산할 수 있습니다."
+                }
+              >
                 <RefreshCw size={16} />
                 재계산
               </button>
