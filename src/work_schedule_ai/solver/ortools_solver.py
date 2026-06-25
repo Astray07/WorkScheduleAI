@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date
+from datetime import datetime
 
 from ortools.sat.python import cp_model
 
@@ -53,6 +54,12 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
     vars_by_employee_date: dict[tuple[str, date], list[cp_model.IntVar]] = (
         defaultdict(list)
     )
+    vars_by_employee_weekend_month: dict[tuple[str, str], list[cp_model.IntVar]] = (
+        defaultdict(list)
+    )
+    vars_by_employee_night_month: dict[tuple[str, str], list[cp_model.IntVar]] = (
+        defaultdict(list)
+    )
 
     for requirement in requirements:
         for employee in employees:
@@ -75,6 +82,12 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
             vars_by_employee_date[
                 (employee.id, local_date_by_slot_id[requirement.slot_id])
             ].append(variable)
+            slot = next(slot for slot in slots if slot.id == requirement.slot_id)
+            month_key = slot.local_date[:7]
+            if slot.is_weekend:
+                vars_by_employee_weekend_month[(employee.id, month_key)].append(variable)
+            if slot.is_night:
+                vars_by_employee_night_month[(employee.id, month_key)].append(variable)
 
     unfilled_vars: dict[str, cp_model.IntVar] = {}
     objective_terms: list[cp_model.LinearExpr] = []
@@ -104,12 +117,46 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
             if variables:
                 model.Add(sum(variables) <= 1)
 
+    for avoid_pair in request.avoid_pairs:
+        employee_a_id, employee_b_id = avoid_pair.normalized()
+        for slot in slots:
+            variables_a = vars_by_employee_slot_for_pair[(employee_a_id, slot.id)]
+            variables_b = vars_by_employee_slot_for_pair[(employee_b_id, slot.id)]
+            if not variables_a or not variables_b:
+                continue
+            assigned_a = model.NewBoolVar(f"avoid_a_{employee_a_id}_{slot.id}")
+            assigned_b = model.NewBoolVar(f"avoid_b_{employee_b_id}_{slot.id}")
+            violation = model.NewBoolVar(
+                f"avoid_violation_{employee_a_id}_{employee_b_id}_{slot.id}"
+            )
+            model.Add(sum(variables_a) >= assigned_a)
+            model.Add(sum(variables_a) <= len(variables_a) * assigned_a)
+            model.Add(sum(variables_b) >= assigned_b)
+            model.Add(sum(variables_b) <= len(variables_b) * assigned_b)
+            model.Add(violation <= assigned_a)
+            model.Add(violation <= assigned_b)
+            model.Add(violation >= assigned_a + assigned_b - 1)
+            objective_terms.append(violation * avoid_pair.weight)
+
     employee_by_id = {employee.id: employee for employee in employees}
     for (employee_id, _week_key_value), variables in vars_by_employee_week.items():
         employee = employee_by_id[employee_id]
-        if employee.max_shifts_per_week is None:
+        weekly_cap = (
+            employee.max_shifts_per_week
+            if employee.max_shifts_per_week is not None
+            else request.global_max_shifts_per_week
+        )
+        if weekly_cap is None:
             continue
-        model.Add(sum(variables) <= employee.max_shifts_per_week)
+        model.Add(sum(variables) <= weekly_cap)
+
+    if request.weekend_shift_limit_per_month is not None:
+        for variables in vars_by_employee_weekend_month.values():
+            model.Add(sum(variables) <= request.weekend_shift_limit_per_month)
+
+    if request.night_shift_limit_per_month is not None:
+        for variables in vars_by_employee_night_month.values():
+            model.Add(sum(variables) <= request.night_shift_limit_per_month)
 
     for requirement in requirements:
         for employee in employees:
@@ -149,7 +196,7 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
             f"assignment_over_target_{employee.id}",
         )
         model.Add(assignment_count - fair_assignment_target <= over_target)
-        objective_terms.append(over_target * FAIRNESS_OVER_TARGET_WEIGHT)
+        objective_terms.append(over_target * request.fairness_over_target_weight)
 
     assigned_by_employee_date: dict[tuple[str, date], cp_model.IntVar] = {}
     for (employee_id, local_date), variables in vars_by_employee_date.items():
@@ -162,6 +209,29 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
 
     unique_dates = sorted({slot.local_date for slot in slots})
     parsed_dates = [date.fromisoformat(local_date) for local_date in unique_dates]
+    if request.max_consecutive_shifts is not None and request.max_consecutive_shifts > 0:
+        for employee in employees:
+            for sequence in _consecutive_date_sequences(parsed_dates):
+                window_size = request.max_consecutive_shifts + 1
+                for start_index in range(0, len(sequence) - window_size + 1):
+                    window = sequence[start_index : start_index + window_size]
+                    variables = [
+                        assigned_by_employee_date[(employee.id, current_date)]
+                        for current_date in window
+                        if (employee.id, current_date) in assigned_by_employee_date
+                    ]
+                    if variables:
+                        model.Add(sum(variables) <= request.max_consecutive_shifts)
+
+    if request.min_rest_hours is not None and request.min_rest_hours > 0:
+        _add_min_rest_constraints(
+            model=model,
+            employees=employees,
+            slots=slots,
+            vars_by_employee_slot=vars_by_employee_slot,
+            min_rest_hours=request.min_rest_hours,
+        )
+
     for employee in employees:
         for first_date, second_date in zip(parsed_dates, parsed_dates[1:]):
             if (second_date - first_date).days != 1:
@@ -295,6 +365,60 @@ def _week_key(local_date_text: str) -> tuple[int, int]:
     local_date = date.fromisoformat(local_date_text)
     iso_year, iso_week, _ = local_date.isocalendar()
     return iso_year, iso_week
+
+
+def _consecutive_date_sequences(dates: list[date]) -> list[list[date]]:
+    sequences: list[list[date]] = []
+    current_sequence: list[date] = []
+    for current_date in dates:
+        if not current_sequence:
+            current_sequence = [current_date]
+            continue
+        if (current_date - current_sequence[-1]).days == 1:
+            current_sequence.append(current_date)
+            continue
+        sequences.append(current_sequence)
+        current_sequence = [current_date]
+    if current_sequence:
+        sequences.append(current_sequence)
+    return sequences
+
+
+def _add_min_rest_constraints(
+    *,
+    model: cp_model.CpModel,
+    employees: list[EmployeeInput],
+    slots: list[object],
+    vars_by_employee_slot: dict[tuple[str, str], list[cp_model.IntVar]],
+    min_rest_hours: int,
+) -> None:
+    dated_slots = [
+        (
+            slot,
+            datetime.fromisoformat(slot.starts_at),
+            datetime.fromisoformat(slot.ends_at),
+        )
+        for slot in slots
+        if getattr(slot, "starts_at", None) and getattr(slot, "ends_at", None)
+    ]
+    for employee in employees:
+        for index, (first_slot, first_start, first_end) in enumerate(dated_slots):
+            for second_slot, second_start, second_end in dated_slots[index + 1 :]:
+                if first_start <= second_start:
+                    earlier_slot, earlier_end = first_slot, first_end
+                    later_slot, later_start = second_slot, second_start
+                else:
+                    earlier_slot, earlier_end = second_slot, second_end
+                    later_slot, later_start = first_slot, first_start
+                rest_hours = (later_start - earlier_end).total_seconds() / 3600
+                if rest_hours >= min_rest_hours:
+                    continue
+                variables = (
+                    vars_by_employee_slot[(employee.id, earlier_slot.id)]
+                    + vars_by_employee_slot[(employee.id, later_slot.id)]
+                )
+                if variables:
+                    model.Add(sum(variables) <= 1)
 
 
 def _fair_assignment_target(

@@ -434,6 +434,51 @@ button:disabled {
   color: #9aa8a1;
 }
 
+.editor-table input[type="checkbox"] {
+  appearance: auto;
+  min-height: auto;
+  width: auto;
+}
+
+.inline-checkbox {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  min-height: 28px;
+  white-space: nowrap;
+}
+
+.inline-checkbox span {
+  color: #61716a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.role-toggle-list,
+.weekday-toggle-list,
+.requirement-list {
+  display: grid;
+  gap: 6px;
+}
+
+.weekday-toggle-list {
+  grid-template-columns: repeat(4, minmax(44px, 1fr));
+}
+
+.requirement-row {
+  align-items: center;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(54px, 1fr) 58px 82px;
+}
+
+.requirement-row span {
+  color: #61716a;
+  font-size: 12px;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
 .role-toggle-group {
   display: flex;
   flex-wrap: wrap;
@@ -589,6 +634,21 @@ button:disabled {
   border-radius: 8px;
   min-height: 46px;
   padding: 8px 10px;
+}
+
+.cell-action {
+  align-items: stretch;
+  display: grid;
+  font-weight: 700;
+  justify-content: stretch;
+  min-height: 46px;
+  padding: 8px 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.cell-action:disabled {
+  cursor: not-allowed;
 }
 
 .assignment-cell {
@@ -766,6 +826,136 @@ button:disabled {
 .audit-row {
   display: grid;
   gap: 4px;
+}
+
+.manual-edit-panel,
+.operations-tabs,
+.policy-manager,
+.import-manager,
+.reference-manager {
+  border-top: 1px solid #edf1ef;
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.compact-heading {
+  gap: 10px;
+}
+
+.compact-heading .section-title {
+  margin-bottom: 0;
+}
+
+.manual-edit-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.button-row,
+.segmented-tabs,
+.workspace-strip {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.segmented-tabs {
+  background: #f2f5f4;
+  border: 1px solid #dfe6e2;
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.segmented-tabs button {
+  background: transparent;
+  border-color: transparent;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.segmented-tabs button.active {
+  background: #ffffff;
+  border-color: #cfd8d3;
+  color: #1f7a55;
+}
+
+.workspace-strip {
+  color: #61716a;
+  font-size: 12px;
+  font-weight: 800;
+  justify-content: space-between;
+}
+
+.workspace-strip button,
+.button-row button {
+  min-height: 34px;
+}
+
+.validation-list {
+  display: grid;
+  gap: 8px;
+}
+
+.validation-row {
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+
+.validation-row strong,
+.validation-row span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.validation-row strong {
+  font-size: 12px;
+}
+
+.validation-row span {
+  font-size: 13px;
+}
+
+.validation-row.blocking {
+  background: #fff1f0;
+  border: 1px solid #ffc7c1;
+  color: #8d2d22;
+}
+
+.validation-row.warning {
+  background: #fff8e6;
+  border: 1px solid #ffe0a3;
+  color: #8a5a00;
+}
+
+.policy-manager .primary-action,
+.import-manager .primary-action {
+  width: fit-content;
+}
+
+.import-manager textarea {
+  background: #ffffff;
+  border: 1px solid #cfd8d3;
+  border-radius: 8px;
+  color: #17211d;
+  font: inherit;
+  font-size: 13px;
+  min-height: 150px;
+  padding: 10px;
+  resize: vertical;
+  width: 100%;
+}
+
+.reference-manager .editor-table {
+  min-width: 980px;
+}
+
+.import-preview-table {
+  min-width: 560px;
 }
 
 @media (max-width: 1180px) {

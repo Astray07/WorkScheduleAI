@@ -29,6 +29,7 @@ EXPECTED_TABLES = {
     "relaxation_proposals",
     "solver_diagnostic_events",
     "audit_logs",
+    "schedule_policies",
 }
 
 
@@ -112,6 +113,12 @@ def test_alembic_upgrade_head_creates_named_constraints(tmp_path):
     shift_requirement_check_names = {
         item["name"] for item in inspector.get_check_constraints("shift_requirements")
     }
+    schedule_policy_unique_names = {
+        item["name"] for item in inspector.get_unique_constraints("schedule_policies")
+    }
+    schedule_policy_check_names = {
+        item["name"] for item in inspector.get_check_constraints("schedule_policies")
+    }
 
     assert "uq_employees_organization_employee_code" in employee_unique_names
     assert "uq_roles_organization_name" in role_unique_names
@@ -143,6 +150,22 @@ def test_alembic_upgrade_head_creates_named_constraints(tmp_path):
         in shift_requirement_unique_names
     )
     assert "ck_shift_requirements_required_count" in shift_requirement_check_names
+    assert "uq_schedule_policies_organization_id" in schedule_policy_unique_names
+    assert "ck_schedule_policies_unfilled_policy" in schedule_policy_check_names
+
+
+def test_alembic_upgrade_head_creates_schedule_policy_indexes(tmp_path):
+    db_path = tmp_path / "migration-test.sqlite"
+
+    _upgrade_head(db_path)
+
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    inspector = inspect(engine)
+    policy_index_names = {
+        item["name"] for item in inspector.get_indexes("schedule_policies")
+    }
+
+    assert "ix_schedule_policies_organization_id" in policy_index_names
 
 
 def test_alembic_upgrade_head_creates_unavailability_indexes(tmp_path):
@@ -334,7 +357,7 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260625_0013"
+    assert version == "20260625_0014"
 
 
 def test_postgresql_rls_migration_defines_tenant_policies():

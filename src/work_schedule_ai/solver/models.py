@@ -15,6 +15,10 @@ class EmployeeInput:
 class ScheduleSlotInput:
     id: str
     local_date: str
+    starts_at: str | None = None
+    ends_at: str | None = None
+    is_weekend: bool = False
+    is_night: bool = False
 
 
 @dataclass(frozen=True)
@@ -36,13 +40,30 @@ class BlockedPair:
 
 
 @dataclass(frozen=True)
+class AvoidPair:
+    employee_a_id: str
+    employee_b_id: str
+    weight: int = 1
+
+    def normalized(self) -> tuple[str, str]:
+        return tuple(sorted((self.employee_a_id, self.employee_b_id)))
+
+
+@dataclass(frozen=True)
 class SolveScheduleRequest:
     employees: list[EmployeeInput]
     slots: list[ScheduleSlotInput]
     requirements: list[ScheduleRequirementInput]
     blocked_pairs: list[BlockedPair]
+    avoid_pairs: list[AvoidPair] = field(default_factory=list)
     timeout_seconds: int = 30
     random_seed: int = 1
+    global_max_shifts_per_week: int | None = None
+    max_consecutive_shifts: int | None = None
+    min_rest_hours: int | None = None
+    weekend_shift_limit_per_month: int | None = None
+    night_shift_limit_per_month: int | None = None
+    fairness_over_target_weight: int = 50_000
 
 
 @dataclass(frozen=True)

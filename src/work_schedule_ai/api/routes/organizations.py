@@ -2,6 +2,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session, set_tenant_context
@@ -64,6 +65,28 @@ def create_organization(
             RoleResponse(id=role.id, name=role.name) for role in default_roles
         ],
     )
+
+
+@router.get(
+    "/{organization_id}/roles",
+    response_model=list[RoleResponse],
+)
+def list_roles(
+    organization_id: str,
+    db_session: Session = Depends(get_db_session),
+) -> list[RoleResponse]:
+    organization = db_session.get(Organization, organization_id)
+    if organization is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    roles = db_session.execute(
+        select(Role)
+        .where(Role.organization_id == organization_id)
+        .order_by(Role.name)
+    ).scalars()
+    return [RoleResponse(id=role.id, name=role.name) for role in roles]
 
 
 def _new_id(prefix: str) -> str:

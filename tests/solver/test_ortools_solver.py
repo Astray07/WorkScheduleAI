@@ -1,6 +1,7 @@
 from datetime import date
 
 from work_schedule_ai.solver.models import (
+    AvoidPair,
     BlockedPair,
     EmployeeInput,
     ScheduleRequirementInput,
@@ -196,6 +197,129 @@ def test_solver_respects_employee_weekly_shift_cap():
     ]
     assert result.issues == []
     assert len(limited_assignments) <= 2
+
+
+def test_solver_respects_global_weekly_shift_cap_when_employee_has_no_override():
+    request = SolveScheduleRequest(
+        employees=[
+            EmployeeInput(id="emp_limited", role_ids=frozenset({"role_any"})),
+            EmployeeInput(id="emp_available", role_ids=frozenset({"role_any"})),
+        ],
+        slots=[
+            ScheduleSlotInput(
+                id=f"slot_2026_07_{day:02d}_day",
+                local_date=f"2026-07-{day:02d}",
+            )
+            for day in range(6, 13)
+        ],
+        requirements=[
+            ScheduleRequirementInput(
+                id=f"req_{day}",
+                slot_id=f"slot_2026_07_{day:02d}_day",
+                role_id="role_any",
+                required_count=1,
+                unfilled_weight=100,
+            )
+            for day in range(6, 13)
+        ],
+        blocked_pairs=[],
+        global_max_shifts_per_week=4,
+        timeout_seconds=5,
+        random_seed=1,
+    )
+
+    result = solve_schedule(request)
+
+    assignment_counts = {
+        employee.id: sum(
+            1
+            for assignment in result.assignments
+            if assignment.employee_id == employee.id
+        )
+        for employee in request.employees
+    }
+    assert result.issues == []
+    assert max(assignment_counts.values()) <= 4
+
+
+def test_solver_respects_max_consecutive_shifts():
+    request = SolveScheduleRequest(
+        employees=[
+            EmployeeInput(id="emp_1", role_ids=frozenset({"role_any"})),
+            EmployeeInput(id="emp_2", role_ids=frozenset({"role_any"})),
+        ],
+        slots=[
+            ScheduleSlotInput(
+                id=f"slot_2026_07_0{day}_day",
+                local_date=f"2026-07-0{day}",
+            )
+            for day in range(1, 5)
+        ],
+        requirements=[
+            ScheduleRequirementInput(
+                id=f"req_{day}",
+                slot_id=f"slot_2026_07_0{day}_day",
+                role_id="role_any",
+                required_count=1,
+                unfilled_weight=100,
+            )
+            for day in range(1, 5)
+        ],
+        blocked_pairs=[],
+        max_consecutive_shifts=1,
+        timeout_seconds=5,
+        random_seed=1,
+    )
+
+    result = solve_schedule(request)
+
+    date_by_slot_id = {
+        slot.id: date.fromisoformat(slot.local_date)
+        for slot in request.slots
+    }
+    assigned_dates_by_employee: dict[str, list[date]] = {
+        employee.id: [] for employee in request.employees
+    }
+    for assignment in result.assignments:
+        assigned_dates_by_employee[assignment.employee_id].append(
+            date_by_slot_id[assignment.slot_id]
+        )
+    assert result.issues == []
+    assert all(
+        (second - first).days > 1
+        for dates in assigned_dates_by_employee.values()
+        for first, second in zip(sorted(dates), sorted(dates)[1:])
+    )
+
+
+def test_solver_penalizes_avoid_pair_when_alternative_exists():
+    request = SolveScheduleRequest(
+        employees=[
+            EmployeeInput(id="emp_1", role_ids=frozenset({"role_any"})),
+            EmployeeInput(id="emp_2", role_ids=frozenset({"role_any"})),
+            EmployeeInput(id="emp_3", role_ids=frozenset({"role_any"})),
+        ],
+        slots=[ScheduleSlotInput(id="slot_2026_07_01_day", local_date="2026-07-01")],
+        requirements=[
+            ScheduleRequirementInput(
+                id="req_1",
+                slot_id="slot_2026_07_01_day",
+                role_id="role_any",
+                required_count=2,
+                unfilled_weight=100,
+            )
+        ],
+        blocked_pairs=[],
+        avoid_pairs=[AvoidPair("emp_1", "emp_2", weight=1_000_000)],
+        timeout_seconds=5,
+        random_seed=1,
+    )
+
+    result = solve_schedule(request)
+
+    assigned_employee_ids = {assignment.employee_id for assignment in result.assignments}
+    assert result.issues == []
+    assert not {"emp_1", "emp_2"}.issubset(assigned_employee_ids)
 
 
 def test_solver_spreads_larger_mixed_role_demo_case():

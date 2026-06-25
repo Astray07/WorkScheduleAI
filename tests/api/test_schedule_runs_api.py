@@ -1330,6 +1330,163 @@ def test_save_manual_edit_persists_assignment_and_audit_log(
     assert audit_metadata["warning_codes"] == ["UNAVAILABILITY_CONFLICT"]
 
 
+def test_save_manual_edit_preserves_other_assignments_for_multi_count_requirement(
+    client: TestClient,
+):
+    create_response = client.post(
+        "/organizations",
+        json={"name": "Multi Count Manual Clinic", "timezone": "Asia/Seoul"},
+    )
+    organization = create_response.json()
+    organization_id = organization["id"]
+    senior_role_id = next(
+        role["id"] for role in organization["default_roles"] if role["name"] == "사수"
+    )
+    employee_response = client.post(
+        f"/organizations/{organization_id}/employees/bulk-paste",
+        json={
+            "mode": "upsert",
+            "rows": [
+                _employee_row(1, "E001", "Kim", ["사수"]),
+                _employee_row(2, "E002", "Lee", ["사수"]),
+                _employee_row(3, "E003", "Park", ["사수"]),
+            ],
+        },
+    )
+    employees_by_code = {
+        employee["employee_code"]: employee
+        for employee in employee_response.json()["employees"]
+    }
+    shift_type_response = client.post(
+        f"/organizations/{organization_id}/shift-types",
+        json={
+            "name": "주간 근무",
+            "local_start_time": "09:00",
+            "local_end_time": "18:00",
+            "timezone": "Asia/Seoul",
+            "requirements": [
+                {"role_id": senior_role_id, "required_count": 2},
+            ],
+        },
+    )
+    assert shift_type_response.status_code == 201
+    run_response = client.post(
+        f"/organizations/{organization_id}/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-01"},
+    )
+    run_id = run_response.json()["id"]
+    _process_next_schedule_run(client)
+    result = client.get(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
+    ).json()
+    slot_id = result["slots"][0]["id"]
+    before_assignments = [
+        assignment
+        for assignment in result["assignments"]
+        if assignment["slot_id"] == slot_id and assignment["role_id"] == senior_role_id
+    ]
+    assert len(before_assignments) == 2
+    unassigned_employee_id = next(
+        employee["id"]
+        for employee in employees_by_code.values()
+        if employee["id"] not in {assignment["employee_id"] for assignment in before_assignments}
+    )
+
+    response = client.post(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/manual-edits",
+        json={
+            "slot_id": slot_id,
+            "role_id": senior_role_id,
+            "employee_id": unassigned_employee_id,
+            "locked_by_user": True,
+        },
+    )
+
+    assert response.status_code == 201
+    refreshed = client.get(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
+    ).json()
+    after_assignments = [
+        assignment
+        for assignment in refreshed["assignments"]
+        if assignment["slot_id"] == slot_id and assignment["role_id"] == senior_role_id
+    ]
+    assert len(after_assignments) == 2
+    assert response.json()["employee_id"] in {
+        assignment["employee_id"] for assignment in after_assignments
+    }
+
+
+def test_schedule_policy_weekly_cap_is_used_by_solver_path(client: TestClient):
+    create_response = client.post(
+        "/organizations",
+        json={"name": "Policy Solver Clinic", "timezone": "Asia/Seoul"},
+    )
+    organization = create_response.json()
+    organization_id = organization["id"]
+    senior_role_id = next(
+        role["id"] for role in organization["default_roles"] if role["name"] == "사수"
+    )
+    employee_response = client.post(
+        f"/organizations/{organization_id}/employees/bulk-paste",
+        json={
+            "mode": "upsert",
+            "rows": [
+                _employee_row(1, "E001", "Kim", ["사수"]),
+                _employee_row(2, "E002", "Lee", ["사수"]),
+            ],
+        },
+    )
+    assert employee_response.status_code == 200
+    policy_response = client.put(
+        f"/organizations/{organization_id}/schedule-policy",
+        json={
+            "name": "엄격한 주간 제한",
+            "min_rest_hours": 0,
+            "max_consecutive_shifts": 5,
+            "max_shifts_per_week": 1,
+            "weekend_shift_limit_per_month": 31,
+            "night_shift_limit_per_month": 31,
+            "default_unfilled_requirement_weight": 900,
+            "weight_workload_imbalance": 100,
+            "weight_pair_avoid_violation": 60,
+            "unfilled_policy": "soft_penalty",
+        },
+    )
+    assert policy_response.status_code == 200
+    shift_type_response = client.post(
+        f"/organizations/{organization_id}/shift-types",
+        json={
+            "name": "주간 근무",
+            "local_start_time": "09:00",
+            "local_end_time": "18:00",
+            "timezone": "Asia/Seoul",
+            "requirements": [
+                {"role_id": senior_role_id, "required_count": 1},
+            ],
+        },
+    )
+    assert shift_type_response.status_code == 201
+    run_response = client.post(
+        f"/organizations/{organization_id}/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-03"},
+    )
+    run_id = run_response.json()["id"]
+    _process_next_schedule_run(client)
+
+    result = client.get(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
+    ).json()
+
+    assert len(result["assignments"]) == 2
+    assert len(result["issues"]) == 1
+    issue = result["issues"][0]
+    assert issue["role_id"] == senior_role_id
+    assert issue["type"] == "unfilled_requirement"
+    assert issue["missing_count"] == 1
+    assert issue["display_message"] == "사수 1명이 미배정입니다."
+
+
 def test_recalculate_preserves_manual_locked_assignment(client: TestClient):
     organization = _create_role_scoped_organization(client, name="Manual Lock Clinic")
     organization_id = organization["organization_id"]

@@ -3,9 +3,9 @@ from __future__ import annotations
 import re
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
@@ -226,6 +226,115 @@ def list_shift_types(
         )
         for shift_type in shift_types
     ]
+
+
+@router.patch(
+    "/{organization_id}/shift-types/{shift_type_id}",
+    response_model=ShiftTypeResponse,
+)
+def update_shift_type(
+    organization_id: str,
+    shift_type_id: str,
+    request: ShiftTypeCreateRequest,
+    db_session: Session = Depends(get_db_session),
+) -> ShiftTypeResponse:
+    organization = db_session.get(Organization, organization_id)
+    if organization is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found",
+        )
+    shift_type = db_session.get(ShiftType, shift_type_id)
+    if shift_type is None or shift_type.organization_id != organization_id:
+        raise HTTPException(status_code=404, detail="Shift type not found")
+
+    duplicate = db_session.execute(
+        select(ShiftType).where(
+            ShiftType.organization_id == organization_id,
+            ShiftType.name == request.name,
+            ShiftType.id != shift_type_id,
+        )
+    ).scalar_one_or_none()
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "SHIFT_TYPE_DUPLICATE",
+                "message": "Shift type name already exists in the organization.",
+                "field": "name",
+            },
+        )
+
+    role_ids = [requirement.role_id for requirement in request.requirements]
+    roles = list(
+        db_session.execute(
+            select(Role).where(
+                Role.organization_id == organization_id,
+                Role.id.in_(role_ids),
+            )
+        ).scalars()
+    )
+    role_by_id = {role.id: role for role in roles}
+    if set(role_by_id) != set(role_ids):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "INVALID_ROLE_ID",
+                "message": "All requirement role_id values must belong to the organization.",
+                "field": "requirements.role_id",
+            },
+        )
+
+    shift_type.name = request.name
+    shift_type.local_start_time = request.local_start_time
+    shift_type.local_end_time = request.local_end_time
+    shift_type.timezone = request.timezone
+    shift_type.crosses_midnight = request.crosses_midnight
+    shift_type.active_weekdays = _serialize_active_weekdays(request.active_weekdays)
+    shift_type.active = request.active
+    db_session.execute(
+        delete(ShiftRequirement).where(
+            ShiftRequirement.organization_id == organization_id,
+            ShiftRequirement.shift_type_id == shift_type_id,
+        )
+    )
+    requirements = [
+        ShiftRequirement(
+            id=_new_id("shift_requirement"),
+            organization_id=organization_id,
+            shift_type_id=shift_type.id,
+            role_id=requirement.role_id,
+            required_count=requirement.required_count,
+            unfilled_weight_override=requirement.unfilled_weight_override,
+        )
+        for requirement in request.requirements
+    ]
+    db_session.add_all(requirements)
+    db_session.commit()
+    return _shift_type_response(shift_type, requirements, role_by_id)
+
+
+@router.delete(
+    "/{organization_id}/shift-types/{shift_type_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def deactivate_shift_type(
+    organization_id: str,
+    shift_type_id: str,
+    db_session: Session = Depends(get_db_session),
+) -> Response:
+    organization = db_session.get(Organization, organization_id)
+    if organization is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found",
+        )
+    shift_type = db_session.get(ShiftType, shift_type_id)
+    if shift_type is None or shift_type.organization_id != organization_id:
+        raise HTTPException(status_code=404, detail="Shift type not found")
+    shift_type.active = False
+    db_session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def _shift_type_response(

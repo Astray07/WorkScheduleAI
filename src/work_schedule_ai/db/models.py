@@ -163,6 +163,80 @@ class Role(Base):
     )
 
 
+class SchedulePolicy(Base):
+    __tablename__ = "schedule_policies"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            name="uq_schedule_policies_organization_id",
+        ),
+        CheckConstraint("min_rest_hours >= 0", name="ck_schedule_policies_min_rest"),
+        CheckConstraint(
+            "max_consecutive_shifts >= 1",
+            name="ck_schedule_policies_max_consecutive",
+        ),
+        CheckConstraint(
+            "max_shifts_per_week >= 1",
+            name="ck_schedule_policies_max_weekly",
+        ),
+        CheckConstraint(
+            "weekend_shift_limit_per_month >= 0",
+            name="ck_schedule_policies_weekend_limit",
+        ),
+        CheckConstraint(
+            "night_shift_limit_per_month >= 0",
+            name="ck_schedule_policies_night_limit",
+        ),
+        CheckConstraint(
+            "default_unfilled_requirement_weight >= 0",
+            name="ck_schedule_policies_unfilled_weight",
+        ),
+        CheckConstraint(
+            "weight_workload_imbalance >= 0",
+            name="ck_schedule_policies_workload_weight",
+        ),
+        CheckConstraint(
+            "weight_pair_avoid_violation >= 0",
+            name="ck_schedule_policies_pair_avoid_weight",
+        ),
+        CheckConstraint(
+            "unfilled_policy IN ('soft_penalty')",
+            name="ck_schedule_policies_unfilled_policy",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    min_rest_hours: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_consecutive_shifts: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_shifts_per_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    weekend_shift_limit_per_month: Mapped[int] = mapped_column(Integer, nullable=False)
+    night_shift_limit_per_month: Mapped[int] = mapped_column(Integer, nullable=False)
+    default_unfilled_requirement_weight: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+    weight_workload_imbalance: Mapped[int] = mapped_column(Integer, nullable=False)
+    weight_pair_avoid_violation: Mapped[int] = mapped_column(Integer, nullable=False)
+    unfilled_policy: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
 class ShiftType(Base):
     __tablename__ = "shift_types"
     __table_args__ = (

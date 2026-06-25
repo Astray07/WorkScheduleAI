@@ -7,11 +7,13 @@ from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
 from work_schedule_ai.api.routes.employees import router as employees_router
+from work_schedule_ai.api.routes.imports import router as imports_router
 from work_schedule_ai.api.routes.organizations import router as organizations_router
 from work_schedule_ai.api.routes.operations import router as operations_router
 from work_schedule_ai.api.routes.pair_constraints import (
     router as pair_constraints_router,
 )
+from work_schedule_ai.api.routes.policies import router as policies_router
 from work_schedule_ai.api.routes.schedule_runs import router as schedule_runs_router
 from work_schedule_ai.api.routes.shift_templates import router as shift_templates_router
 from work_schedule_ai.api.routes.unavailabilities import (
@@ -37,8 +39,10 @@ def create_app() -> FastAPI:
     )
     app.include_router(organizations_router)
     app.include_router(employees_router)
+    app.include_router(imports_router)
     app.include_router(unavailabilities_router)
     app.include_router(pair_constraints_router)
+    app.include_router(policies_router)
     app.include_router(shift_templates_router)
     app.include_router(schedule_runs_router)
     app.include_router(operations_router)

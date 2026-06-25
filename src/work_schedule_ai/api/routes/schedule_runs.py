@@ -16,6 +16,7 @@ from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api.routes.policies import DEFAULT_POLICY
 from work_schedule_ai.db.models import (
     AuditLog,
     Assignment as AssignmentRecord,
@@ -30,6 +31,7 @@ from work_schedule_ai.db.models import (
     ScheduleRecalculationRequest,
     ScheduleInputSnapshot,
     SchedulePublication,
+    SchedulePolicy,
     ScheduleRequirement as ScheduleRequirementRecord,
     ScheduleRun,
     ShiftSlot as ShiftSlotRecord,
@@ -41,6 +43,7 @@ from work_schedule_ai.db.models import (
 )
 from work_schedule_ai.llm.explanations import fallback_explanation
 from work_schedule_ai.solver.models import (
+    AvoidPair,
     BlockedPair,
     EmployeeInput,
     ScheduleRequirementInput,
@@ -479,18 +482,46 @@ def save_manual_edit(
         )
 
     stored_slot_id = _stored_artifact_id(run.id, request.slot_id)
-    assignment_id = _stored_artifact_id(
-        run.id,
-        f"assign_manual_{request.slot_id}_{request.role_id}",
+    existing_assignments = [
+        assignment
+        for assignment in artifacts.assignments
+        if assignment.slot_id == request.slot_id and assignment.role_id == request.role_id
+    ]
+    requirement = next(
+        (
+            item
+            for item in artifacts.requirements
+            if item.slot_id == request.slot_id and item.role_id == request.role_id
+        ),
+        None,
     )
-    db_session.execute(
-        delete(AssignmentRecord).where(
-            AssignmentRecord.organization_id == organization_id,
-            AssignmentRecord.schedule_run_id == run.id,
-            AssignmentRecord.shift_slot_id == stored_slot_id,
-            AssignmentRecord.role_id == request.role_id,
+    assignment_to_replace = None
+    if requirement is not None and len(existing_assignments) >= requirement.required_count:
+        assignment_to_replace = next(
+            (
+                assignment
+                for assignment in existing_assignments
+                if not assignment.locked_by_user
+            ),
+            existing_assignments[0] if existing_assignments else None,
         )
-    )
+    if assignment_to_replace is not None:
+        assignment_id = _stored_artifact_id(run.id, assignment_to_replace.id)
+        db_session.execute(
+            delete(AssignmentRecord).where(
+                AssignmentRecord.organization_id == organization_id,
+                AssignmentRecord.schedule_run_id == run.id,
+                AssignmentRecord.id == assignment_id,
+            )
+        )
+    else:
+        assignment_id = _stored_artifact_id(
+            run.id,
+            (
+                f"assign_manual_{request.slot_id}_{request.role_id}_"
+                f"{request.employee_id}_{len(existing_assignments) + 1}"
+            ),
+        )
     warning_codes = [warning.code for warning in validation.warnings]
     assignment = AssignmentRecord(
         id=assignment_id,
@@ -1696,6 +1727,7 @@ def _solver_result_artifacts(
     db_session: Session,
     shift_types: list[ShiftType],
 ) -> _MockArtifacts:
+    policy_values = _schedule_policy_values(run.organization_id, db_session)
     shift_types.sort(key=lambda shift_type: shift_type.name)
     roles = list(
         db_session.execute(
@@ -1738,13 +1770,18 @@ def _solver_result_artifacts(
                 required_count=requirement.required_count,
             )
             response_requirements.append(response_requirement)
+            unfilled_weight = (
+                requirement.unfilled_weight_override
+                if requirement.unfilled_weight_override is not None
+                else int(policy_values["default_unfilled_requirement_weight"])
+            )
             solver_requirements.append(
                 ScheduleRequirementInput(
                     id=response_requirement.id,
                     slot_id=slot.id,
                     role_id=requirement.role_id,
                     required_count=requirement.required_count,
-                    unfilled_weight=requirement.unfilled_weight_override or 100,
+                    unfilled_weight=unfilled_weight,
                 )
             )
 
@@ -1770,13 +1807,24 @@ def _solver_result_artifacts(
             unavailable_slot_ids=frozenset(
                 unavailable_slot_ids_by_employee.get(employee.id, set())
             ),
-            max_shifts_per_week=employee.max_shifts_per_week,
+            max_shifts_per_week=(
+                employee.max_shifts_per_week
+                if employee.max_shifts_per_week is not None
+                else int(policy_values["max_shifts_per_week"])
+            ),
         )
         for employee in employees
     ]
     solver_slots = [
-        ScheduleSlotInput(id=slot.id, local_date=slot.local_date.isoformat())
-        for slot in slots
+        ScheduleSlotInput(
+            id=slot.id,
+            local_date=slot.local_date.isoformat(),
+            starts_at=slot.starts_at,
+            ends_at=slot.ends_at,
+            is_weekend=slot.local_date.weekday() >= 5,
+            is_night=_is_night_shift(shift_type),
+        )
+        for slot, shift_type in _solver_slot_pairs(run, shift_types)
     ]
     solver_result = solve_schedule(
         SolveScheduleRequest(
@@ -1784,8 +1832,19 @@ def _solver_result_artifacts(
             slots=solver_slots,
             requirements=solver_requirements,
             blocked_pairs=_blocked_pairs(run.organization_id, db_session),
+            avoid_pairs=_avoid_pairs(
+                run.organization_id,
+                int(policy_values["weight_pair_avoid_violation"]),
+                db_session,
+            ),
             timeout_seconds=run.timeout_seconds,
             random_seed=1,
+            global_max_shifts_per_week=int(policy_values["max_shifts_per_week"]),
+            max_consecutive_shifts=int(policy_values["max_consecutive_shifts"]),
+            min_rest_hours=int(policy_values["min_rest_hours"]),
+            weekend_shift_limit_per_month=int(policy_values["weekend_shift_limit_per_month"]),
+            night_shift_limit_per_month=int(policy_values["night_shift_limit_per_month"]),
+            fairness_over_target_weight=int(policy_values["weight_workload_imbalance"]) * 500,
         )
     )
     run.status = solver_result.status
@@ -2243,6 +2302,76 @@ def _blocked_pairs(
         )
         for pair_constraint in pair_constraints
     ]
+
+
+def _avoid_pairs(
+    organization_id: str,
+    base_weight: int,
+    db_session: Session,
+) -> list[AvoidPair]:
+    if base_weight <= 0:
+        return []
+    severity_multiplier = {
+        "low": 1,
+        "medium": 2,
+        "high": 4,
+        "critical": 8,
+    }
+    pair_constraints = db_session.execute(
+        select(PairConstraint).where(
+            PairConstraint.organization_id == organization_id,
+            PairConstraint.type == "avoid",
+            PairConstraint.active.is_(True),
+        )
+    ).scalars()
+    return [
+        AvoidPair(
+            pair_constraint.normalized_employee_a_id,
+            pair_constraint.normalized_employee_b_id,
+            weight=base_weight
+            * severity_multiplier.get(pair_constraint.severity, 1)
+            * 10_000,
+        )
+        for pair_constraint in pair_constraints
+    ]
+
+
+def _schedule_policy_values(
+    organization_id: str,
+    db_session: Session,
+) -> dict[str, int | str]:
+    policy = db_session.execute(
+        select(SchedulePolicy).where(SchedulePolicy.organization_id == organization_id)
+    ).scalar_one_or_none()
+    if policy is None:
+        return {
+            **DEFAULT_POLICY,
+            "min_rest_hours": 0,
+            "max_consecutive_shifts": 31,
+            "max_shifts_per_week": 31,
+            "weekend_shift_limit_per_month": 31,
+            "night_shift_limit_per_month": 31,
+            "default_unfilled_requirement_weight": 100,
+            "weight_pair_avoid_violation": 0,
+        }
+    return {
+        "name": policy.name,
+        "min_rest_hours": policy.min_rest_hours,
+        "max_consecutive_shifts": policy.max_consecutive_shifts,
+        "max_shifts_per_week": policy.max_shifts_per_week,
+        "weekend_shift_limit_per_month": policy.weekend_shift_limit_per_month,
+        "night_shift_limit_per_month": policy.night_shift_limit_per_month,
+        "default_unfilled_requirement_weight": policy.default_unfilled_requirement_weight,
+        "weight_workload_imbalance": policy.weight_workload_imbalance,
+        "weight_pair_avoid_violation": policy.weight_pair_avoid_violation,
+        "unfilled_policy": policy.unfilled_policy,
+    }
+
+
+def _is_night_shift(shift_type: ShiftType) -> bool:
+    start_hour = int(shift_type.local_start_time[:2])
+    end_hour = int(shift_type.local_end_time[:2])
+    return shift_type.crosses_midnight or start_hour >= 20 or end_hour <= 8
 
 
 def _should_resolve_mock_unfilled(
