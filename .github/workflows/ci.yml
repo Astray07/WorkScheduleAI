@@ -21,6 +21,7 @@ jobs:
             -e POSTGRES_USER=postgres \
             -e POSTGRES_PASSWORD=postgres \
             -e POSTGRES_DB=postgres \
+            -e POSTGRES_HOST_AUTH_METHOD=trust \
             -p 55432:5432 \
             -d postgres:16
           for i in {1..30}; do
@@ -47,6 +48,17 @@ jobs:
               f"TEST_POSTGRES_URL host={url.host} "
               f"port={url.port} database={url.database} username={url.username}"
           )
+          PY
+      - name: Verify PostgreSQL connection
+        run: |
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, text
+
+          engine = create_engine(os.environ["TEST_POSTGRES_URL"])
+          with engine.connect() as connection:
+              connection.execute(text("SELECT 1"))
+          engine.dispose()
           PY
       - name: Run backend tests
         run: python -m pytest -q
