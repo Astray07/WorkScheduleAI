@@ -178,6 +178,36 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.assignment-summary {
+  display: grid;
+  gap: 8px;
+  padding-top: 14px;
+}
+
+.assignment-summary > span {
+  color: #687870;
+  font-size: 12px;
+}
+
+.assignment-summary-row {
+  align-items: center;
+  border-bottom: 1px solid #edf1ef;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding-bottom: 8px;
+}
+
+.assignment-summary-row strong,
+.assignment-summary-row b {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.assignment-summary-row b {
+  color: #1f7a55;
+}
+
 .panel-heading {
   align-items: center;
   display: flex;

@@ -42,6 +42,7 @@ type Assignment = {
   id: string;
   slot_id: string;
   role_id: string;
+  employee_id: string;
   employee_name: string;
   source: string;
   warning_state: string;
@@ -115,6 +116,18 @@ export function App() {
     });
     return Array.from(seen, ([roleId, roleName]) => ({ roleId, roleName }));
   }, [result]);
+  const assignmentCounts = useMemo(() => {
+    if (!demo || !result) return [];
+    const counts = new Map(demo.employees.map((employee) => [employee.id, 0]));
+    result.assignments.forEach((assignment) => {
+      counts.set(assignment.employee_id, (counts.get(assignment.employee_id) ?? 0) + 1);
+    });
+    return demo.employees.map((employee) => ({
+      id: employee.id,
+      name: employee.name,
+      count: counts.get(employee.id) ?? 0,
+    }));
+  }, [demo, result]);
 
   async function runDemo() {
     setBusy("demo");
@@ -140,8 +153,8 @@ export function App() {
             rows: [
               employeeRow(1, "E001", "Kim", ["사수"]),
               employeeRow(2, "E002", "Lee", ["부사수"]),
-              employeeRow(3, "E003", "Park", ["사수"]),
-              employeeRow(4, "E004", "Choi", ["사수"]),
+              employeeRow(3, "E003", "Park", ["사수", "부사수"]),
+              employeeRow(4, "E004", "Choi", ["사수", "부사수"]),
             ],
           },
         },
@@ -333,6 +346,7 @@ export function App() {
             <Metric label="생성 상태" value={result?.status ?? "대기"} />
             <Metric label="재계산" value={`${result?.recalculation_count ?? 0}회`} />
             <Metric label="다운로드" value={downloadState} />
+            <AssignmentSummary counts={assignmentCounts} />
           </section>
 
           <section className="schedule-panel">
@@ -489,6 +503,25 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div className="metric-row">
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function AssignmentSummary({
+  counts,
+}: {
+  counts: { id: string; name: string; count: number }[];
+}) {
+  if (!counts.length) return null;
+  return (
+    <div className="assignment-summary">
+      <span>직원별 배정</span>
+      {counts.map((employee) => (
+        <div className="assignment-summary-row" key={employee.id}>
+          <strong>{employee.name}</strong>
+          <b>{employee.count}회</b>
+        </div>
+      ))}
     </div>
   );
 }

@@ -12,6 +12,9 @@ from work_schedule_ai.solver.models import (
 )
 
 
+ROTATION_TIE_BREAKER_WEIGHT = 1_000
+
+
 def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
     employees = sorted(request.employees, key=lambda employee: employee.id)
     slots = sorted(request.slots, key=lambda slot: (slot.local_date, slot.id))
@@ -85,9 +88,14 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
             variable = assignment_vars.get((requirement.id, employee.id))
             if variable is None:
                 continue
+            preferred_employee_index = (
+                slot_index[requirement.slot_id] + role_index[requirement.role_id]
+            ) % max(len(employees), 1)
+            rotation_distance = (
+                employee_index[employee.id] - preferred_employee_index
+            ) % max(len(employees), 1)
             tie_breaker = (
-                slot_index[requirement.slot_id] * 10_000
-                + role_index[requirement.role_id] * 1_000
+                rotation_distance * ROTATION_TIE_BREAKER_WEIGHT
                 + employee_index[employee.id]
             )
             objective_terms.append(variable * tie_breaker)

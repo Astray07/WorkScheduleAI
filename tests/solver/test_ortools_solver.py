@@ -111,6 +111,48 @@ def test_solver_reports_unfilled_requirement_as_soft_issue():
     ]
 
 
+def test_solver_balances_assignments_across_equivalent_employees():
+    request = SolveScheduleRequest(
+        employees=[
+            EmployeeInput(id=f"emp_{index}", role_ids=frozenset({"role_any"}))
+            for index in range(1, 5)
+        ],
+        slots=[
+            ScheduleSlotInput(
+                id=f"slot_2026_07_0{index}_day",
+                local_date=f"2026-07-0{index}",
+            )
+            for index in range(1, 5)
+        ],
+        requirements=[
+            ScheduleRequirementInput(
+                id=f"req_{index}",
+                slot_id=f"slot_2026_07_0{index}_day",
+                role_id="role_any",
+                required_count=1,
+                unfilled_weight=100,
+            )
+            for index in range(1, 5)
+        ],
+        blocked_pairs=[],
+        timeout_seconds=5,
+        random_seed=1,
+    )
+
+    result = solve_schedule(request)
+
+    assignment_counts = {
+        employee.id: sum(
+            1
+            for assignment in result.assignments
+            if assignment.employee_id == employee.id
+        )
+        for employee in request.employees
+    }
+    assert result.issues == []
+    assert sorted(assignment_counts.values()) == [1, 1, 1, 1]
+
+
 def test_solver_is_deterministic_for_same_input():
     request = _golden_request()
 
