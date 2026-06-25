@@ -55,6 +55,9 @@ try {
 
   assert.equal(scenario.addDaysIso("2026-07-01", 30), "2026-07-31");
   assert.equal(scenario.periodEndFor("2026-07-01", 31), "2026-07-31");
+  assert.equal(scenario.periodDaysForRange("2026-07-01", "2026-07-10"), 10);
+  assert.equal(scenario.periodDaysForRange("2026-07-01", "2026-08-15"), 31);
+  assert.equal(scenario.periodDaysForRange("2026-07-10", "2026-07-01"), 1);
 
   const defaultVacations = scenario.buildDefaultVacationDrafts(scenario.DEFAULT_SCENARIO_CONFIG);
   assert.deepEqual(defaultVacations, [
@@ -138,6 +141,14 @@ try {
   assert.equal(normalized.vacationEmployeeCode, "E002");
   assert.equal(normalized.pairEmployeeACode, "E005");
   assert.equal(normalized.pairEmployeeBCode, "E006");
+
+  assert.equal(
+    scenario.normalizeScenarioConfig({
+      ...scenario.DEFAULT_SCENARIO_CONFIG,
+      periodDays: 10,
+    }).periodDays,
+    10,
+  );
 
   assert.equal(
     scenario.buildScenarioSummary(normalized),

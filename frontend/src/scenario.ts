@@ -1,8 +1,9 @@
 export const MIN_EMPLOYEE_COUNT = 4;
 export const MAX_EMPLOYEE_COUNT = 50;
-export const PERIOD_DAY_OPTIONS = [7, 14, 31] as const;
+export const MIN_PERIOD_DAYS = 1;
+export const MAX_PERIOD_DAYS = 31;
 
-export type PeriodDays = (typeof PERIOD_DAY_OPTIONS)[number];
+export type PeriodDays = number;
 
 export type ScenarioConfig = {
   employeeCount: number;
@@ -212,6 +213,14 @@ export function periodEndFor(startDate: string, periodDays: number): string {
   return addDaysIso(startDate, normalizePeriodDays(periodDays) - 1);
 }
 
+export function periodDaysForRange(startDate: string, endDate: string): number {
+  const start = dateFromIso(startDate);
+  const end = dateFromIso(endDate);
+  if (!start || !end) return DEFAULT_SCENARIO_CONFIG.periodDays;
+  const days = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
+  return normalizePeriodDays(days);
+}
+
 export function buildScenarioSummary(config: ScenarioConfig): string {
   const normalized = normalizeScenarioConfig(config);
   return `직원 ${normalized.employeeCount}명, 휴가 ${normalized.vacationEmployeeCode}, 상극 ${normalized.pairEmployeeACode}/${normalized.pairEmployeeBCode}, ${normalized.periodDays}일 생성`;
@@ -238,9 +247,8 @@ function clampEmployeeCount(value: number): number {
 }
 
 function normalizePeriodDays(value: number): PeriodDays {
-  if (value <= 7) return 7;
-  if (value <= 14) return 14;
-  return 31;
+  if (!Number.isFinite(value)) return DEFAULT_SCENARIO_CONFIG.periodDays;
+  return Math.min(MAX_PERIOD_DAYS, Math.max(MIN_PERIOD_DAYS, Math.trunc(value)));
 }
 
 function roleNamesForIndex(index: number): string[] {
@@ -290,8 +298,13 @@ function weekdayLabel(isoDate: string): string | null {
 }
 
 function utcDayOfWeek(isoDate: string): number | null {
+  const date = dateFromIso(isoDate);
+  return date ? date.getUTCDay() : null;
+}
+
+function dateFromIso(isoDate: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
   if (!match) return null;
   const [, year, month, day] = match;
-  return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day))).getUTCDay();
+  return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
 }

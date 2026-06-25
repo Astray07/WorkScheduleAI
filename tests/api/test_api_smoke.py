@@ -50,6 +50,22 @@ def test_cors_allows_configured_frontend_origin(monkeypatch):
     )
 
 
+def test_cors_allows_fallback_vite_dev_port_5174_by_default(monkeypatch):
+    monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+    client = TestClient(create_app())
+
+    response = client.options(
+        "/health",
+        headers={
+            "Origin": "http://127.0.0.1:5174",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5174"
+
+
 def test_m0_contract_summary_reports_no_missing_contract_items():
     client = TestClient(create_app())
 

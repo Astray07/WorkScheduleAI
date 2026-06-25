@@ -107,6 +107,89 @@ try {
     shiftProfile.normalizeShiftCoverage({ weekday: [], weekend: [] }),
     shiftProfile.DEFAULT_SHIFT_COVERAGE,
   );
+
+  const syncPlan = shiftProfile.planScenarioShiftTypeSync(
+    { weekday: ["night"], weekend: [] },
+    {
+      seniorRoleId: "role_senior",
+      juniorRoleId: "role_junior",
+    },
+    [
+      {
+        id: "shift_weekday_night",
+        name: "평일 야간 근무",
+        local_start_time: "22:00",
+        local_end_time: "06:00",
+        timezone: "Asia/Seoul",
+        crosses_midnight: true,
+        active_weekdays: [0, 1, 2, 3, 4],
+        active: false,
+        requirements: [
+          {
+            role_id: "role_senior",
+            required_count: 1,
+            unfilled_weight_override: null,
+          },
+          {
+            role_id: "role_junior",
+            required_count: 1,
+            unfilled_weight_override: null,
+          },
+        ],
+      },
+      {
+        id: "shift_weekend_day",
+        name: "주말 주간 근무",
+        local_start_time: "09:00",
+        local_end_time: "18:00",
+        timezone: "Asia/Seoul",
+        crosses_midnight: false,
+        active_weekdays: [5, 6],
+        active: true,
+        requirements: [
+          {
+            role_id: "role_senior",
+            required_count: 1,
+            unfilled_weight_override: null,
+          },
+          {
+            role_id: "role_junior",
+            required_count: 1,
+            unfilled_weight_override: null,
+          },
+        ],
+      },
+    ],
+  );
+  assert.deepEqual(syncPlan.creates, []);
+  assert.deepEqual(
+    syncPlan.updates.map((update) => ({
+      id: update.id,
+      name: update.request.name,
+      active: update.request.active,
+      activeWeekdays: update.request.active_weekdays,
+      start: update.request.local_start_time,
+      end: update.request.local_end_time,
+    })),
+    [
+      {
+        id: "shift_weekday_night",
+        name: "평일 야간 근무",
+        active: true,
+        activeWeekdays: [0, 1, 2, 3, 4],
+        start: "22:00",
+        end: "06:00",
+      },
+      {
+        id: "shift_weekend_day",
+        name: "주말 주간 근무",
+        active: false,
+        activeWeekdays: [5, 6],
+        start: "09:00",
+        end: "18:00",
+      },
+    ],
+  );
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }

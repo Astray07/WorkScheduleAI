@@ -21,6 +21,25 @@ export type ShiftTypeRequest = {
   requirements: { role_id: string; required_count: number }[];
 };
 
+export type ExistingShiftTypeForSync = ShiftTypeRequest & {
+  id: string;
+  active: boolean;
+  requirements: {
+    role_id: string;
+    required_count: number;
+    unfilled_weight_override?: number | null;
+  }[];
+};
+
+export type ShiftTypeUpdateRequest = ShiftTypeRequest & {
+  active: boolean;
+};
+
+export type ScenarioShiftTypeSyncPlan = {
+  creates: ShiftTypeRequest[];
+  updates: { id: string; request: ShiftTypeUpdateRequest }[];
+};
+
 type ShiftPreset = {
   id: ShiftPresetId;
   label: string;
@@ -135,6 +154,56 @@ export function buildShiftTypeRequests(
     }
   }
   return requests;
+}
+
+export function planScenarioShiftTypeSync(
+  coverage: ShiftCoverage,
+  roleIds: RoleIds,
+  existingShiftTypes: ExistingShiftTypeForSync[],
+): ScenarioShiftTypeSyncPlan {
+  const desiredRequests = buildShiftTypeRequests(coverage, roleIds);
+  const allScenarioRequests = buildShiftTypeRequests(
+    {
+      weekday: [...SHIFT_PRESET_IDS],
+      weekend: [...SHIFT_PRESET_IDS],
+    },
+    roleIds,
+  );
+  const existingByName = new Map(existingShiftTypes.map((shiftType) => [shiftType.name, shiftType]));
+  const desiredByName = new Map(desiredRequests.map((request) => [request.name, request]));
+  const allScenarioByName = new Map(allScenarioRequests.map((request) => [request.name, request]));
+  const creates: ShiftTypeRequest[] = [];
+  const updates: { id: string; request: ShiftTypeUpdateRequest }[] = [];
+
+  for (const request of desiredRequests) {
+    const existing = existingByName.get(request.name);
+    if (!existing) {
+      creates.push(request);
+      continue;
+    }
+    updates.push({
+      id: existing.id,
+      request: {
+        ...request,
+        active: true,
+      },
+    });
+  }
+
+  for (const existing of existingShiftTypes) {
+    if (desiredByName.has(existing.name)) continue;
+    const scenarioRequest = allScenarioByName.get(existing.name);
+    if (!scenarioRequest || !existing.active) continue;
+    updates.push({
+      id: existing.id,
+      request: {
+        ...scenarioRequest,
+        active: false,
+      },
+    });
+  }
+
+  return { creates, updates };
 }
 
 export function shiftCoverageSummary(coverage: ShiftCoverage): string {

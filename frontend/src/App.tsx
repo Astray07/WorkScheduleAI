@@ -16,13 +16,14 @@ import {
 import { useMemo, useState } from "react";
 import {
   DEFAULT_SCENARIO_CONFIG,
+  MAX_PERIOD_DAYS,
   MAX_EMPLOYEE_COUNT,
   MIN_EMPLOYEE_COUNT,
-  PERIOD_DAY_OPTIONS,
   addDaysIso,
   dateDisplayLabel,
   slotDisplayLabel,
   normalizeScenarioConfig,
+  periodDaysForRange,
   periodEndFor,
   type ScenarioConfig,
 } from "./scenario";
@@ -72,8 +73,8 @@ import {
   DEFAULT_SHIFT_COVERAGE,
   SHIFT_DAY_GROUP_OPTIONS,
   SHIFT_PRESETS,
-  buildShiftTypeRequests,
   normalizeShiftCoverage,
+  planScenarioShiftTypeSync,
   setShiftCoverageEnabled,
   shiftCoverageSummary,
   type ShiftCoverage,
@@ -331,7 +332,14 @@ export function App() {
         value: shiftCoverageSummary(normalizedShiftCoverage),
         icon: Clock3,
       },
-      { label: "생성기간", value: `${normalizedScenario.periodDays}일`, icon: FileSpreadsheet },
+      {
+        label: "생성기간",
+        value: `${normalizedScenario.startDate} ~ ${periodEndFor(
+          normalizedScenario.startDate,
+          normalizedScenario.periodDays,
+        )}`,
+        icon: FileSpreadsheet,
+      },
     ],
     [employeeRows.length, normalizedScenario, normalizedShiftCoverage, pairRows.length, vacationRows.length],
   );
@@ -582,21 +590,32 @@ export function App() {
       referenceData = await fetchReferenceData(organization.id);
     }
 
-    if (!referenceData.shiftTypes.some((shiftType) => shiftType.active)) {
-      const seniorRole = organization.default_roles.find((role) => role.name === "사수");
-      const juniorRole = organization.default_roles.find((role) => role.name === "부사수");
-      if (!seniorRole || !juniorRole) throw new Error("Default roles are missing.");
-      await Promise.all(
-        buildShiftTypeRequests(activeShiftCoverage, {
-          seniorRoleId: seniorRole.id,
-          juniorRoleId: juniorRole.id,
-        }).map((request) =>
+    const seniorRole = organization.default_roles.find((role) => role.name === "사수");
+    const juniorRole = organization.default_roles.find((role) => role.name === "부사수");
+    if (!seniorRole || !juniorRole) throw new Error("Default roles are missing.");
+    const shiftTypeSync = planScenarioShiftTypeSync(
+      activeShiftCoverage,
+      {
+        seniorRoleId: seniorRole.id,
+        juniorRoleId: juniorRole.id,
+      },
+      referenceData.shiftTypes,
+    );
+    if (shiftTypeSync.creates.length || shiftTypeSync.updates.length) {
+      await Promise.all([
+        ...shiftTypeSync.updates.map((update) =>
+          api(`/organizations/${organization.id}/shift-types/${update.id}`, {
+            method: "PATCH",
+            body: update.request,
+          }),
+        ),
+        ...shiftTypeSync.creates.map((request) =>
           api(`/organizations/${organization.id}/shift-types`, {
             method: "POST",
             body: request,
           }),
         ),
-      );
+      ]);
       referenceData = await fetchReferenceData(organization.id);
     }
 
@@ -2443,6 +2462,8 @@ function ScenarioControls({
   shiftCoverage: ShiftCoverage;
   vacationRows: VacationTableRow[];
 }) {
+  const periodEndDate = periodEndFor(config.startDate, config.periodDays);
+  const maxEndDate = addDaysIso(config.startDate, MAX_PERIOD_DAYS - 1);
   return (
     <div className="scenario-controls">
       <SectionTitle title="운영 설정" />
@@ -2468,26 +2489,30 @@ function ScenarioControls({
           />
         </label>
         <label className="field-row">
-          <span>기간</span>
-          <select
-            disabled={disabled}
-            onChange={(event) => onChange({ periodDays: Number(event.target.value) })}
-            value={config.periodDays}
-          >
-            {PERIOD_DAY_OPTIONS.map((days) => (
-              <option key={days} value={days}>
-                {days}일
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field-row">
           <span>시작일</span>
           <input
             disabled={disabled}
-            onChange={(event) => onChange({ startDate: event.target.value })}
+            onChange={(event) =>
+              onChange({
+                startDate: event.target.value,
+                periodDays: periodDaysForRange(event.target.value, periodEndDate),
+              })
+            }
             type="date"
             value={config.startDate}
+          />
+        </label>
+        <label className="field-row">
+          <span>마감일</span>
+          <input
+            disabled={disabled}
+            max={maxEndDate}
+            min={config.startDate}
+            onChange={(event) =>
+              onChange({ periodDays: periodDaysForRange(config.startDate, event.target.value) })
+            }
+            type="date"
+            value={periodEndDate}
           />
         </label>
       </div>
