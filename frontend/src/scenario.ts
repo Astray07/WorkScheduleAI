@@ -32,6 +32,13 @@ export type DefaultVacationDraft = {
   overrideAllowed: boolean;
 };
 
+export type DefaultPairDraft = {
+  employeeACode: string;
+  employeeBCode: string;
+  severity: string;
+  overrideAllowed: boolean;
+};
+
 const employeeNames = [
   "김민준",
   "이서연",
@@ -173,6 +180,23 @@ export function buildDefaultVacationDrafts(config: ScenarioConfig): DefaultVacat
       overrideAllowed: true,
     },
   ];
+}
+
+export function buildDefaultPairDrafts(config: ScenarioConfig): DefaultPairDraft[] {
+  const normalized = normalizeScenarioConfig(config);
+  const pairs = [
+    [1, 2, "high"],
+    [3, 4, "medium"],
+    [5, 6, "medium"],
+  ] as const;
+  return pairs
+    .filter(([employeeA, employeeB]) => employeeA <= normalized.employeeCount && employeeB <= normalized.employeeCount)
+    .map(([employeeA, employeeB, severity]) => ({
+      employeeACode: employeeCodeFor(employeeA),
+      employeeBCode: employeeCodeFor(employeeB),
+      severity,
+      overrideAllowed: true,
+    }));
 }
 
 export function addDaysIso(isoDate: string, days: number): string {

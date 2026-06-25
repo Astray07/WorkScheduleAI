@@ -18,6 +18,7 @@ import {
   MIN_EMPLOYEE_COUNT,
   PERIOD_DAY_OPTIONS,
   addDaysIso,
+  buildDefaultPairDrafts,
   buildDefaultVacationDrafts,
   buildScenarioEmployees,
   dateDisplayLabel,
@@ -176,14 +177,7 @@ export function App() {
     formatVacationDraft(buildDefaultVacationDrafts(DEFAULT_SCENARIO_CONFIG)),
   );
   const [pairDraft, setPairDraft] = useState(() =>
-    formatPairDraft([
-      {
-        employeeACode: DEFAULT_SCENARIO_CONFIG.pairEmployeeACode,
-        employeeBCode: DEFAULT_SCENARIO_CONFIG.pairEmployeeBCode,
-        severity: "high",
-        overrideAllowed: true,
-      },
-    ]),
+    formatPairDraft(buildDefaultPairDrafts(DEFAULT_SCENARIO_CONFIG)),
   );
   const [demo, setDemo] = useState<DemoState | null>(null);
   const [result, setResult] = useState<ScheduleResult | null>(null);
@@ -197,10 +191,6 @@ export function App() {
   const normalizedShiftCoverage = useMemo(
     () => normalizeShiftCoverage(shiftCoverage),
     [shiftCoverage],
-  );
-  const scenarioEmployees = useMemo(
-    () => buildScenarioEmployees(normalizedScenario.employeeCount),
-    [normalizedScenario.employeeCount],
   );
   const scenarioSummary = useMemo(
     () =>
@@ -268,17 +258,8 @@ export function App() {
     ) {
       setVacationDraft(formatVacationDraft(buildDefaultVacationDrafts(nextScenario)));
     }
-    if (patch.pairEmployeeACode !== undefined || patch.pairEmployeeBCode !== undefined) {
-      setPairDraft(
-        formatPairDraft([
-          {
-            employeeACode: nextScenario.pairEmployeeACode,
-            employeeBCode: nextScenario.pairEmployeeBCode,
-            severity: "high",
-            overrideAllowed: true,
-          },
-        ]),
-      );
+    if (patch.employeeCount !== undefined) {
+      setPairDraft(formatPairDraft(buildDefaultPairDrafts(nextScenario)));
     }
     clearRunState();
   }
@@ -541,7 +522,6 @@ export function App() {
               config={normalizedScenario}
               disabled={busy === "demo"}
               employeeDraft={employeeDraft}
-              employees={scenarioEmployees}
               onChange={updateScenario}
               onEmployeeDraftChange={updateEmployeeDraft}
               onPairDraftChange={updatePairDraft}
@@ -825,7 +805,6 @@ function ScenarioControls({
   config,
   disabled,
   employeeDraft,
-  employees,
   onChange,
   onEmployeeDraftChange,
   onPairDraftChange,
@@ -838,7 +817,6 @@ function ScenarioControls({
   config: ScenarioConfig;
   disabled: boolean;
   employeeDraft: string;
-  employees: ScenarioDraftEmployee[];
   onChange: (patch: Partial<ScenarioConfig>) => void;
   onEmployeeDraftChange: (value: string) => void;
   onPairDraftChange: (value: string) => void;
@@ -895,25 +873,6 @@ function ScenarioControls({
             value={config.startDate}
           />
         </label>
-        <label className="field-row">
-          <span>상극 A</span>
-          <EmployeeSelect
-            disabled={disabled}
-            employees={employees}
-            onChange={(value) => onChange({ pairEmployeeACode: value })}
-            value={config.pairEmployeeACode}
-          />
-        </label>
-        <label className="field-row">
-          <span>상극 B</span>
-          <EmployeeSelect
-            disabled={disabled}
-            employees={employees}
-            excludedCode={config.pairEmployeeACode}
-            onChange={(value) => onChange({ pairEmployeeBCode: value })}
-            value={config.pairEmployeeBCode}
-          />
-        </label>
       </div>
       <ShiftCoverageMatrix
         coverage={shiftCoverage}
@@ -946,7 +905,7 @@ function ScenarioControls({
           <textarea
             disabled={disabled}
             onChange={(event) => onPairDraftChange(event.target.value)}
-            rows={3}
+            rows={5}
             spellCheck={false}
             value={pairDraft}
           />
@@ -1008,34 +967,6 @@ function ShiftCoverageMatrix({
         ))}
       </div>
     </div>
-  );
-}
-
-function EmployeeSelect({
-  disabled,
-  employees,
-  excludedCode,
-  onChange,
-  value,
-}: {
-  disabled: boolean;
-  employees: ScenarioDraftEmployee[];
-  excludedCode?: string;
-  onChange: (value: string) => void;
-  value: string;
-}) {
-  return (
-    <select disabled={disabled} onChange={(event) => onChange(event.target.value)} value={value}>
-      {employees.map((employee) => (
-        <option
-          disabled={employee.employeeCode === excludedCode}
-          key={employee.employeeCode}
-          value={employee.employeeCode}
-        >
-          {employee.employeeCode} {employee.name}
-        </option>
-      ))}
-    </select>
   );
 }
 

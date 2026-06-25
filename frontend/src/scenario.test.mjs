@@ -81,6 +81,45 @@ try {
     },
   ]);
 
+  const defaultPairs = scenario.buildDefaultPairDrafts(scenario.DEFAULT_SCENARIO_CONFIG);
+  assert.deepEqual(defaultPairs, [
+    {
+      employeeACode: "E001",
+      employeeBCode: "E002",
+      severity: "high",
+      overrideAllowed: true,
+    },
+    {
+      employeeACode: "E003",
+      employeeBCode: "E004",
+      severity: "medium",
+      overrideAllowed: true,
+    },
+    {
+      employeeACode: "E005",
+      employeeBCode: "E006",
+      severity: "medium",
+      overrideAllowed: true,
+    },
+  ]);
+  assert.deepEqual(
+    scenario.buildDefaultPairDrafts({ ...scenario.DEFAULT_SCENARIO_CONFIG, employeeCount: 4 }),
+    [
+      {
+        employeeACode: "E001",
+        employeeBCode: "E002",
+        severity: "high",
+        overrideAllowed: true,
+      },
+      {
+        employeeACode: "E003",
+        employeeBCode: "E004",
+        severity: "medium",
+        overrideAllowed: true,
+      },
+    ],
+  );
+
   const normalized = scenario.normalizeScenarioConfig({
     employeeCount: 100,
     organizationName: "",
