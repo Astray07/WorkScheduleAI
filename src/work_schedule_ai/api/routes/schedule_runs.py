@@ -827,6 +827,26 @@ def publish_schedule_run(
         created_at=now,
     )
     db_session.add(publication)
+    db_session.add(
+        AuditLog(
+            id=_new_id("audit"),
+            organization_id=organization_id,
+            actor_user_id=None,
+            action="publication_created",
+            target_type="schedule_publication",
+            target_id=publication.id,
+            metadata_json=json.dumps(
+                {
+                    "schedule_run_id": schedule_run_id,
+                    "assignment_snapshot_hash": hashes.assignment_snapshot_hash,
+                    "issue_snapshot_hash": hashes.issue_snapshot_hash,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            created_at=now,
+        )
+    )
     db_session.commit()
 
     return _schedule_publication_response(publication)

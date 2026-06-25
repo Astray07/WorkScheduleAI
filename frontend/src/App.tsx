@@ -35,6 +35,7 @@ import {
   type ScenarioDraftEmployee,
 } from "./scenarioDraft";
 import { canRecalculate } from "./scheduleActions";
+import { auditActionLabel, fairnessDeltaLabel, fairnessSpreadLabel } from "./visibility";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "infeasible"]);
@@ -112,6 +113,41 @@ type ScheduleResult = {
   proposals: Proposal[];
 };
 
+type AuditLogEntry = {
+  id: string;
+  actor_user_id: string | null;
+  action: string;
+  target_type: string;
+  target_id: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+type AuditLogList = {
+  organization_id: string;
+  entries: AuditLogEntry[];
+};
+
+type FairnessEmployeeRow = {
+  employee_id: string;
+  employee_code: string;
+  employee_name: string;
+  assignment_count: number;
+  delta_from_average: number;
+};
+
+type FairnessSummary = {
+  organization_id: string;
+  schedule_run_id: string | null;
+  employee_count: number;
+  total_assignments: number;
+  average_assignments: number;
+  min_assignments: number;
+  max_assignments: number;
+  spread: number;
+  rows: FairnessEmployeeRow[];
+};
+
 type DemoState = {
   organizationId: string;
   runId: string;
@@ -146,6 +182,8 @@ export function App() {
   );
   const [demo, setDemo] = useState<DemoState | null>(null);
   const [result, setResult] = useState<ScheduleResult | null>(null);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [fairness, setFairness] = useState<FairnessSummary | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloadState, setDownloadState] = useState("대기");
@@ -201,6 +239,8 @@ export function App() {
   function clearRunState() {
     setDemo(null);
     setResult(null);
+    setAuditLogs([]);
+    setFairness(null);
     setDownloadState("대기");
     setError(null);
   }
@@ -357,6 +397,7 @@ export function App() {
       setDemo({ organizationId: organization.id, runId: run.id, employees: employeePayload.employees });
       const nextResult = await waitForCompletedResult(organization.id, run.id);
       setResult(nextResult);
+      await refreshVisibility(organization.id, run.id);
     } catch (caught) {
       setError(messageFromError(caught));
     } finally {
@@ -377,6 +418,7 @@ export function App() {
         },
       );
       setResult(await fetchResult(demo.organizationId, demo.runId));
+      await refreshVisibility(demo.organizationId, demo.runId);
     } catch (caught) {
       setError(messageFromError(caught));
     } finally {
@@ -394,6 +436,7 @@ export function App() {
         body: { reason: "승인된 완화안을 반영합니다." },
       });
       setResult(await waitForCompletedResult(demo.organizationId, demo.runId));
+      await refreshVisibility(demo.organizationId, demo.runId);
     } catch (caught) {
       setError(messageFromError(caught));
     } finally {
@@ -414,6 +457,7 @@ export function App() {
         },
       });
       setResult(await fetchResult(demo.organizationId, demo.runId));
+      await refreshVisibility(demo.organizationId, demo.runId);
     } catch (caught) {
       setError(messageFromError(caught));
     } finally {
@@ -530,6 +574,8 @@ export function App() {
             <SectionTitle title="이슈/완화안" />
             <IssueList issues={result?.issues ?? []} />
             <ProposalList proposals={result?.proposals ?? []} />
+            <FairnessPanel summary={fairness} />
+            <AuditLogPanel entries={auditLogs} />
             <div className="action-stack">
               <button disabled={!result?.proposals.length || busy === "approve"} onClick={approveProposal}>
                 <CheckCircle2 size={16} />
@@ -561,6 +607,17 @@ export function App() {
       </section>
     </main>
   );
+
+  async function refreshVisibility(organizationId: string, runId: string) {
+    const [fairnessResponse, auditResponse] = await Promise.all([
+      api<FairnessSummary>(
+        `/operations/organizations/${organizationId}/fairness/summary?schedule_run_id=${runId}`,
+      ),
+      api<AuditLogList>(`/operations/organizations/${organizationId}/audit-logs`),
+    ]);
+    setFairness(fairnessResponse);
+    setAuditLogs(auditResponse.entries);
+  }
 }
 
 function ScheduleGrid({
@@ -664,6 +721,57 @@ function ProposalList({ proposals }: { proposals: Proposal[] }) {
           <small>{proposal.type}</small>
         </div>
       ))}
+    </div>
+  );
+}
+
+function FairnessPanel({ summary }: { summary: FairnessSummary | null }) {
+  return (
+    <div className="visibility-panel">
+      <SectionTitle title="공정성" />
+      {!summary ? (
+        <div className="subtle-box">공정성 요약이 없습니다.</div>
+      ) : (
+        <>
+          <div className="summary-metrics">
+            <Metric label="총 배정" value={`${summary.total_assignments}회`} />
+            <Metric label="평균" value={`${summary.average_assignments}회`} />
+            <Metric label="편차" value={fairnessSpreadLabel(summary)} />
+          </div>
+          <div className="fairness-list">
+            {summary.rows.slice(0, 8).map((row) => (
+              <div className="fairness-row" key={row.employee_id}>
+                <div>
+                  <strong>{row.employee_name}</strong>
+                  <span>{row.employee_code}</span>
+                </div>
+                <b>{row.assignment_count}회</b>
+                <em>{fairnessDeltaLabel(row.delta_from_average)}</em>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function AuditLogPanel({ entries }: { entries: AuditLogEntry[] }) {
+  return (
+    <div className="visibility-panel">
+      <SectionTitle title="감사 로그" />
+      {!entries.length ? (
+        <div className="subtle-box">최근 감사 로그가 없습니다.</div>
+      ) : (
+        <div className="audit-list">
+          {entries.slice(0, 5).map((entry) => (
+            <div className="audit-row" key={entry.id}>
+              <strong>{auditActionLabel(entry.action)}</strong>
+              <span>{entry.target_type} · {formatDateTime(entry.created_at)}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -940,4 +1048,11 @@ function severityLabel(value: string) {
 
 function messageFromError(error: unknown) {
   return error instanceof Error ? error.message : "알 수 없는 오류가 발생했습니다.";
+}
+
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString("ko-KR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
 }

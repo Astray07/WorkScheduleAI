@@ -446,6 +446,77 @@ button:disabled {
   justify-content: flex-start;
 }
 
+.visibility-panel {
+  border-top: 1px solid #edf1ef;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.summary-metrics .metric-row {
+  background: #f7f9f8;
+  border: 1px solid #edf1ef;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.fairness-list,
+.audit-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.fairness-row,
+.audit-row {
+  border: 1px solid #dfe6e2;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.fairness-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.fairness-row strong,
+.fairness-row span,
+.audit-row strong,
+.audit-row span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.fairness-row span,
+.audit-row span {
+  color: #687870;
+  font-size: 12px;
+}
+
+.fairness-row b {
+  color: #1f7a55;
+  font-size: 13px;
+}
+
+.fairness-row em {
+  color: #61716a;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.audit-row {
+  display: grid;
+  gap: 4px;
+}
+
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: 1fr;

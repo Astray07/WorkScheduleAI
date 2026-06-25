@@ -1486,6 +1486,7 @@ def test_schedule_input_snapshot_includes_generated_slots_and_requirements(
 
 def test_publish_schedule_run_creates_publication_and_marks_result_read_only(
     client: TestClient,
+    db_session: Session,
 ):
     run_id, result_payload = _create_recalculated_result(client)
 
@@ -1518,6 +1519,24 @@ def test_publish_schedule_run_creates_publication_and_marks_result_read_only(
     published_result = result_response.json()
     assert published_result["read_only"] is True
     assert published_result["publication"]["id"] == payload["id"]
+
+    audit_rows = (
+        db_session.execute(
+            text(
+                "select action, target_type, target_id, metadata_json "
+                "from audit_logs"
+            )
+        )
+        .mappings()
+        .all()
+    )
+    assert len(audit_rows) == 1
+    assert audit_rows[0]["action"] == "publication_created"
+    assert audit_rows[0]["target_type"] == "schedule_publication"
+    assert audit_rows[0]["target_id"] == payload["id"]
+    audit_metadata = json.loads(audit_rows[0]["metadata_json"])
+    assert audit_metadata["schedule_run_id"] == run_id
+    assert audit_metadata["assignment_snapshot_hash"] == payload["assignment_snapshot_hash"]
 
 
 def test_publish_schedule_run_rejects_overlapping_active_publication(
