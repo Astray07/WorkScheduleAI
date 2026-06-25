@@ -18,12 +18,20 @@ import {
   PERIOD_DAY_OPTIONS,
   addDaysIso,
   buildScenarioEmployees,
-  buildScenarioSummary,
   normalizeScenarioConfig,
   periodEndFor,
   type ScenarioConfig,
-  type ScenarioEmployee,
 } from "./scenario";
+import {
+  buildDraftSummary,
+  formatEmployeeDraft,
+  formatPairDraft,
+  formatVacationDraft,
+  parseEmployeeDraft,
+  parsePairDraft,
+  parseVacationDraft,
+  type ScenarioDraftEmployee,
+} from "./scenarioDraft";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "infeasible"]);
@@ -109,6 +117,29 @@ type DemoState = {
 
 export function App() {
   const [scenario, setScenario] = useState<ScenarioConfig>(DEFAULT_SCENARIO_CONFIG);
+  const [employeeDraft, setEmployeeDraft] = useState(() =>
+    formatEmployeeDraft(buildScenarioEmployees(DEFAULT_SCENARIO_CONFIG.employeeCount)),
+  );
+  const [vacationDraft, setVacationDraft] = useState(() =>
+    formatVacationDraft([
+      {
+        employeeCode: DEFAULT_SCENARIO_CONFIG.vacationEmployeeCode,
+        date: DEFAULT_SCENARIO_CONFIG.vacationDate,
+        type: "vacation",
+        overrideAllowed: true,
+      },
+    ]),
+  );
+  const [pairDraft, setPairDraft] = useState(() =>
+    formatPairDraft([
+      {
+        employeeACode: DEFAULT_SCENARIO_CONFIG.pairEmployeeACode,
+        employeeBCode: DEFAULT_SCENARIO_CONFIG.pairEmployeeBCode,
+        severity: "high",
+        overrideAllowed: true,
+      },
+    ]),
+  );
   const [demo, setDemo] = useState<DemoState | null>(null);
   const [result, setResult] = useState<ScheduleResult | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -121,8 +152,14 @@ export function App() {
     [normalizedScenario.employeeCount],
   );
   const scenarioSummary = useMemo(
-    () => buildScenarioSummary(normalizedScenario),
-    [normalizedScenario],
+    () =>
+      buildDraftSummary({
+        employeeDraft,
+        vacationDraft,
+        pairDraft,
+        periodDays: normalizedScenario.periodDays,
+      }),
+    [employeeDraft, normalizedScenario.periodDays, pairDraft, vacationDraft],
   );
   const steps = useMemo(
     () => [
@@ -157,12 +194,59 @@ export function App() {
     }));
   }, [demo, result]);
 
-  function updateScenario(patch: Partial<ScenarioConfig>) {
-    setScenario((current) => normalizeScenarioConfig({ ...current, ...patch }));
+  function clearRunState() {
     setDemo(null);
     setResult(null);
     setDownloadState("대기");
     setError(null);
+  }
+
+  function updateScenario(patch: Partial<ScenarioConfig>) {
+    const nextScenario = normalizeScenarioConfig({ ...scenario, ...patch });
+    setScenario(nextScenario);
+    if (patch.employeeCount !== undefined) {
+      setEmployeeDraft(formatEmployeeDraft(buildScenarioEmployees(nextScenario.employeeCount)));
+    }
+    if (patch.vacationEmployeeCode !== undefined || patch.vacationDate !== undefined) {
+      setVacationDraft(
+        formatVacationDraft([
+          {
+            employeeCode: nextScenario.vacationEmployeeCode,
+            date: nextScenario.vacationDate,
+            type: "vacation",
+            overrideAllowed: true,
+          },
+        ]),
+      );
+    }
+    if (patch.pairEmployeeACode !== undefined || patch.pairEmployeeBCode !== undefined) {
+      setPairDraft(
+        formatPairDraft([
+          {
+            employeeACode: nextScenario.pairEmployeeACode,
+            employeeBCode: nextScenario.pairEmployeeBCode,
+            severity: "high",
+            overrideAllowed: true,
+          },
+        ]),
+      );
+    }
+    clearRunState();
+  }
+
+  function updateEmployeeDraft(value: string) {
+    setEmployeeDraft(value);
+    clearRunState();
+  }
+
+  function updateVacationDraft(value: string) {
+    setVacationDraft(value);
+    clearRunState();
+  }
+
+  function updatePairDraft(value: string) {
+    setPairDraft(value);
+    clearRunState();
   }
 
   async function runDemo() {
@@ -171,7 +255,12 @@ export function App() {
     setDownloadState("대기");
     try {
       const activeScenario = normalizeScenarioConfig(scenario);
-      const activeEmployees = buildScenarioEmployees(activeScenario.employeeCount);
+      const activeEmployees = parseEmployeeDraft(employeeDraft);
+      const activeVacations = parseVacationDraft(vacationDraft);
+      const activePairs = parsePairDraft(pairDraft);
+      if (activeEmployees.length < MIN_EMPLOYEE_COUNT) {
+        throw new Error(`직원은 최소 ${MIN_EMPLOYEE_COUNT}명 이상 입력해야 합니다.`);
+      }
       const organization = await api<{ id: string; default_roles: { id: string; name: string }[] }>(
         "/organizations",
         {
@@ -211,34 +300,41 @@ export function App() {
       const employeesByCode = new Map(
         employeePayload.employees.map((employee) => [employee.employee_code, employee]),
       );
-      const vacationEmployee = employeesByCode.get(activeScenario.vacationEmployeeCode);
-      const pairEmployeeA = employeesByCode.get(activeScenario.pairEmployeeACode);
-      const pairEmployeeB = employeesByCode.get(activeScenario.pairEmployeeBCode);
-      if (!vacationEmployee || !pairEmployeeA || !pairEmployeeB) {
-        throw new Error("선택한 직원 조건을 생성된 직원 목록에서 찾을 수 없습니다.");
+      for (const vacation of activeVacations) {
+        const vacationEmployee = employeesByCode.get(vacation.employeeCode);
+        if (!vacationEmployee) {
+          throw new Error(`휴가 직원 ${vacation.employeeCode}를 직원 목록에서 찾을 수 없습니다.`);
+        }
+        await api(`/organizations/${organization.id}/unavailabilities`, {
+          method: "POST",
+          body: {
+            employee_id: vacationEmployee.id,
+            type: vacation.type,
+            starts_at: `${vacation.date}T00:00:00+09:00`,
+            ends_at: `${addDaysIso(vacation.date, 1)}T00:00:00+09:00`,
+            override_allowed: vacation.overrideAllowed,
+            note: "Operator scenario vacation",
+          },
+        });
       }
-      await api(`/organizations/${organization.id}/unavailabilities`, {
-        method: "POST",
-        body: {
-          employee_id: vacationEmployee.id,
-          type: "vacation",
-          starts_at: `${activeScenario.vacationDate}T00:00:00+09:00`,
-          ends_at: `${addDaysIso(activeScenario.vacationDate, 1)}T00:00:00+09:00`,
-          override_allowed: true,
-          note: "Operator scenario vacation",
-        },
-      });
-      await api(`/organizations/${organization.id}/pair-constraints`, {
-        method: "POST",
-        body: {
-          employee_a_id: pairEmployeeA.id,
-          employee_b_id: pairEmployeeB.id,
-          type: "blocked",
-          severity: "high",
-          override_allowed: true,
-          active: true,
-        },
-      });
+      for (const pair of activePairs) {
+        const pairEmployeeA = employeesByCode.get(pair.employeeACode);
+        const pairEmployeeB = employeesByCode.get(pair.employeeBCode);
+        if (!pairEmployeeA || !pairEmployeeB) {
+          throw new Error(`상극 직원 ${pair.employeeACode}/${pair.employeeBCode}를 직원 목록에서 찾을 수 없습니다.`);
+        }
+        await api(`/organizations/${organization.id}/pair-constraints`, {
+          method: "POST",
+          body: {
+            employee_a_id: pairEmployeeA.id,
+            employee_b_id: pairEmployeeB.id,
+            type: "blocked",
+            severity: pair.severity,
+            override_allowed: pair.overrideAllowed,
+            active: true,
+          },
+        });
+      }
       const run = await api<{ id: string }>(`/organizations/${organization.id}/schedule-runs`, {
         method: "POST",
         body: {
@@ -382,14 +478,20 @@ export function App() {
             <ScenarioControls
               config={normalizedScenario}
               disabled={busy === "demo"}
+              employeeDraft={employeeDraft}
               employees={scenarioEmployees}
               onChange={updateScenario}
+              onEmployeeDraftChange={updateEmployeeDraft}
+              onPairDraftChange={updatePairDraft}
+              onVacationDraftChange={updateVacationDraft}
+              pairDraft={pairDraft}
+              vacationDraft={vacationDraft}
             />
             <SectionTitle title="입력 상태" />
             <Metric label="조직" value={demo?.organizationId ?? "대기"} />
             <Metric
               label="직원"
-              value={demo ? `${demo.employees.length}명` : `${normalizedScenario.employeeCount}명 선택`}
+              value={demo ? `${demo.employees.length}명` : `${parseDraftRowCount(employeeDraft)}명 입력`}
             />
             <Metric
               label="기간"
@@ -584,13 +686,25 @@ function AssignmentSummary({
 function ScenarioControls({
   config,
   disabled,
+  employeeDraft,
   employees,
   onChange,
+  onEmployeeDraftChange,
+  onPairDraftChange,
+  onVacationDraftChange,
+  pairDraft,
+  vacationDraft,
 }: {
   config: ScenarioConfig;
   disabled: boolean;
-  employees: ScenarioEmployee[];
+  employeeDraft: string;
+  employees: ScenarioDraftEmployee[];
   onChange: (patch: Partial<ScenarioConfig>) => void;
+  onEmployeeDraftChange: (value: string) => void;
+  onPairDraftChange: (value: string) => void;
+  onVacationDraftChange: (value: string) => void;
+  pairDraft: string;
+  vacationDraft: string;
 }) {
   return (
     <div className="scenario-controls">
@@ -668,6 +782,38 @@ function ScenarioControls({
           />
         </label>
       </div>
+      <div className="draft-grid">
+        <label className="field-row">
+          <span>직원 입력</span>
+          <textarea
+            disabled={disabled}
+            onChange={(event) => onEmployeeDraftChange(event.target.value)}
+            rows={7}
+            spellCheck={false}
+            value={employeeDraft}
+          />
+        </label>
+        <label className="field-row">
+          <span>휴가 입력</span>
+          <textarea
+            disabled={disabled}
+            onChange={(event) => onVacationDraftChange(event.target.value)}
+            rows={3}
+            spellCheck={false}
+            value={vacationDraft}
+          />
+        </label>
+        <label className="field-row">
+          <span>상극 입력</span>
+          <textarea
+            disabled={disabled}
+            onChange={(event) => onPairDraftChange(event.target.value)}
+            rows={3}
+            spellCheck={false}
+            value={pairDraft}
+          />
+        </label>
+      </div>
     </div>
   );
 }
@@ -680,7 +826,7 @@ function EmployeeSelect({
   value,
 }: {
   disabled: boolean;
-  employees: ScenarioEmployee[];
+  employees: ScenarioDraftEmployee[];
   excludedCode?: string;
   onChange: (value: string) => void;
   value: string;
@@ -700,7 +846,7 @@ function EmployeeSelect({
   );
 }
 
-function employeeRow(employee: ScenarioEmployee) {
+function employeeRow(employee: ScenarioDraftEmployee) {
   return {
     row_no: employee.rowNo,
     employee_code: employee.employeeCode,
@@ -708,6 +854,10 @@ function employeeRow(employee: ScenarioEmployee) {
     role_names: employee.roleNames,
     max_shifts_per_week: employee.maxShiftsPerWeek,
   };
+}
+
+function parseDraftRowCount(text: string) {
+  return text.split(/\r?\n/).filter((line) => line.trim()).length;
 }
 
 async function fetchResult(organizationId: string, runId: string) {

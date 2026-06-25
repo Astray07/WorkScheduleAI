@@ -142,7 +142,7 @@ button:disabled {
 .content-grid {
   display: grid;
   gap: 14px;
-  grid-template-columns: 220px minmax(520px, 1fr) 320px;
+  grid-template-columns: 320px minmax(520px, 1fr) 320px;
 }
 
 .setup-panel,
@@ -184,7 +184,8 @@ button:disabled {
 }
 
 .field-row input,
-.field-row select {
+.field-row select,
+.field-row textarea {
   appearance: none;
   background: #ffffff;
   border: 1px solid #cfd8d3;
@@ -198,10 +199,24 @@ button:disabled {
   width: 100%;
 }
 
+.field-row textarea {
+  line-height: 1.45;
+  min-height: auto;
+  padding: 9px 10px;
+  resize: vertical;
+}
+
 .field-row input:disabled,
-.field-row select:disabled {
+.field-row select:disabled,
+.field-row textarea:disabled {
   background: #f7f9f8;
   color: #9aa8a1;
+}
+
+.draft-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
 }
 
 .metric-row {
