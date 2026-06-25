@@ -161,6 +161,49 @@ button:disabled {
   margin: 0 0 14px;
 }
 
+.scenario-controls {
+  border-bottom: 1px solid #edf1ef;
+  margin-bottom: 14px;
+  padding-bottom: 16px;
+}
+
+.field-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.field-row {
+  display: grid;
+  gap: 6px;
+}
+
+.field-row span {
+  color: #687870;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.field-row input,
+.field-row select {
+  appearance: none;
+  background: #ffffff;
+  border: 1px solid #cfd8d3;
+  border-radius: 8px;
+  color: #17211d;
+  font: inherit;
+  font-size: 13px;
+  min-height: 38px;
+  min-width: 0;
+  padding: 0 10px;
+  width: 100%;
+}
+
+.field-row input:disabled,
+.field-row select:disabled {
+  background: #f7f9f8;
+  color: #9aa8a1;
+}
+
 .metric-row {
   border-bottom: 1px solid #edf1ef;
   display: grid;

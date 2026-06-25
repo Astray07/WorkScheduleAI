@@ -11,6 +11,19 @@ import {
   Users,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import {
+  DEFAULT_SCENARIO_CONFIG,
+  MAX_EMPLOYEE_COUNT,
+  MIN_EMPLOYEE_COUNT,
+  PERIOD_DAY_OPTIONS,
+  addDaysIso,
+  buildScenarioEmployees,
+  buildScenarioSummary,
+  normalizeScenarioConfig,
+  periodEndFor,
+  type ScenarioConfig,
+  type ScenarioEmployee,
+} from "./scenario";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "infeasible"]);
@@ -94,21 +107,36 @@ type DemoState = {
   employees: Employee[];
 };
 
-const steps = [
-  { label: "조직 생성", icon: Rocket },
-  { label: "직원 4명 bulk paste", icon: Users },
-  { label: "휴가 1건", icon: CalendarDays },
-  { label: "상극 조합 1건", icon: ShieldCheck },
-  { label: "근무표 생성", icon: FileSpreadsheet },
-];
-
 export function App() {
+  const [scenario, setScenario] = useState<ScenarioConfig>(DEFAULT_SCENARIO_CONFIG);
   const [demo, setDemo] = useState<DemoState | null>(null);
   const [result, setResult] = useState<ScheduleResult | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloadState, setDownloadState] = useState("대기");
 
+  const normalizedScenario = useMemo(() => normalizeScenarioConfig(scenario), [scenario]);
+  const scenarioEmployees = useMemo(
+    () => buildScenarioEmployees(normalizedScenario.employeeCount),
+    [normalizedScenario.employeeCount],
+  );
+  const scenarioSummary = useMemo(
+    () => buildScenarioSummary(normalizedScenario),
+    [normalizedScenario],
+  );
+  const steps = useMemo(
+    () => [
+      { label: "조직 생성", icon: Rocket },
+      { label: `직원 ${normalizedScenario.employeeCount}명 bulk paste`, icon: Users },
+      { label: `휴가 ${normalizedScenario.vacationEmployeeCode}`, icon: CalendarDays },
+      {
+        label: `상극 ${normalizedScenario.pairEmployeeACode}/${normalizedScenario.pairEmployeeBCode}`,
+        icon: ShieldCheck,
+      },
+      { label: `${normalizedScenario.periodDays}일 근무표 생성`, icon: FileSpreadsheet },
+    ],
+    [normalizedScenario],
+  );
   const roles = useMemo(() => {
     const seen = new Map<string, string>();
     result?.requirements.forEach((requirement) => {
@@ -129,17 +157,27 @@ export function App() {
     }));
   }, [demo, result]);
 
+  function updateScenario(patch: Partial<ScenarioConfig>) {
+    setScenario((current) => normalizeScenarioConfig({ ...current, ...patch }));
+    setDemo(null);
+    setResult(null);
+    setDownloadState("대기");
+    setError(null);
+  }
+
   async function runDemo() {
     setBusy("demo");
     setError(null);
     setDownloadState("대기");
     try {
+      const activeScenario = normalizeScenarioConfig(scenario);
+      const activeEmployees = buildScenarioEmployees(activeScenario.employeeCount);
       const organization = await api<{ id: string; default_roles: { id: string; name: string }[] }>(
         "/organizations",
         {
           method: "POST",
           body: {
-            name: `P0 Clinic ${Date.now()}`,
+            name: `Operator Scenario ${Date.now()}`,
             timezone: "Asia/Seoul",
           },
         },
@@ -150,12 +188,7 @@ export function App() {
           method: "POST",
           body: {
             mode: "upsert",
-            rows: [
-              employeeRow(1, "E001", "Kim", ["사수"]),
-              employeeRow(2, "E002", "Lee", ["부사수"]),
-              employeeRow(3, "E003", "Park", ["사수", "부사수"]),
-              employeeRow(4, "E004", "Choi", ["사수", "부사수"]),
-            ],
+            rows: activeEmployees.map(employeeRow),
           },
         },
       );
@@ -178,22 +211,28 @@ export function App() {
       const employeesByCode = new Map(
         employeePayload.employees.map((employee) => [employee.employee_code, employee]),
       );
+      const vacationEmployee = employeesByCode.get(activeScenario.vacationEmployeeCode);
+      const pairEmployeeA = employeesByCode.get(activeScenario.pairEmployeeACode);
+      const pairEmployeeB = employeesByCode.get(activeScenario.pairEmployeeBCode);
+      if (!vacationEmployee || !pairEmployeeA || !pairEmployeeB) {
+        throw new Error("선택한 직원 조건을 생성된 직원 목록에서 찾을 수 없습니다.");
+      }
       await api(`/organizations/${organization.id}/unavailabilities`, {
         method: "POST",
         body: {
-          employee_id: employeesByCode.get("E002")?.id,
+          employee_id: vacationEmployee.id,
           type: "vacation",
-          starts_at: "2026-07-01T00:00:00+09:00",
-          ends_at: "2026-07-02T00:00:00+09:00",
+          starts_at: `${activeScenario.vacationDate}T00:00:00+09:00`,
+          ends_at: `${addDaysIso(activeScenario.vacationDate, 1)}T00:00:00+09:00`,
           override_allowed: true,
-          note: "P0 demo vacation",
+          note: "Operator scenario vacation",
         },
       });
       await api(`/organizations/${organization.id}/pair-constraints`, {
         method: "POST",
         body: {
-          employee_a_id: employeesByCode.get("E001")?.id,
-          employee_b_id: employeesByCode.get("E002")?.id,
+          employee_a_id: pairEmployeeA.id,
+          employee_b_id: pairEmployeeB.id,
           type: "blocked",
           severity: "high",
           override_allowed: true,
@@ -203,8 +242,8 @@ export function App() {
       const run = await api<{ id: string }>(`/organizations/${organization.id}/schedule-runs`, {
         method: "POST",
         body: {
-          period_start: "2026-07-01",
-          period_end: "2026-07-07",
+          period_start: activeScenario.startDate,
+          period_end: periodEndFor(activeScenario.startDate, activeScenario.periodDays),
           template: "one_shift_per_day",
           deterministic_mode: true,
           timeout_seconds: 30,
@@ -328,11 +367,11 @@ export function App() {
         <header className="topbar">
           <div>
             <h1>근무표 생성/검토</h1>
-            <p>직원 4명, 휴가 1건, 상극 조합 1건, 1주 P0 흐름</p>
+            <p>{scenarioSummary}</p>
           </div>
           <button className="primary-action" disabled={busy === "demo"} onClick={runDemo}>
             <Play size={17} />
-            {busy === "demo" ? "생성 중" : "P0 데모 생성"}
+            {busy === "demo" ? "생성 중" : "시나리오 생성"}
           </button>
         </header>
 
@@ -340,9 +379,25 @@ export function App() {
 
         <div className="content-grid">
           <section className="setup-panel">
+            <ScenarioControls
+              config={normalizedScenario}
+              disabled={busy === "demo"}
+              employees={scenarioEmployees}
+              onChange={updateScenario}
+            />
             <SectionTitle title="입력 상태" />
             <Metric label="조직" value={demo?.organizationId ?? "대기"} />
-            <Metric label="직원" value={demo ? `${demo.employees.length}명` : "0명"} />
+            <Metric
+              label="직원"
+              value={demo ? `${demo.employees.length}명` : `${normalizedScenario.employeeCount}명 선택`}
+            />
+            <Metric
+              label="기간"
+              value={`${normalizedScenario.startDate} ~ ${periodEndFor(
+                normalizedScenario.startDate,
+                normalizedScenario.periodDays,
+              )}`}
+            />
             <Metric label="생성 상태" value={result?.status ?? "대기"} />
             <Metric label="재계산" value={`${result?.recalculation_count ?? 0}회`} />
             <Metric label="다운로드" value={downloadState} />
@@ -397,7 +452,7 @@ function ScheduleGrid({
   roles: { roleId: string; roleName: string }[];
 }) {
   if (!result) {
-    return <div className="empty-state">P0 데모를 생성하면 결과 그리드가 표시됩니다.</div>;
+    return <div className="empty-state">시나리오를 생성하면 결과 그리드가 표시됩니다.</div>;
   }
   return (
     <div className="schedule-table-wrap">
@@ -526,13 +581,132 @@ function AssignmentSummary({
   );
 }
 
-function employeeRow(row_no: number, employee_code: string, name: string, role_names: string[]) {
+function ScenarioControls({
+  config,
+  disabled,
+  employees,
+  onChange,
+}: {
+  config: ScenarioConfig;
+  disabled: boolean;
+  employees: ScenarioEmployee[];
+  onChange: (patch: Partial<ScenarioConfig>) => void;
+}) {
+  return (
+    <div className="scenario-controls">
+      <SectionTitle title="시나리오 설정" />
+      <div className="field-grid">
+        <label className="field-row">
+          <span>직원 수</span>
+          <input
+            disabled={disabled}
+            max={MAX_EMPLOYEE_COUNT}
+            min={MIN_EMPLOYEE_COUNT}
+            onChange={(event) => onChange({ employeeCount: Number(event.target.value) })}
+            type="number"
+            value={config.employeeCount}
+          />
+        </label>
+        <label className="field-row">
+          <span>기간</span>
+          <select
+            disabled={disabled}
+            onChange={(event) => onChange({ periodDays: Number(event.target.value) })}
+            value={config.periodDays}
+          >
+            {PERIOD_DAY_OPTIONS.map((days) => (
+              <option key={days} value={days}>
+                {days}일
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field-row">
+          <span>시작일</span>
+          <input
+            disabled={disabled}
+            onChange={(event) => onChange({ startDate: event.target.value })}
+            type="date"
+            value={config.startDate}
+          />
+        </label>
+        <label className="field-row">
+          <span>휴가자</span>
+          <EmployeeSelect
+            disabled={disabled}
+            employees={employees}
+            onChange={(value) => onChange({ vacationEmployeeCode: value })}
+            value={config.vacationEmployeeCode}
+          />
+        </label>
+        <label className="field-row">
+          <span>휴가일</span>
+          <input
+            disabled={disabled}
+            onChange={(event) => onChange({ vacationDate: event.target.value })}
+            type="date"
+            value={config.vacationDate}
+          />
+        </label>
+        <label className="field-row">
+          <span>상극 A</span>
+          <EmployeeSelect
+            disabled={disabled}
+            employees={employees}
+            onChange={(value) => onChange({ pairEmployeeACode: value })}
+            value={config.pairEmployeeACode}
+          />
+        </label>
+        <label className="field-row">
+          <span>상극 B</span>
+          <EmployeeSelect
+            disabled={disabled}
+            employees={employees}
+            excludedCode={config.pairEmployeeACode}
+            onChange={(value) => onChange({ pairEmployeeBCode: value })}
+            value={config.pairEmployeeBCode}
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function EmployeeSelect({
+  disabled,
+  employees,
+  excludedCode,
+  onChange,
+  value,
+}: {
+  disabled: boolean;
+  employees: ScenarioEmployee[];
+  excludedCode?: string;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <select disabled={disabled} onChange={(event) => onChange(event.target.value)} value={value}>
+      {employees.map((employee) => (
+        <option
+          disabled={employee.employeeCode === excludedCode}
+          key={employee.employeeCode}
+          value={employee.employeeCode}
+        >
+          {employee.employeeCode} {employee.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function employeeRow(employee: ScenarioEmployee) {
   return {
-    row_no,
-    employee_code,
-    name,
-    role_names,
-    max_shifts_per_week: 5,
+    row_no: employee.rowNo,
+    employee_code: employee.employeeCode,
+    name: employee.name,
+    role_names: employee.roleNames,
+    max_shifts_per_week: employee.maxShiftsPerWeek,
   };
 }
 

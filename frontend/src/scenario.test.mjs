@@ -1,0 +1,77 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const projectRoot = resolve(__dirname, "..");
+const outDir = join(tmpdir(), `workscheduleai-scenario-test-${process.pid}`);
+const tscBin = join(projectRoot, "node_modules", "typescript", "bin", "tsc");
+
+if (!existsSync(tscBin)) {
+  throw new Error("Run npm install in frontend before scenario tests.");
+}
+
+rmSync(outDir, { recursive: true, force: true });
+mkdirSync(outDir, { recursive: true });
+
+try {
+  execFileSync(
+    process.execPath,
+    [
+      tscBin,
+      "--target",
+      "ES2022",
+      "--module",
+      "NodeNext",
+      "--moduleResolution",
+      "NodeNext",
+      "--rootDir",
+      join(projectRoot, "src"),
+      "--outDir",
+      outDir,
+      join(projectRoot, "src", "scenario.ts"),
+    ],
+    { stdio: "inherit" },
+  );
+
+  const scenario = await import(pathToFileURL(join(outDir, "scenario.js")).href);
+  const employees = scenario.buildScenarioEmployees(12);
+
+  assert.equal(employees.length, 12);
+  assert.equal(employees[0].employeeCode, "E001");
+  assert.equal(employees[11].employeeCode, "E012");
+  assert.deepEqual(employees[0].roleNames, ["사수"]);
+  assert.deepEqual(employees[1].roleNames, ["부사수"]);
+  assert.deepEqual(employees[2].roleNames, ["사수", "부사수"]);
+  assert.ok(employees.filter((employee) => employee.roleNames.includes("사수")).length >= 6);
+  assert.ok(employees.filter((employee) => employee.roleNames.includes("부사수")).length >= 6);
+
+  assert.equal(scenario.addDaysIso("2026-07-01", 30), "2026-07-31");
+  assert.equal(scenario.periodEndFor("2026-07-01", 31), "2026-07-31");
+
+  const normalized = scenario.normalizeScenarioConfig({
+    employeeCount: 100,
+    periodDays: 99,
+    startDate: "2026-07-01",
+    vacationEmployeeCode: "E999",
+    vacationDate: "2026-07-02",
+    pairEmployeeACode: "E005",
+    pairEmployeeBCode: "E005",
+  });
+
+  assert.equal(normalized.employeeCount, 50);
+  assert.equal(normalized.periodDays, 31);
+  assert.equal(normalized.vacationEmployeeCode, "E002");
+  assert.equal(normalized.pairEmployeeACode, "E005");
+  assert.equal(normalized.pairEmployeeBCode, "E006");
+
+  assert.equal(
+    scenario.buildScenarioSummary(normalized),
+    "직원 50명, 휴가 E002, 상극 E005/E006, 31일 생성",
+  );
+} finally {
+  rmSync(outDir, { recursive: true, force: true });
+}
