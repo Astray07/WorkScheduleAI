@@ -110,6 +110,7 @@ import {
   complianceSeverityLabel,
   employeeRequestStatusLabel,
   employeeScheduleCards,
+  pendingEmployeeRequestQueue,
   ragConfidenceLabel,
   type EmployeeScheduleCard,
 } from "./roadmap";
@@ -1977,7 +1978,7 @@ function RoadmapOpsPanel({
   requests: EmployeeRequestItem[];
 }) {
   const employeeNames = new Map(employees.map((employee) => [employee.id, employee.name]));
-  const pendingRequests = requests.filter((request) => request.status === "pending");
+  const pendingRequests = pendingEmployeeRequestQueue(requests);
   const warnings = compliance?.warnings ?? [];
   return (
     <div className="roadmap-panel">
@@ -1988,7 +1989,7 @@ function RoadmapOpsPanel({
           <span>{pendingRequests.length}건 대기</span>
         </div>
         <div className="roadmap-list">
-          {requests.length ? requests.slice(0, 5).map((request) => (
+          {pendingRequests.length ? pendingRequests.map((request) => (
             <div className="roadmap-row" key={request.id}>
               <div>
                 <strong>{employeeNames.get(request.employee_id) ?? request.employee_id}</strong>
@@ -1996,24 +1997,22 @@ function RoadmapOpsPanel({
                   {employeeRequestStatusLabel(request.status)} · {dateInputValue(request.starts_at)}
                 </span>
               </div>
-              {request.status === "pending" ? (
-                <div className="roadmap-actions">
-                  <button
-                    disabled={busy === "employee-request"}
-                    onClick={() => onApproveRequest(request.id)}
-                    type="button"
-                  >
-                    승인
-                  </button>
-                  <button
-                    disabled={busy === "employee-request"}
-                    onClick={() => onRejectRequest(request.id)}
-                    type="button"
-                  >
-                    거절
-                  </button>
-                </div>
-              ) : null}
+              <div className="roadmap-actions">
+                <button
+                  disabled={busy === "employee-request"}
+                  onClick={() => onApproveRequest(request.id)}
+                  type="button"
+                >
+                  승인
+                </button>
+                <button
+                  disabled={busy === "employee-request"}
+                  onClick={() => onRejectRequest(request.id)}
+                  type="button"
+                >
+                  거절
+                </button>
+              </div>
             </div>
           )) : <div className="empty-state compact-empty">요청 대기열이 비어 있습니다.</div>}
         </div>

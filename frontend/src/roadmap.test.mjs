@@ -48,6 +48,21 @@ try {
   assert.equal(roadmap.budgetStatusLabel("within_budget"), "예산 내");
   assert.equal(roadmap.budgetStatusLabel("over_budget"), "예산 초과");
   assert.deepEqual(
+    roadmap.pendingEmployeeRequestQueue(
+      [
+        { id: "approved_1", status: "approved" },
+        { id: "pending_1", status: "pending" },
+        { id: "rejected_1", status: "rejected" },
+        { id: "pending_2", status: "pending" },
+        { id: "pending_3", status: "pending" },
+        { id: "pending_4", status: "pending" },
+        { id: "pending_5", status: "pending" },
+        { id: "pending_6", status: "pending" },
+      ],
+    ).map((request) => request.id),
+    ["pending_1", "pending_2", "pending_3", "pending_4", "pending_5"],
+  );
+  assert.deepEqual(
     roadmap.employeeScheduleCards(
       "emp_1",
       [

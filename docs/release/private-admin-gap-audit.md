@@ -51,6 +51,7 @@
 - 현재 실행 결과의 fairness 요약은 장기 fairness와 분리되어 표시됩니다.
 - 근무표 실행 이력 비교는 배정, 수동 잠금, issue, fairness delta를 대상으로 구현되어 있습니다.
 - 장기 fairness 대시보드는 확정본 또는 실행 결과를 기준으로 기간 필터, 배정 수, 야간 수, 주말 수, 역할별 수, 평균 delta를 표시합니다.
+- 운영 확장 패널의 직원 요청 queue는 승인 대기 상태만 최대 5건 표시합니다.
 - 운영 지표와 readiness endpoint가 로컬 및 스테이징 점검용으로 존재합니다.
 - PostgreSQL tenant context hook은 존재하지만, 공개 인증과 멤버십 강제는 아직 release gate입니다.
 - `WORKSCHEDULEAI_AUTH_REQUIRED=1`일 때 조직 스코프 API는 `WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH=1` 없이는 `X-User-Id`를 받지 않도록 fail-closed 처리합니다.

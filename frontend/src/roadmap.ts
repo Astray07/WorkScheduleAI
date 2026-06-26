@@ -44,6 +44,18 @@ export function budgetStatusLabel(status: string) {
   return labels[status] ?? status;
 }
 
+export type EmployeeRequestQueueItem = {
+  id: string;
+  status: string;
+};
+
+export function pendingEmployeeRequestQueue<T extends EmployeeRequestQueueItem>(
+  requests: T[],
+  limit = 5,
+): T[] {
+  return requests.filter((request) => request.status === "pending").slice(0, limit);
+}
+
 export type EmployeeScheduleSlot = {
   id: string;
   local_date: string;
