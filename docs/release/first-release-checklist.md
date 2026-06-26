@@ -35,6 +35,7 @@
 - release gate가 trusted header actor mode를 공개 SaaS ready로 판정하지 않도록 hardening
 - signed actor token 기반 `Authorization: Bearer` actor extraction
 - 직원 publication scoped signed link 발급과 `Authorization: Bearer` 기반 public 조회/확인 API
+- 직원 signed link context의 acknowledgement와 notification records
 - RAG 문서 ingest/list/delete API와 citation 필드 계약
 - Railway API/frontend 배포 자산과 demo seed
 - Railway worker service start command reference

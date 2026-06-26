@@ -19,6 +19,7 @@ from work_schedule_ai.db.models import (
     Employee,
     Organization,
     PublicationAcknowledgement,
+    PublicationNotification,
     SchedulePublication,
     ScheduleRun,
     utc_now,
@@ -122,6 +123,13 @@ def test_signed_employee_publication_link_can_read_publication_context(
     assert payload["employee_id"] == "emp_1"
     assert payload["employee_name"] == "Kim"
     assert payload["acknowledgement"]["status"] == "pending"
+    assert [
+        (item["notification_type"], item["channel"], item["status"])
+        for item in payload["notifications"]
+    ] == [
+        ("published", "in_app", "pending_recorded"),
+        ("changed", "in_app", "pending_recorded"),
+    ]
 
 
 def test_signed_employee_publication_link_can_acknowledge_publication(
@@ -342,6 +350,33 @@ def db_session() -> Generator[Session, None, None]:
                     publication_id="publication_2",
                     employee_id="emp_2",
                     status="pending",
+                ),
+                PublicationNotification(
+                    id="notification_1",
+                    organization_id="org_1",
+                    publication_id="publication_1",
+                    employee_id="emp_1",
+                    notification_type="published",
+                    channel="in_app",
+                    status="pending_recorded",
+                ),
+                PublicationNotification(
+                    id="notification_2",
+                    organization_id="org_1",
+                    publication_id="publication_1",
+                    employee_id="emp_1",
+                    notification_type="changed",
+                    channel="in_app",
+                    status="pending_recorded",
+                ),
+                PublicationNotification(
+                    id="notification_3",
+                    organization_id="org_2",
+                    publication_id="publication_2",
+                    employee_id="emp_2",
+                    notification_type="published",
+                    channel="in_app",
+                    status="pending_recorded",
                 ),
             ]
         )

@@ -26,6 +26,7 @@ from work_schedule_ai.db.models import (
     EmployeeUserLink,
     Organization,
     PublicationAcknowledgement,
+    PublicationNotification,
     SchedulePublication,
     Unavailability,
     User,
@@ -104,6 +105,16 @@ class PublicationAcknowledgementListResponse(BaseModel):
     acknowledgements: list[PublicationAcknowledgementResponse]
 
 
+class PublicationNotificationResponse(BaseModel):
+    id: str
+    publication_id: str
+    employee_id: str
+    notification_type: str
+    channel: str
+    status: str
+    created_at: datetime
+
+
 class EmployeePublicationLinkRequest(BaseModel):
     expires_in_hours: int = Field(default=168, ge=1, le=720)
 
@@ -127,6 +138,7 @@ class EmployeePublicationContextResponse(BaseModel):
     period_start: date
     period_end: date
     acknowledgement: PublicationAcknowledgementResponse
+    notifications: list[PublicationNotificationResponse]
 
 
 @router.post(
@@ -416,6 +428,12 @@ def get_employee_publication_context(
         employee_id=employee_id,
         db_session=db_session,
     )
+    notifications = _publication_notifications(
+        organization_id=organization_id,
+        publication_id=publication_id,
+        employee_id=employee_id,
+        db_session=db_session,
+    )
     return EmployeePublicationContextResponse(
         organization_id=organization_id,
         publication_id=publication_id,
@@ -425,6 +443,10 @@ def get_employee_publication_context(
         period_start=publication.period_start,
         period_end=publication.period_end,
         acknowledgement=_acknowledgement_response(acknowledgement),
+        notifications=[
+            _notification_response(notification)
+            for notification in notifications
+        ],
     )
 
 
@@ -652,6 +674,26 @@ def _get_publication_acknowledgement_or_404(
     return acknowledgement
 
 
+def _publication_notifications(
+    *,
+    organization_id: str,
+    publication_id: str,
+    employee_id: str,
+    db_session: Session,
+) -> list[PublicationNotification]:
+    return list(
+        db_session.execute(
+            select(PublicationNotification)
+            .where(
+                PublicationNotification.organization_id == organization_id,
+                PublicationNotification.publication_id == publication_id,
+                PublicationNotification.employee_id == employee_id,
+            )
+            .order_by(PublicationNotification.created_at, PublicationNotification.id)
+        ).scalars()
+    )
+
+
 def _get_employee_request_or_404(
     organization_id: str,
     employee_request_id: str,
@@ -748,6 +790,20 @@ def _acknowledgement_response(
         employee_id=acknowledgement.employee_id,
         status=acknowledgement.status,
         acknowledged_at=acknowledgement.acknowledged_at,
+    )
+
+
+def _notification_response(
+    notification: PublicationNotification,
+) -> PublicationNotificationResponse:
+    return PublicationNotificationResponse(
+        id=notification.id,
+        publication_id=notification.publication_id,
+        employee_id=notification.employee_id,
+        notification_type=notification.notification_type,
+        channel=notification.channel,
+        status=notification.status,
+        created_at=notification.created_at,
     )
 
 

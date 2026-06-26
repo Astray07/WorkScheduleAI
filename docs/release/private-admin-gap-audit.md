@@ -87,6 +87,7 @@
 - 관리자는 확정본과 직원에 묶인 HMAC signed publication link를 발급할 수 있습니다.
 - signed link token은 조직, publication, 직원, 만료 시각을 포함하며 변조, 만료, 다른 직원 재사용을 거부하는 테스트가 있습니다.
 - 생성된 직원 URL은 token을 query string이 아니라 URL fragment에 담고, public API는 `Authorization: Bearer <employee-link-token>`으로 직원 본인의 확정 근무표 context 조회와 acknowledgement 기록을 허용합니다.
+- 직원 signed link context는 해당 직원의 publication notification records를 함께 내려주므로 모바일 화면에서 발행/변경 알림 상태를 표시할 수 있습니다.
 - archived publication은 signed link public API에서 조회와 acknowledgement가 차단됩니다.
 - 아직 직원 모바일 화면과 변경 알림 UX는 signed link public API에 연결되지 않았습니다. 화면 연결 전에는 직원용 공개 접근을 제품 기능으로 안내하지 않아야 합니다.
 
