@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -41,6 +42,14 @@ class LaborBudgetResponse(LaborBudgetRequest):
     organization_id: str
 
 
+class DemandCostOptimizationPolicy(BaseModel):
+    under_staffing_penalty_per_shift: int
+    over_staffing_penalty_per_shift: int
+    budget_constraint_mode: Literal["preview_only", "warning", "hard_constraint"]
+    solver_integration_status: Literal["preview_only"]
+    solver_objective_applied: bool
+
+
 class DemandCostPreviewResponse(BaseModel):
     organization_id: str
     period_start: date
@@ -51,10 +60,12 @@ class DemandCostPreviewResponse(BaseModel):
     staffing_status: str
     under_staffed_count: int
     over_staffed_count: int
+    staffing_penalty_score: int
     planned_cost_cents: int
     budget_amount_cents: int | None
     budget_variance_cents: int | None
     budget_status: str
+    optimization_policy: DemandCostOptimizationPolicy
 
 
 @router.post(
@@ -121,6 +132,13 @@ def get_demand_cost_preview(
     planned_staff_count: int = Query(default=0, ge=0),
     hourly_rate_cents: int = Query(default=0, ge=0),
     hours_per_shift: int = Query(default=8, ge=0),
+    under_staffing_penalty_per_shift: int = Query(default=100, ge=0),
+    over_staffing_penalty_per_shift: int = Query(default=25, ge=0),
+    budget_constraint_mode: Literal[
+        "preview_only",
+        "warning",
+        "hard_constraint",
+    ] = "preview_only",
     db_session: Session = Depends(get_db_session),
 ) -> DemandCostPreviewResponse:
     require_roles(db_session, READ_ROLES)
@@ -138,6 +156,8 @@ def get_demand_cost_preview(
     )
     required_staff_count = sum(driver.required_staff_count for driver in drivers)
     staffing_variance = planned_staff_count - required_staff_count
+    under_staffed_count = max(required_staff_count - planned_staff_count, 0)
+    over_staffed_count = max(planned_staff_count - required_staff_count, 0)
     planned_cost_cents = planned_staff_count * hourly_rate_cents * hours_per_shift
     budget = db_session.execute(
         select(LaborBudget)
@@ -160,8 +180,12 @@ def get_demand_cost_preview(
         planned_staff_count=planned_staff_count,
         staffing_variance_count=staffing_variance,
         staffing_status=_staffing_status(staffing_variance),
-        under_staffed_count=max(required_staff_count - planned_staff_count, 0),
-        over_staffed_count=max(planned_staff_count - required_staff_count, 0),
+        under_staffed_count=under_staffed_count,
+        over_staffed_count=over_staffed_count,
+        staffing_penalty_score=(
+            under_staffed_count * under_staffing_penalty_per_shift
+            + over_staffed_count * over_staffing_penalty_per_shift
+        ),
         planned_cost_cents=planned_cost_cents,
         budget_amount_cents=budget_amount,
         budget_variance_cents=budget_variance,
@@ -171,6 +195,13 @@ def get_demand_cost_preview(
             else "over_budget"
             if planned_cost_cents > budget_amount
             else "within_budget"
+        ),
+        optimization_policy=DemandCostOptimizationPolicy(
+            under_staffing_penalty_per_shift=under_staffing_penalty_per_shift,
+            over_staffing_penalty_per_shift=over_staffing_penalty_per_shift,
+            budget_constraint_mode=budget_constraint_mode,
+            solver_integration_status="preview_only",
+            solver_objective_applied=False,
         ),
     )
 

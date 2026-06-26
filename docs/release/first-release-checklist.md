@@ -77,7 +77,7 @@ Staging 게이트:
 - 직원 모바일 signed link 조회/확인 API를 프론트 화면과 알림 UX에 연결
 - RAG embedding/vector index 설계, ingestion UI, 문서 권한 UX, citation 평가셋
 - 한국형 warning rule 세분화와 warning override 전용 운영 화면
-- demand/budget preview를 solver objective 또는 warning policy로 연결하는 정책 모델
+- demand/budget preview 정책 모델을 solver objective 또는 warning policy로 연결
 - assumption literal 기반 고급 CP-SAT 진단 모델 전체
 - 수동 편집 UI와 편집 이력 비교
 - FairnessLedger/ImportBatch 고도화

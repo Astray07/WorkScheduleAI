@@ -147,6 +147,58 @@ def test_demand_and_budget_preview_reports_no_budget_and_matched_staffing(
     assert payload["budget_status"] == "no_budget"
 
 
+def test_demand_and_budget_preview_returns_optimization_policy_without_solver_mutation(
+    client: TestClient,
+):
+    demand_response = client.post(
+        "/organizations/org_1/demand-drivers",
+        json={
+            "local_date": "2026-07-04",
+            "segment": "day",
+            "demand_count": 160,
+            "required_staff_count": 5,
+            "source": "manual",
+        },
+    )
+    assert demand_response.status_code == 201
+    budget_response = client.post(
+        "/organizations/org_1/labor-budgets",
+        json={
+            "period_start": "2026-07-01",
+            "period_end": "2026-07-07",
+            "budget_amount_cents": 100000,
+            "currency": "KRW",
+        },
+    )
+    assert budget_response.status_code == 201
+
+    preview_response = client.get(
+        "/organizations/org_1/demand-cost-preview",
+        params={
+            "period_start": "2026-07-01",
+            "period_end": "2026-07-07",
+            "planned_staff_count": 3,
+            "hourly_rate_cents": 50000,
+            "hours_per_shift": 2,
+            "under_staffing_penalty_per_shift": 120,
+            "over_staffing_penalty_per_shift": 40,
+            "budget_constraint_mode": "warning",
+        },
+    )
+
+    assert preview_response.status_code == 200
+    payload = preview_response.json()
+    assert payload["under_staffed_count"] == 2
+    assert payload["staffing_penalty_score"] == 240
+    assert payload["optimization_policy"] == {
+        "under_staffing_penalty_per_shift": 120,
+        "over_staffing_penalty_per_shift": 40,
+        "budget_constraint_mode": "warning",
+        "solver_integration_status": "preview_only",
+        "solver_objective_applied": False,
+    }
+
+
 @pytest.fixture
 def db_session() -> Generator[Session, None, None]:
     engine = create_engine(
