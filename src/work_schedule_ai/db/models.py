@@ -1296,6 +1296,10 @@ class RagDocumentChunk(Base):
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     excerpt: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding_dimensions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    embedding_vector_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding_content_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

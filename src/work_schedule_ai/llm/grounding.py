@@ -55,6 +55,7 @@ class GroundedEvidence(BaseModel):
 class RagGroundingResult(BaseModel):
     status: GroundingStatus
     confidence: ConfidenceLabel
+    retrieval_mode: Literal["keyword", "vector", "hybrid"] = "keyword"
     evidence: list[GroundedEvidence]
     safety_notes: list[str]
 

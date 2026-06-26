@@ -42,6 +42,7 @@
 - publication notification dispatch endpoint와 delivery attempt/status tracking
 - RAG 문서 ingest/list/delete API, 운영 패널 문서 관리 UI, citation 필드 계약
 - RAG API prompt injection drop, PII redaction, solver/policy non-mutation 평가 테스트
+- RAG chunk embedding metadata 저장 계약과 장기 citation 평가셋
 - 컴플라이언스 warning override 운영 패널 입력/저장 UI
 - 연속 야간 근무 운영 검토 warning
 - 운영 패널 demand driver와 labor budget 입력 UI
@@ -84,7 +85,7 @@ Staging 게이트:
 - 직원 100명/31일 고제약 운영 데이터 성능 hardening
 - 관리자 회원가입, 비밀번호 초기 설정/재설정, signed actor token 키 회전 운영 절차
 - 직원 signed-link 모바일 화면의 변경 알림 상세 UX, public 요청 생성 API, 실제 email/Slack provider 연동
-- RAG embedding/vector index 설계, ingestion UI 확장, 문서 권한 UX, 장기 citation 평가셋
+- RAG pgvector/hybrid retrieval 구현, ingestion UI 확장, 문서 권한 UX, 평가셋 CI job
 - 한국형 warning rule 추가 확장과 warning override 전용 화면 고도화
 - demand/budget preview 정책 모델을 solver objective 또는 warning policy로 연결
 - assumption literal 기반 고급 CP-SAT 진단 모델 전체

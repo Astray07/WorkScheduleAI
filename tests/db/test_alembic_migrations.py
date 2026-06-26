@@ -375,7 +375,7 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260626_0018"
+    assert version == "20260626_0019"
 
 
 def test_alembic_upgrade_head_creates_user_password_hash_column(tmp_path):
@@ -404,6 +404,23 @@ def test_alembic_upgrade_head_creates_notification_delivery_columns(tmp_path):
     assert "delivered_at" in notification_columns
     assert "delivery_attempts" in notification_columns
     assert "last_delivery_error" in notification_columns
+
+
+def test_alembic_upgrade_head_creates_rag_embedding_columns(tmp_path):
+    db_path = tmp_path / "migration-test.sqlite"
+
+    _upgrade_head(db_path)
+
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    inspector = inspect(engine)
+    chunk_columns = {
+        item["name"] for item in inspector.get_columns("rag_document_chunks")
+    }
+
+    assert "embedding_model" in chunk_columns
+    assert "embedding_dimensions" in chunk_columns
+    assert "embedding_vector_json" in chunk_columns
+    assert "embedding_content_hash" in chunk_columns
 
 
 def test_postgresql_rls_migration_defines_tenant_policies():

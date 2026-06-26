@@ -8,7 +8,7 @@ from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
@@ -32,6 +32,11 @@ from work_schedule_ai.llm.grounding import (
 router = APIRouter(prefix="/organizations", tags=["rag"])
 
 
+class RagChunkEmbedding(BaseModel):
+    model: str = Field(min_length=1, max_length=120)
+    vector: list[float] = Field(min_length=1, max_length=4096)
+
+
 class RagDocumentIngestRequest(BaseModel):
     source_type: SourceType
     document_title: str = Field(min_length=1, max_length=200)
@@ -40,6 +45,13 @@ class RagDocumentIngestRequest(BaseModel):
         min_length=1,
         max_length=50,
     )
+    embeddings: list[RagChunkEmbedding] | None = Field(default=None, max_length=50)
+
+    @model_validator(mode="after")
+    def validate_embeddings_match_chunks(self):
+        if self.embeddings is not None and len(self.embeddings) != len(self.chunks):
+            raise ValueError("embeddings length must match chunks length")
+        return self
 
 
 class RagDocumentResponse(BaseModel):
@@ -91,6 +103,7 @@ def ingest_rag_document(
     db_session.add(document)
     db_session.flush()
     for index, chunk in enumerate(request.chunks):
+        embedding = request.embeddings[index] if request.embeddings is not None else None
         db_session.add(
             RagDocumentChunk(
                 id=_new_id("rag_chunk"),
@@ -98,6 +111,25 @@ def ingest_rag_document(
                 document_id=document.id,
                 chunk_index=index,
                 excerpt=chunk,
+                embedding_model=embedding.model if embedding is not None else None,
+                embedding_dimensions=(
+                    len(embedding.vector) if embedding is not None else None
+                ),
+                embedding_vector_json=(
+                    json.dumps(embedding.vector, ensure_ascii=False)
+                    if embedding is not None
+                    else None
+                ),
+                embedding_content_hash=(
+                    _stable_hash(
+                        {
+                            "chunk": chunk,
+                            "model": embedding.model,
+                        }
+                    )
+                    if embedding is not None
+                    else None
+                ),
             )
         )
     db_session.commit()

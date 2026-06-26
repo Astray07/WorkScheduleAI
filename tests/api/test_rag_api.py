@@ -12,6 +12,7 @@ from work_schedule_ai.api.dependencies import get_db_session
 from work_schedule_ai.db.models import (
     Base,
     Organization,
+    RagDocumentChunk,
     RagQueryAudit,
     SchedulePolicy,
     ScheduleRun,
@@ -157,6 +158,61 @@ def test_rag_ingest_rejects_unknown_source_type(client: TestClient):
             "document_title": "출처 미상",
             "checked_at": "2026-06-26",
             "chunks": ["검증되지 않은 문서입니다."],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_rag_ingest_stores_vector_ready_embedding_metadata(
+    client: TestClient,
+    db_session: Session,
+):
+    response = client.post(
+        "/organizations/org_1/rag/documents",
+        json={
+            "source_type": "organization_policy",
+            "document_title": "벡터 준비 정책",
+            "checked_at": "2026-06-26",
+            "chunks": ["야간 근무 후 휴식을 확보합니다."],
+            "embeddings": [
+                {
+                    "model": "text-embedding-test-1",
+                    "vector": [0.1, 0.2, 0.3],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    chunk = db_session.query(RagDocumentChunk).one()
+    assert chunk.embedding_model == "text-embedding-test-1"
+    assert chunk.embedding_dimensions == 3
+    assert chunk.embedding_vector_json == "[0.1, 0.2, 0.3]"
+    assert chunk.embedding_content_hash
+
+    query_response = client.post(
+        "/organizations/org_1/rag/query",
+        json={"query": "야간 휴식", "purpose": "schedule_explanation"},
+    )
+    assert query_response.status_code == 200
+    assert query_response.json()["retrieval_mode"] == "keyword"
+
+
+def test_rag_ingest_rejects_embedding_count_mismatch(client: TestClient):
+    response = client.post(
+        "/organizations/org_1/rag/documents",
+        json={
+            "source_type": "organization_policy",
+            "document_title": "잘못된 embedding",
+            "checked_at": "2026-06-26",
+            "chunks": ["첫 번째", "두 번째"],
+            "embeddings": [
+                {
+                    "model": "text-embedding-test-1",
+                    "vector": [0.1, 0.2, 0.3],
+                }
+            ],
         },
     )
 
