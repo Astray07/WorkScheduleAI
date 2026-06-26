@@ -70,6 +70,7 @@
 - demand driver와 labor budget은 solver objective를 직접 바꾸지 않고 preview API에서 staffing/cost gap을 보여주는 단계입니다.
 - preview는 under/over/matched staffing 상태, staffing variance, planned labor cost, budget variance, no/within/over budget 상태, staffing penalty score, budget constraint mode를 반환합니다.
 - over/under staffing penalty와 budget constraint mode는 preview 정책 모델로 고정되어 있지만 `solver_objective_applied=false`입니다. solver objective 반영은 별도 설계와 검증 뒤에만 진행합니다.
+- 운영 패널에서 demand driver와 labor budget을 입력하고 preview를 다시 계산할 수 있습니다.
 
 ### 확정과 감사성
 

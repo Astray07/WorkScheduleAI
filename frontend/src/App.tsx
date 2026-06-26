@@ -392,6 +392,19 @@ type DemandCostPreview = {
   budget_status: string;
 };
 
+type DemandDriverDraft = {
+  localDate: string;
+  segment: string;
+  demandCount: string;
+  requiredStaffCount: string;
+};
+
+type LaborBudgetDraft = {
+  periodStart: string;
+  periodEnd: string;
+  budgetAmountWon: string;
+};
+
 type FieldError = {
   field: string;
   code: string;
@@ -479,6 +492,17 @@ export function App() {
   const [ragGrounding, setRagGrounding] = useState<RagGrounding | null>(null);
   const [ragDocuments, setRagDocuments] = useState<RagDocumentItem[]>([]);
   const [demandPreview, setDemandPreview] = useState<DemandCostPreview | null>(null);
+  const [demandDriverDraft, setDemandDriverDraft] = useState<DemandDriverDraft>({
+    localDate: DEFAULT_SCENARIO_CONFIG.startDate,
+    segment: "day",
+    demandCount: "120",
+    requiredStaffCount: "4",
+  });
+  const [laborBudgetDraft, setLaborBudgetDraft] = useState<LaborBudgetDraft>({
+    periodStart: DEFAULT_SCENARIO_CONFIG.startDate,
+    periodEnd: periodEndFor(DEFAULT_SCENARIO_CONFIG.startDate, DEFAULT_SCENARIO_CONFIG.periodDays),
+    budgetAmountWon: "800000",
+  });
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloadState, setDownloadState] = useState("대기");
@@ -1222,6 +1246,53 @@ export function App() {
     setDemandPreview(response);
   }
 
+  async function createDemandDriverFromDraft() {
+    const organizationId = demo?.organizationId ?? workspaceOrganization?.id;
+    if (!organizationId) return;
+    setBusy("demand-input");
+    setError(null);
+    try {
+      await api(`/organizations/${organizationId}/demand-drivers`, {
+        method: "POST",
+        body: {
+          local_date: demandDriverDraft.localDate,
+          segment: demandDriverDraft.segment || "day",
+          demand_count: Math.max(0, Number(demandDriverDraft.demandCount) || 0),
+          required_staff_count: Math.max(0, Number(demandDriverDraft.requiredStaffCount) || 0),
+          source: "manual",
+        },
+      });
+      await loadDemandPreview(organizationId, result);
+    } catch (caught) {
+      setError(messageFromError(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function createLaborBudgetFromDraft() {
+    const organizationId = demo?.organizationId ?? workspaceOrganization?.id;
+    if (!organizationId) return;
+    setBusy("demand-input");
+    setError(null);
+    try {
+      await api(`/organizations/${organizationId}/labor-budgets`, {
+        method: "POST",
+        body: {
+          period_start: laborBudgetDraft.periodStart,
+          period_end: laborBudgetDraft.periodEnd,
+          budget_amount_cents: Math.max(0, Number(laborBudgetDraft.budgetAmountWon) || 0) * 100,
+          currency: "KRW",
+        },
+      });
+      await loadDemandPreview(organizationId, result);
+    } catch (caught) {
+      setError(messageFromError(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function submitEmployeeRequest({
     employeeId,
     endsAt,
@@ -1904,8 +1975,10 @@ export function App() {
               busy={busy}
               compliance={complianceWarningSummary}
               complianceOverrideReasons={complianceOverrideReasons}
+              demandDriverDraft={demandDriverDraft}
               demandPreview={demandPreview}
               employees={demo?.employees ?? []}
+              laborBudgetDraft={laborBudgetDraft}
               onApproveRequest={approveEmployeeRequest}
               onComplianceOverrideReasonChange={(instanceKey, reason) => {
                 setComplianceOverrideReasons((current) => ({
@@ -1913,7 +1986,15 @@ export function App() {
                   [instanceKey]: reason,
                 }));
               }}
+              onCreateDemandDriver={createDemandDriverFromDraft}
+              onCreateLaborBudget={createLaborBudgetFromDraft}
+              onDemandDriverDraftChange={(patch) => {
+                setDemandDriverDraft((current) => ({ ...current, ...patch }));
+              }}
               onDeleteRagDocument={deleteRagDocument}
+              onLaborBudgetDraftChange={(patch) => {
+                setLaborBudgetDraft((current) => ({ ...current, ...patch }));
+              }}
               onOverrideComplianceWarning={overrideComplianceWarning}
               onRefreshDemand={() => loadDemandPreview()}
               onRefreshRag={() => {
@@ -2081,11 +2162,17 @@ function RoadmapOpsPanel({
   busy,
   compliance,
   complianceOverrideReasons,
+  demandDriverDraft,
   demandPreview,
   employees,
+  laborBudgetDraft,
   onApproveRequest,
   onComplianceOverrideReasonChange,
+  onCreateDemandDriver,
+  onCreateLaborBudget,
+  onDemandDriverDraftChange,
   onDeleteRagDocument,
+  onLaborBudgetDraftChange,
   onOverrideComplianceWarning,
   onRefreshDemand,
   onRefreshRag,
@@ -2098,11 +2185,17 @@ function RoadmapOpsPanel({
   busy: string | null;
   compliance: ComplianceWarningResponse | null;
   complianceOverrideReasons: Record<string, string>;
+  demandDriverDraft: DemandDriverDraft;
   demandPreview: DemandCostPreview | null;
   employees: Employee[];
+  laborBudgetDraft: LaborBudgetDraft;
   onApproveRequest: (requestId: string) => void;
   onComplianceOverrideReasonChange: (instanceKey: string, reason: string) => void;
+  onCreateDemandDriver: () => void;
+  onCreateLaborBudget: () => void;
+  onDemandDriverDraftChange: (patch: Partial<DemandDriverDraft>) => void;
   onDeleteRagDocument: (documentId: string) => void;
+  onLaborBudgetDraftChange: (patch: Partial<LaborBudgetDraft>) => void;
   onOverrideComplianceWarning: (warning: ComplianceWarningItem) => void;
   onRefreshDemand: () => void;
   onRefreshRag: () => void;
@@ -2277,6 +2370,74 @@ function RoadmapOpsPanel({
         <div className="roadmap-section-head">
           <strong>수요/비용 Preview</strong>
           <button onClick={onRefreshDemand} type="button">계산</button>
+        </div>
+        <div className="demand-input-grid">
+          <label>
+            수요 일자
+            <input
+              onChange={(event) => onDemandDriverDraftChange({ localDate: event.target.value })}
+              type="date"
+              value={demandDriverDraft.localDate}
+            />
+          </label>
+          <label>
+            구간
+            <input
+              onChange={(event) => onDemandDriverDraftChange({ segment: event.target.value })}
+              value={demandDriverDraft.segment}
+            />
+          </label>
+          <label>
+            예상 수요
+            <input
+              min="0"
+              onChange={(event) => onDemandDriverDraftChange({ demandCount: event.target.value })}
+              type="number"
+              value={demandDriverDraft.demandCount}
+            />
+          </label>
+          <label>
+            필요 인원
+            <input
+              min="0"
+              onChange={(event) => onDemandDriverDraftChange({ requiredStaffCount: event.target.value })}
+              type="number"
+              value={demandDriverDraft.requiredStaffCount}
+            />
+          </label>
+          <button disabled={busy === "demand-input"} onClick={onCreateDemandDriver} type="button">
+            수요 저장
+          </button>
+        </div>
+        <div className="demand-input-grid budget-grid">
+          <label>
+            예산 시작
+            <input
+              onChange={(event) => onLaborBudgetDraftChange({ periodStart: event.target.value })}
+              type="date"
+              value={laborBudgetDraft.periodStart}
+            />
+          </label>
+          <label>
+            예산 종료
+            <input
+              onChange={(event) => onLaborBudgetDraftChange({ periodEnd: event.target.value })}
+              type="date"
+              value={laborBudgetDraft.periodEnd}
+            />
+          </label>
+          <label>
+            예산 원
+            <input
+              min="0"
+              onChange={(event) => onLaborBudgetDraftChange({ budgetAmountWon: event.target.value })}
+              type="number"
+              value={laborBudgetDraft.budgetAmountWon}
+            />
+          </label>
+          <button disabled={busy === "demand-input"} onClick={onCreateLaborBudget} type="button">
+            예산 저장
+          </button>
         </div>
         {demandPreview ? (
           <>

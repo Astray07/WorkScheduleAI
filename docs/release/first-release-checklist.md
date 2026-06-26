@@ -38,6 +38,7 @@
 - 직원 signed link context의 acknowledgement와 notification records
 - RAG 문서 ingest/list/delete API, 운영 패널 문서 관리 UI, citation 필드 계약
 - 컴플라이언스 warning override 운영 패널 입력/저장 UI
+- 운영 패널 demand driver와 labor budget 입력 UI
 - Railway API/frontend 배포 자산과 demo seed
 - Railway worker service start command reference
 - 운영 metrics/readiness endpoint

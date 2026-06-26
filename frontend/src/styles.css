@@ -1032,6 +1032,34 @@ button:disabled {
   background: #f7f9f8;
 }
 
+.demand-input-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+}
+
+.budget-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+}
+
+.demand-input-grid label {
+  color: #687870;
+  display: grid;
+  font-size: 12px;
+  font-weight: 800;
+  gap: 4px;
+}
+
+.demand-input-grid input {
+  min-height: 34px;
+}
+
+.demand-input-grid button {
+  align-self: end;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
 .roadmap-note {
   color: #687870;
   font-size: 12px;
@@ -1353,6 +1381,8 @@ button:disabled {
   }
 
   .employee-request-form,
+  .demand-input-grid,
+  .budget-grid,
   .roadmap-row {
     grid-template-columns: 1fr;
   }
