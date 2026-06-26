@@ -112,6 +112,7 @@ import {
   employeeScheduleCards,
   pendingEmployeeRequestQueue,
   ragConfidenceLabel,
+  ragDocumentRows,
   type EmployeeScheduleCard,
 } from "./roadmap";
 
@@ -362,6 +363,20 @@ type RagGrounding = {
   safety_notes: string[];
 };
 
+type RagDocumentItem = {
+  id: string;
+  organization_id: string;
+  source_type: string;
+  document_title: string;
+  checked_at: string;
+  chunk_count: number;
+};
+
+type RagDocumentList = {
+  organization_id: string;
+  documents: RagDocumentItem[];
+};
+
 type DemandCostPreview = {
   required_staff_count: number;
   planned_staff_count: number;
@@ -454,6 +469,7 @@ export function App() {
   const [complianceWarningSummary, setComplianceWarningSummary] =
     useState<ComplianceWarningResponse | null>(null);
   const [ragGrounding, setRagGrounding] = useState<RagGrounding | null>(null);
+  const [ragDocuments, setRagDocuments] = useState<RagDocumentItem[]>([]);
   const [demandPreview, setDemandPreview] = useState<DemandCostPreview | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -576,6 +592,7 @@ export function App() {
     setPublicationAcknowledgements([]);
     setComplianceWarningSummary(null);
     setRagGrounding(null);
+    setRagDocuments([]);
     setDemandPreview(null);
     setDownloadState("대기");
     setError(null);
@@ -1108,6 +1125,7 @@ export function App() {
     );
     await Promise.allSettled([
       loadRagEvidence(organizationId),
+      loadRagDocuments(organizationId),
       loadDemandPreview(organizationId, activeResult),
     ]);
   }
@@ -1122,6 +1140,29 @@ export function App() {
       },
     });
     setRagGrounding(response);
+  }
+
+  async function loadRagDocuments(organizationId = demo?.organizationId ?? workspaceOrganization?.id) {
+    if (!organizationId) return;
+    const response = await api<RagDocumentList>(`/organizations/${organizationId}/rag/documents`);
+    setRagDocuments(response.documents);
+  }
+
+  async function deleteRagDocument(documentId: string) {
+    const organizationId = demo?.organizationId ?? workspaceOrganization?.id;
+    if (!organizationId) return;
+    setBusy("rag-document");
+    setError(null);
+    try {
+      await api<null>(`/organizations/${organizationId}/rag/documents/${documentId}`, {
+        method: "DELETE",
+      });
+      await loadRagDocuments(organizationId);
+    } catch (caught) {
+      setError(messageFromError(caught));
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function loadDemandPreview(
@@ -1798,9 +1839,13 @@ export function App() {
               demandPreview={demandPreview}
               employees={demo?.employees ?? []}
               onApproveRequest={approveEmployeeRequest}
+              onDeleteRagDocument={deleteRagDocument}
               onRefreshDemand={() => loadDemandPreview()}
-              onRefreshRag={() => loadRagEvidence()}
+              onRefreshRag={() => {
+                void Promise.allSettled([loadRagEvidence(), loadRagDocuments()]);
+              }}
               onRejectRequest={rejectEmployeeRequest}
+              ragDocuments={ragDocuments}
               ragGrounding={ragGrounding}
               requests={employeeRequests}
             />
@@ -1959,9 +2004,11 @@ function RoadmapOpsPanel({
   demandPreview,
   employees,
   onApproveRequest,
+  onDeleteRagDocument,
   onRefreshDemand,
   onRefreshRag,
   onRejectRequest,
+  ragDocuments,
   ragGrounding,
   requests,
 }: {
@@ -1971,14 +2018,17 @@ function RoadmapOpsPanel({
   demandPreview: DemandCostPreview | null;
   employees: Employee[];
   onApproveRequest: (requestId: string) => void;
+  onDeleteRagDocument: (documentId: string) => void;
   onRefreshDemand: () => void;
   onRefreshRag: () => void;
   onRejectRequest: (requestId: string) => void;
+  ragDocuments: RagDocumentItem[];
   ragGrounding: RagGrounding | null;
   requests: EmployeeRequestItem[];
 }) {
   const employeeNames = new Map(employees.map((employee) => [employee.id, employee.name]));
   const pendingRequests = pendingEmployeeRequestQueue(requests);
+  const visibleRagDocuments = ragDocumentRows(ragDocuments);
   const warnings = compliance?.warnings ?? [];
   return (
     <div className="roadmap-panel">
@@ -2091,6 +2141,31 @@ function RoadmapOpsPanel({
               </div>
             </div>
           ) : null}
+        </div>
+        <div className="roadmap-subsection">
+          <div className="roadmap-section-head compact-head">
+            <strong>근거 문서</strong>
+            <span>{ragDocuments.length}개</span>
+          </div>
+          <div className="roadmap-list">
+            {visibleRagDocuments.length ? visibleRagDocuments.map((document) => (
+              <div className="roadmap-row" key={document.id}>
+                <div>
+                  <strong>{document.document_title}</strong>
+                  <span>
+                    {document.source_type} · {document.chunk_count}개 조각 · {dateInputValue(document.checked_at)}
+                  </span>
+                </div>
+                <button
+                  disabled={busy === "rag-document"}
+                  onClick={() => onDeleteRagDocument(document.id)}
+                  type="button"
+                >
+                  삭제
+                </button>
+              </div>
+            )) : <div className="empty-state compact-empty">등록된 근거 문서가 없습니다.</div>}
+          </div>
         </div>
       </div>
 

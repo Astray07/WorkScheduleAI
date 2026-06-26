@@ -36,7 +36,7 @@
 - signed actor token 기반 `Authorization: Bearer` actor extraction
 - 직원 publication scoped signed link 발급과 `Authorization: Bearer` 기반 public 조회/확인 API
 - 직원 signed link context의 acknowledgement와 notification records
-- RAG 문서 ingest/list/delete API와 citation 필드 계약
+- RAG 문서 ingest/list/delete API, 운영 패널 문서 관리 UI, citation 필드 계약
 - Railway API/frontend 배포 자산과 demo seed
 - Railway worker service start command reference
 - 운영 metrics/readiness endpoint
@@ -75,7 +75,7 @@ Staging 게이트:
 - 직원 100명/31일 고제약 운영 데이터 성능 hardening
 - 관리자 회원가입/로그인, 세션 UX, signed actor token 발급/회전 운영 절차
 - 직원 모바일 signed link 조회/확인 API를 프론트 화면과 알림 UX에 연결
-- RAG embedding/vector index 설계, ingestion UI, 문서 권한 UX, citation 평가셋
+- RAG embedding/vector index 설계, ingestion UI 확장, 문서 권한 UX, citation 평가셋
 - 한국형 warning rule 세분화와 warning override 전용 운영 화면
 - demand/budget preview 정책 모델을 solver objective 또는 warning policy로 연결
 - assumption literal 기반 고급 CP-SAT 진단 모델 전체

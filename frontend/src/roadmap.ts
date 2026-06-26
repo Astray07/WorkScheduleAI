@@ -44,6 +44,24 @@ export function budgetStatusLabel(status: string) {
   return labels[status] ?? status;
 }
 
+export type RagDocumentQueueItem = {
+  id: string;
+  checked_at: string;
+};
+
+export function ragDocumentRows<T extends RagDocumentQueueItem>(
+  documents: T[],
+  limit = 5,
+): T[] {
+  return [...documents]
+    .sort((left, right) => {
+      const checkedRank = right.checked_at.localeCompare(left.checked_at);
+      if (checkedRank !== 0) return checkedRank;
+      return left.id.localeCompare(right.id);
+    })
+    .slice(0, limit);
+}
+
 export type EmployeeRequestQueueItem = {
   id: string;
   status: string;

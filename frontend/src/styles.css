@@ -906,6 +906,16 @@ button:disabled {
   gap: 8px;
 }
 
+.roadmap-subsection {
+  display: grid;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.compact-head strong {
+  font-size: 12px;
+}
+
 .roadmap-section-head {
   align-items: center;
   display: flex;
