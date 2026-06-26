@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 from work_schedule_ai.api.app import create_app
 from work_schedule_ai.api.dependencies import get_db_session, set_tenant_context
 from work_schedule_ai.api.security import enforce_organization_access
+from work_schedule_ai.api.signed_actor_tokens import sign_actor_token
 from work_schedule_ai.db.models import (
     Base,
     Employee,
@@ -61,6 +62,65 @@ def test_auth_required_allows_member(monkeypatch):
     )
 
     assert response.status_code == 200
+
+
+def test_auth_required_allows_signed_actor_without_trusted_upstream(monkeypatch):
+    monkeypatch.setenv("WORKSCHEDULEAI_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET", "test-actor-secret")
+    monkeypatch.delenv("WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH", raising=False)
+    client = _client(seed_membership=True)
+    token = sign_actor_token(
+        secret="test-actor-secret",
+        organization_id="org_1",
+        user_id="user_scheduler",
+    )
+
+    response = client.get(
+        "/organizations/org_1/roles",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_auth_required_rejects_tampered_signed_actor(monkeypatch):
+    monkeypatch.setenv("WORKSCHEDULEAI_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET", "test-actor-secret")
+    client = _client(seed_membership=True)
+    token = sign_actor_token(
+        secret="test-actor-secret",
+        organization_id="org_1",
+        user_id="user_scheduler",
+    )
+    header, payload, signature = token.split(".")
+    tampered = f"{header}.A{payload[1:]}.{signature}"
+
+    response = client.get(
+        "/organizations/org_1/roles",
+        headers={"Authorization": f"Bearer {tampered}"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "INVALID_ACTOR_TOKEN"
+
+
+def test_auth_required_rejects_signed_actor_for_other_organization(monkeypatch):
+    monkeypatch.setenv("WORKSCHEDULEAI_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET", "test-actor-secret")
+    client = _client(seed_membership=True)
+    token = sign_actor_token(
+        secret="test-actor-secret",
+        organization_id="org_2",
+        user_id="user_scheduler",
+    )
+
+    response = client.get(
+        "/organizations/org_1/roles",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "INVALID_ACTOR_TOKEN"
 
 
 def test_auth_required_rejects_viewer_mutation(monkeypatch):
@@ -265,6 +325,22 @@ def test_security_release_gate_reports_auth_mode(monkeypatch):
     assert payload["actor_extraction_mode"] == "trusted_upstream_header"
     assert payload["public_saas_ready"] is False
     assert any("X-User-Id" in warning for warning in payload["warnings"])
+
+
+def test_security_release_gate_accepts_signed_actor_mode(monkeypatch):
+    monkeypatch.setenv("WORKSCHEDULEAI_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET", "test-actor-secret")
+    monkeypatch.delenv("WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH", raising=False)
+    client = _client(seed_membership=True)
+
+    response = client.get("/operations/security/release-gate")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["auth_required"] is True
+    assert payload["actor_extraction_mode"] == "signed_actor_token"
+    assert payload["public_saas_ready"] is True
+    assert payload["warnings"] == []
 
 
 def _client(

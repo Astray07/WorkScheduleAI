@@ -32,6 +32,7 @@
 - PostgreSQL RLS migration과 tenant context hook
 - auth enabled 상태에서 trusted upstream 설정이 없으면 조직 스코프 `X-User-Id` 요청 거부
 - release gate가 trusted header actor mode를 공개 SaaS ready로 판정하지 않도록 hardening
+- signed actor token 기반 `Authorization: Bearer` actor extraction
 - Railway API/frontend 배포 자산과 demo seed
 - Railway worker service start command reference
 - 운영 metrics/readiness endpoint
@@ -68,7 +69,7 @@ Staging 게이트:
 ## 명시적 후속 범위
 
 - 직원 100명/31일 고제약 운영 데이터 성능 hardening
-- 관리자 회원가입/로그인, JWT/session 또는 서명 검증 기반 actor extraction, 요청 조직 컨텍스트 연결
+- 관리자 회원가입/로그인, 세션 UX, signed actor token 발급/회전 운영 절차
 - 직원 모바일 signed link 검증을 조회/확인 API와 프론트 화면에 연결
 - 한국형 warning rule 세분화와 warning override 전용 운영 화면
 - demand/budget preview를 solver objective 또는 warning policy로 연결하는 정책 모델

@@ -55,7 +55,8 @@
 - 운영 지표와 readiness endpoint가 로컬 및 스테이징 점검용으로 존재합니다.
 - PostgreSQL tenant context hook은 존재하지만, 공개 인증과 멤버십 강제는 아직 release gate입니다.
 - `WORKSCHEDULEAI_AUTH_REQUIRED=1`일 때 조직 스코프 API는 `WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH=1` 없이는 `X-User-Id`를 받지 않도록 fail-closed 처리합니다.
-- release gate는 trusted upstream header mode를 공개 SaaS ready로 보지 않습니다. 실제 JWT/session 또는 서명 기반 actor 검증은 아직 남은 작업입니다.
+- `WORKSCHEDULEAI_SIGNED_ACTOR_SECRET`이 설정되면 조직 스코프 API는 `Authorization: Bearer <signed actor token>`을 검증해 actor를 추출할 수 있습니다.
+- release gate는 trusted upstream header mode를 공개 SaaS ready로 보지 않으며, signed actor token mode와 구분합니다.
 
 ### RAG와 근거 제시
 
@@ -145,7 +146,7 @@
 
 ## 남은 출시 리스크
 
-- 인증과 tenant 접근 제어는 공개 URL 또는 실제 외부 파일럿의 release gate입니다. 현재 `X-User-Id` 경로는 trusted upstream 개발 계약이며, signed/session actor extraction으로 교체되어야 합니다.
+- 인증과 tenant 접근 제어는 공개 URL 또는 실제 외부 파일럿의 release gate입니다. signed actor token 추출은 추가되었지만, 관리자 회원가입/로그인, 세션 UX, 키 관리와 운영 배포 검증은 남아 있습니다.
 - 직원 모바일 화면의 public 접근은 signed link 검증을 실제 조회/확인 API에 연결해야 합니다.
 - production-ready라고 부르기 전 Railway/API/worker/PostgreSQL/Redis 스테이징 검증이 필요합니다.
 - 100명, 31일 기준 강화 benchmark는 opt-in이며 기본 CI runtime gate가 아닙니다.

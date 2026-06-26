@@ -168,7 +168,7 @@ def get_security_release_gate() -> SecurityReleaseGateResponse:
     warnings = []
     if not auth_required:
         warnings.append("WORKSCHEDULEAI_AUTH_REQUIRED is not enabled.")
-    if not trusted_upstream_auth:
+    if actor_mode == "trusted_upstream_header" and not trusted_upstream_auth:
         warnings.append(
             "WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH is not enabled; "
             "X-User-Id is only a trusted-upstream development contract."
