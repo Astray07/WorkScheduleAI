@@ -1,5 +1,6 @@
 from collections.abc import Generator
-from datetime import date
+from datetime import date, timedelta
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,7 +10,10 @@ from sqlalchemy.pool import StaticPool
 
 from work_schedule_ai.api.app import create_app
 from work_schedule_ai.api.dependencies import get_db_session
-from work_schedule_ai.api.signed_employee_links import verify_employee_deep_link
+from work_schedule_ai.api.signed_employee_links import (
+    sign_employee_deep_link,
+    verify_employee_deep_link,
+)
 from work_schedule_ai.db.models import (
     Base,
     Employee,
@@ -17,6 +21,7 @@ from work_schedule_ai.db.models import (
     PublicationAcknowledgement,
     SchedulePublication,
     ScheduleRun,
+    utc_now,
 )
 
 
@@ -63,7 +68,9 @@ def test_admin_can_create_signed_employee_publication_link(
     assert payload["publication_id"] == "publication_1"
     assert payload["schedule_run_id"] == "run_1"
     assert payload["employee_id"] == "emp_1"
-    assert "token=" in payload["employee_url"]
+    parsed_employee_url = urlparse(payload["employee_url"])
+    assert "token" not in parse_qs(parsed_employee_url.query)
+    assert parse_qs(parsed_employee_url.fragment)["token"] == [payload["token"]]
     claims = verify_employee_deep_link(
         payload["token"],
         secret="test-secret",
@@ -86,6 +93,220 @@ def test_signed_employee_publication_link_rejects_cross_tenant_employee(
     )
 
     assert response.status_code == 422
+
+
+def test_signed_employee_publication_link_can_read_publication_context(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    link_response = client.post(
+        "/organizations/org_1/schedule-publications/publication_1/employee-links/emp_1",
+        json={"expires_in_hours": 24},
+    )
+
+    response = client.get(
+        "/employee/schedule-publications/publication_1",
+        params={
+            "organization_id": "org_1",
+            "employee_id": "emp_1",
+        },
+        headers={"Authorization": f"Bearer {link_response.json()['token']}"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["organization_id"] == "org_1"
+    assert payload["publication_id"] == "publication_1"
+    assert payload["schedule_run_id"] == "run_1"
+    assert payload["employee_id"] == "emp_1"
+    assert payload["employee_name"] == "Kim"
+    assert payload["acknowledgement"]["status"] == "pending"
+
+
+def test_signed_employee_publication_link_can_acknowledge_publication(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    link_response = client.post(
+        "/organizations/org_1/schedule-publications/publication_1/employee-links/emp_1",
+        json={"expires_in_hours": 24},
+    )
+
+    response = client.post(
+        "/employee/schedule-publications/publication_1/acknowledgement",
+        params={
+            "organization_id": "org_1",
+            "employee_id": "emp_1",
+        },
+        headers={"Authorization": f"Bearer {link_response.json()['token']}"},
+        json={"status": "acknowledged"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["employee_id"] == "emp_1"
+    assert payload["status"] == "acknowledged"
+    persisted = db_session.query(PublicationAcknowledgement).filter_by(id="ack_1").one()
+    assert persisted.acknowledged_at is not None
+
+
+def test_signed_employee_publication_link_rejects_wrong_employee(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    link_response = client.post(
+        "/organizations/org_1/schedule-publications/publication_1/employee-links/emp_1",
+        json={"expires_in_hours": 24},
+    )
+
+    response = client.get(
+        "/employee/schedule-publications/publication_1",
+        params={
+            "organization_id": "org_1",
+            "employee_id": "emp_2",
+        },
+        headers={"Authorization": f"Bearer {link_response.json()['token']}"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "INVALID_EMPLOYEE_LINK_TOKEN"
+
+
+def test_signed_employee_publication_link_rejects_query_token(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    link_response = client.post(
+        "/organizations/org_1/schedule-publications/publication_1/employee-links/emp_1",
+        json={"expires_in_hours": 24},
+    )
+
+    response = client.get(
+        "/employee/schedule-publications/publication_1",
+        params={
+            "organization_id": "org_1",
+            "employee_id": "emp_1",
+            "token": link_response.json()["token"],
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "EMPLOYEE_LINK_TOKEN_REQUIRED"
+
+
+def test_signed_employee_publication_link_rejects_cross_tenant_public_api(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    token = sign_employee_deep_link(
+        secret="test-secret",
+        organization_id="org_1",
+        publication_id="publication_1",
+        employee_id="emp_1",
+        expires_at=utc_now() + timedelta(hours=1),
+    )
+
+    response = client.get(
+        "/employee/schedule-publications/publication_2",
+        params={
+            "organization_id": "org_2",
+            "employee_id": "emp_2",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["reason"] == "CLAIMS_MISMATCH"
+
+
+def test_signed_employee_publication_link_rejects_expired_public_api_token(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    token = sign_employee_deep_link(
+        secret="test-secret",
+        organization_id="org_1",
+        publication_id="publication_1",
+        employee_id="emp_1",
+        expires_at=utc_now() - timedelta(minutes=1),
+    )
+
+    response = client.get(
+        "/employee/schedule-publications/publication_1",
+        params={
+            "organization_id": "org_1",
+            "employee_id": "emp_1",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["reason"] == "TOKEN_EXPIRED"
+
+
+def test_signed_employee_publication_link_rejects_archived_publication(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    publication = db_session.get(SchedulePublication, "publication_1")
+    assert publication is not None
+    publication.status = "archived"
+    db_session.commit()
+    token = sign_employee_deep_link(
+        secret="test-secret",
+        organization_id="org_1",
+        publication_id="publication_1",
+        employee_id="emp_1",
+        expires_at=utc_now() + timedelta(hours=1),
+    )
+
+    response = client.get(
+        "/employee/schedule-publications/publication_1",
+        params={
+            "organization_id": "org_1",
+            "employee_id": "emp_1",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 410
+    assert response.json()["detail"]["code"] == "PUBLICATION_NOT_AVAILABLE"
+
+
+def test_signed_employee_publication_link_works_when_organization_auth_is_required(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("WORKSCHEDULEAI_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    token = sign_employee_deep_link(
+        secret="test-secret",
+        organization_id="org_1",
+        publication_id="publication_1",
+        employee_id="emp_1",
+        expires_at=utc_now() + timedelta(hours=1),
+    )
+
+    response = client.get(
+        "/employee/schedule-publications/publication_1",
+        params={
+            "organization_id": "org_1",
+            "employee_id": "emp_1",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["employee_id"] == "emp_1"
 
 
 @pytest.fixture

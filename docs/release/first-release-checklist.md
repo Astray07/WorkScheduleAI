@@ -33,6 +33,7 @@
 - auth enabled 상태에서 trusted upstream 설정이 없으면 조직 스코프 `X-User-Id` 요청 거부
 - release gate가 trusted header actor mode를 공개 SaaS ready로 판정하지 않도록 hardening
 - signed actor token 기반 `Authorization: Bearer` actor extraction
+- 직원 publication scoped signed link 발급과 `Authorization: Bearer` 기반 public 조회/확인 API
 - Railway API/frontend 배포 자산과 demo seed
 - Railway worker service start command reference
 - 운영 metrics/readiness endpoint
@@ -64,13 +65,13 @@ Staging 게이트:
 - 실제 Redis queue를 통과하는 P0 happy path와 infeasible/relaxation path를 브라우저에서 1회 이상 관통해야 합니다.
 - 공개 URL 또는 실사용 파일럿이면 관리자 인증, signed/session actor extraction, 요청 조직 컨텍스트, tenant 접근 제어가 릴리즈 전 필수입니다.
 - blocking 컴플라이언스 warning은 현재 warning instance(`warning_code` + 직원 + 슬롯/ISO 주차 + snapshot hash)와 override가 정확히 일치해야 확정 가능합니다.
-- 직원 모바일 public 접근은 signed publication link를 실제 조회/확인 API에 연결한 뒤에만 허용합니다.
+- 직원 모바일 public 접근은 signed publication link 조회/확인 API 또는 직원 인증을 통해서만 허용합니다. signed link token은 직원 URL query string에 두지 않고 fragment에서 회수해 API `Authorization` header로 전달해야 합니다.
 
 ## 명시적 후속 범위
 
 - 직원 100명/31일 고제약 운영 데이터 성능 hardening
 - 관리자 회원가입/로그인, 세션 UX, signed actor token 발급/회전 운영 절차
-- 직원 모바일 signed link 검증을 조회/확인 API와 프론트 화면에 연결
+- 직원 모바일 signed link 조회/확인 API를 프론트 화면과 알림 UX에 연결
 - 한국형 warning rule 세분화와 warning override 전용 운영 화면
 - demand/budget preview를 solver objective 또는 warning policy로 연결하는 정책 모델
 - assumption literal 기반 고급 CP-SAT 진단 모델 전체

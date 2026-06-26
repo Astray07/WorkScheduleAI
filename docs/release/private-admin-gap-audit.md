@@ -84,7 +84,9 @@
 
 - 관리자는 확정본과 직원에 묶인 HMAC signed publication link를 발급할 수 있습니다.
 - signed link token은 조직, publication, 직원, 만료 시각을 포함하며 변조, 만료, 다른 직원 재사용을 거부하는 테스트가 있습니다.
-- 아직 직원 모바일 화면과 acknowledgement API 전체를 signed token 기반 public 접근으로 전환하지는 않았습니다. 이 전환은 공개 직원 접근 전 남은 release gate입니다.
+- 생성된 직원 URL은 token을 query string이 아니라 URL fragment에 담고, public API는 `Authorization: Bearer <employee-link-token>`으로 직원 본인의 확정 근무표 context 조회와 acknowledgement 기록을 허용합니다.
+- archived publication은 signed link public API에서 조회와 acknowledgement가 차단됩니다.
+- 아직 직원 모바일 화면과 변경 알림 UX는 signed link public API에 연결되지 않았습니다. 화면 연결 전에는 직원용 공개 접근을 제품 기능으로 안내하지 않아야 합니다.
 
 ## 비공개 관리자판에서 의도적으로 제외한 범위
 
@@ -147,7 +149,7 @@
 ## 남은 출시 리스크
 
 - 인증과 tenant 접근 제어는 공개 URL 또는 실제 외부 파일럿의 release gate입니다. signed actor token 추출은 추가되었지만, 관리자 회원가입/로그인, 세션 UX, 키 관리와 운영 배포 검증은 남아 있습니다.
-- 직원 모바일 화면의 public 접근은 signed link 검증을 실제 조회/확인 API에 연결해야 합니다.
+- 직원 모바일 화면은 signed link 기반 조회/확인 API와 변경 알림 UX에 연결해야 합니다.
 - production-ready라고 부르기 전 Railway/API/worker/PostgreSQL/Redis 스테이징 검증이 필요합니다.
 - 100명, 31일 기준 강화 benchmark는 opt-in이며 기본 CI runtime gate가 아닙니다.
 - 한국형 warning rule 세분화와 override 전용 운영 화면은 남은 제품화 작업입니다.

@@ -1,20 +1,24 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import json
 import os
 from typing import Literal
 from urllib.parse import urlencode
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api.dependencies import get_db_session, set_tenant_context
 from work_schedule_ai.api.security import ADMIN_ROLES, current_actor, require_roles
-from work_schedule_ai.api.signed_employee_links import sign_employee_deep_link
+from work_schedule_ai.api.signed_employee_links import (
+    EmployeeDeepLinkTokenError,
+    sign_employee_deep_link,
+    verify_employee_deep_link,
+)
 from work_schedule_ai.db.models import (
     AuditLog,
     Employee,
@@ -30,6 +34,7 @@ from work_schedule_ai.db.models import (
 
 
 router = APIRouter(prefix="/organizations", tags=["employee-self-service"])
+public_router = APIRouter(prefix="/employee", tags=["employee-self-service"])
 
 
 class EmployeeUserLinkRequest(BaseModel):
@@ -111,6 +116,17 @@ class EmployeePublicationLinkResponse(BaseModel):
     token: str
     expires_at: datetime
     employee_url: str
+
+
+class EmployeePublicationContextResponse(BaseModel):
+    organization_id: str
+    publication_id: str
+    schedule_run_id: str
+    employee_id: str
+    employee_name: str
+    period_start: date
+    period_end: date
+    acknowledgement: PublicationAcknowledgementResponse
 
 
 @router.post(
@@ -376,6 +392,80 @@ def create_employee_publication_link(
     )
 
 
+@public_router.get(
+    "/schedule-publications/{publication_id}",
+    response_model=EmployeePublicationContextResponse,
+)
+def get_employee_publication_context(
+    publication_id: str,
+    organization_id: str,
+    employee_id: str,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    db_session: Session = Depends(get_db_session),
+) -> EmployeePublicationContextResponse:
+    publication, employee = _verify_employee_publication_link(
+        organization_id=organization_id,
+        publication_id=publication_id,
+        employee_id=employee_id,
+        token=_employee_link_token_from_authorization(authorization),
+        db_session=db_session,
+    )
+    acknowledgement = _get_publication_acknowledgement_or_404(
+        organization_id=organization_id,
+        publication_id=publication_id,
+        employee_id=employee_id,
+        db_session=db_session,
+    )
+    return EmployeePublicationContextResponse(
+        organization_id=organization_id,
+        publication_id=publication_id,
+        schedule_run_id=publication.schedule_run_id,
+        employee_id=employee_id,
+        employee_name=employee.name,
+        period_start=publication.period_start,
+        period_end=publication.period_end,
+        acknowledgement=_acknowledgement_response(acknowledgement),
+    )
+
+
+@public_router.post(
+    "/schedule-publications/{publication_id}/acknowledgement",
+    response_model=PublicationAcknowledgementResponse,
+)
+def acknowledge_employee_publication_link(
+    publication_id: str,
+    organization_id: str,
+    employee_id: str,
+    request: AcknowledgementUpdateRequest,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    db_session: Session = Depends(get_db_session),
+) -> PublicationAcknowledgementResponse:
+    _verify_employee_publication_link(
+        organization_id=organization_id,
+        publication_id=publication_id,
+        employee_id=employee_id,
+        token=_employee_link_token_from_authorization(authorization),
+        db_session=db_session,
+    )
+    acknowledgement = _get_publication_acknowledgement_or_404(
+        organization_id=organization_id,
+        publication_id=publication_id,
+        employee_id=employee_id,
+        db_session=db_session,
+    )
+    acknowledgement.status = request.status
+    acknowledgement.acknowledged_at = utc_now()
+    _add_audit(
+        db_session,
+        organization_id,
+        action="publication_acknowledged",
+        target_id=publication_id,
+        metadata={"employee_id": employee_id, "access": "signed_employee_link"},
+    )
+    db_session.commit()
+    return _acknowledgement_response(acknowledgement)
+
+
 @router.get(
     "/{organization_id}/schedule-publications/{publication_id}/acknowledgements",
     response_model=PublicationAcknowledgementListResponse,
@@ -473,6 +563,93 @@ def _get_employee_or_422(
     if employee is None or employee.organization_id != organization_id:
         raise HTTPException(status_code=422, detail="Employee not found")
     return employee
+
+
+def _employee_link_token_from_authorization(authorization: str | None) -> str:
+    if authorization is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "EMPLOYEE_LINK_TOKEN_REQUIRED",
+                "message": "Authorization Bearer employee link token is required.",
+                "field": "Authorization",
+            },
+        )
+    scheme, separator, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not separator or not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "INVALID_EMPLOYEE_LINK_TOKEN",
+                "message": "Authorization must be a Bearer employee link token.",
+                "field": "Authorization",
+                "reason": "MALFORMED_AUTHORIZATION",
+            },
+        )
+    return token
+
+
+def _verify_employee_publication_link(
+    *,
+    organization_id: str,
+    publication_id: str,
+    employee_id: str,
+    token: str,
+    db_session: Session,
+) -> tuple[SchedulePublication, Employee]:
+    try:
+        verify_employee_deep_link(
+            token,
+            secret=_employee_link_secret(),
+            organization_id=organization_id,
+            publication_id=publication_id,
+            employee_id=employee_id,
+        )
+    except EmployeeDeepLinkTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "INVALID_EMPLOYEE_LINK_TOKEN",
+                "message": "Signed employee publication link is invalid.",
+                "field": "token",
+                "reason": exc.code,
+            },
+        ) from exc
+    set_tenant_context(db_session, organization_id)
+    publication = _get_publication_or_404(organization_id, publication_id, db_session)
+    if publication.status != "published":
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={
+                "code": "PUBLICATION_NOT_AVAILABLE",
+                "message": "SchedulePublication is not available through this link.",
+                "field": "publication_id",
+            },
+        )
+    employee = _get_employee_or_422(organization_id, employee_id, db_session)
+    return publication, employee
+
+
+def _get_publication_acknowledgement_or_404(
+    *,
+    organization_id: str,
+    publication_id: str,
+    employee_id: str,
+    db_session: Session,
+) -> PublicationAcknowledgement:
+    acknowledgement = db_session.execute(
+        select(PublicationAcknowledgement).where(
+            PublicationAcknowledgement.organization_id == organization_id,
+            PublicationAcknowledgement.publication_id == publication_id,
+            PublicationAcknowledgement.employee_id == employee_id,
+        )
+    ).scalar_one_or_none()
+    if acknowledgement is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="PublicationAcknowledgement not found",
+        )
+    return acknowledgement
 
 
 def _get_employee_request_or_404(
@@ -605,10 +782,10 @@ def _employee_publication_url(
             "publicationId": publication_id,
             "runId": schedule_run_id,
             "employeeId": employee_id,
-            "token": token,
         }
     )
-    return f"/employee?{query}"
+    fragment = urlencode({"token": token})
+    return f"/employee?{query}#{fragment}"
 
 
 def _add_audit(
