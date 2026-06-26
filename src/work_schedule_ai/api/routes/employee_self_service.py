@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
+import os
 from typing import Literal
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
 from work_schedule_ai.api.security import ADMIN_ROLES, current_actor, require_roles
+from work_schedule_ai.api.signed_employee_links import sign_employee_deep_link
 from work_schedule_ai.db.models import (
     AuditLog,
     Employee,
@@ -94,6 +97,20 @@ class PublicationAcknowledgementListResponse(BaseModel):
     organization_id: str
     publication_id: str
     acknowledgements: list[PublicationAcknowledgementResponse]
+
+
+class EmployeePublicationLinkRequest(BaseModel):
+    expires_in_hours: int = Field(default=168, ge=1, le=720)
+
+
+class EmployeePublicationLinkResponse(BaseModel):
+    organization_id: str
+    publication_id: str
+    schedule_run_id: str
+    employee_id: str
+    token: str
+    expires_at: datetime
+    employee_url: str
 
 
 @router.post(
@@ -304,6 +321,61 @@ def reject_employee_request(
     return _employee_request_response(employee_request)
 
 
+@router.post(
+    "/{organization_id}/schedule-publications/{publication_id}/employee-links/{employee_id}",
+    response_model=EmployeePublicationLinkResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_employee_publication_link(
+    organization_id: str,
+    publication_id: str,
+    employee_id: str,
+    request: EmployeePublicationLinkRequest,
+    db_session: Session = Depends(get_db_session),
+) -> EmployeePublicationLinkResponse:
+    require_roles(db_session, ADMIN_ROLES)
+    publication = _get_publication_or_404(organization_id, publication_id, db_session)
+    _get_employee_or_422(organization_id, employee_id, db_session)
+    secret = _employee_link_secret()
+    now = utc_now()
+    expires_at = now + timedelta(hours=request.expires_in_hours)
+    token = sign_employee_deep_link(
+        secret=secret,
+        organization_id=organization_id,
+        publication_id=publication_id,
+        employee_id=employee_id,
+        expires_at=expires_at,
+        issued_at=now,
+    )
+    employee_url = _employee_publication_url(
+        organization_id=organization_id,
+        publication_id=publication_id,
+        schedule_run_id=publication.schedule_run_id,
+        employee_id=employee_id,
+        token=token,
+    )
+    _add_audit(
+        db_session,
+        organization_id,
+        action="employee_publication_link_created",
+        target_id=publication_id,
+        metadata={
+            "employee_id": employee_id,
+            "expires_at": expires_at.isoformat(),
+        },
+    )
+    db_session.commit()
+    return EmployeePublicationLinkResponse(
+        organization_id=organization_id,
+        publication_id=publication_id,
+        schedule_run_id=publication.schedule_run_id,
+        employee_id=employee_id,
+        token=token,
+        expires_at=expires_at,
+        employee_url=employee_url,
+    )
+
+
 @router.get(
     "/{organization_id}/schedule-publications/{publication_id}/acknowledgements",
     response_model=PublicationAcknowledgementListResponse,
@@ -500,6 +572,43 @@ def _acknowledgement_response(
         status=acknowledgement.status,
         acknowledged_at=acknowledgement.acknowledged_at,
     )
+
+
+def _employee_link_secret() -> str:
+    secret = os.environ.get("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET")
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "EMPLOYEE_LINK_SECRET_REQUIRED",
+                "message": (
+                    "Signed employee links require "
+                    "WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET."
+                ),
+                "field": "WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET",
+            },
+        )
+    return secret
+
+
+def _employee_publication_url(
+    *,
+    organization_id: str,
+    publication_id: str,
+    schedule_run_id: str,
+    employee_id: str,
+    token: str,
+) -> str:
+    query = urlencode(
+        {
+            "organizationId": organization_id,
+            "publicationId": publication_id,
+            "runId": schedule_run_id,
+            "employeeId": employee_id,
+            "token": token,
+        }
+    )
+    return f"/employee?{query}"
 
 
 def _add_audit(

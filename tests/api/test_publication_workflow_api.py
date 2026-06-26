@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from work_schedule_ai.api.app import create_app
 from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api.signed_employee_links import verify_employee_deep_link
 from work_schedule_ai.db.models import (
     Base,
     Employee,
@@ -43,6 +44,48 @@ def test_publication_acknowledgements_list_is_tenant_scoped(client: TestClient):
 
     assert response.status_code == 200
     assert [item["employee_id"] for item in response.json()["acknowledgements"]] == ["emp_1"]
+
+
+def test_admin_can_create_signed_employee_publication_link(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+
+    response = client.post(
+        "/organizations/org_1/schedule-publications/publication_1/employee-links/emp_1",
+        json={"expires_in_hours": 24},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["organization_id"] == "org_1"
+    assert payload["publication_id"] == "publication_1"
+    assert payload["schedule_run_id"] == "run_1"
+    assert payload["employee_id"] == "emp_1"
+    assert "token=" in payload["employee_url"]
+    claims = verify_employee_deep_link(
+        payload["token"],
+        secret="test-secret",
+        organization_id="org_1",
+        publication_id="publication_1",
+        employee_id="emp_1",
+    )
+    assert claims.employee_id == "emp_1"
+
+
+def test_signed_employee_publication_link_rejects_cross_tenant_employee(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+
+    response = client.post(
+        "/organizations/org_1/schedule-publications/publication_1/employee-links/emp_2",
+        json={"expires_in_hours": 24},
+    )
+
+    assert response.status_code == 422
 
 
 @pytest.fixture

@@ -72,6 +72,12 @@
 - blocking warning override는 `warning_code`, 직원, 슬롯 또는 ISO 주차, 현재 warning snapshot hash가 일치해야 확정 시 인정됩니다.
 - warning override 사유와 actor는 audit log에 기록됩니다.
 
+### 직원 모바일 접근
+
+- 관리자는 확정본과 직원에 묶인 HMAC signed publication link를 발급할 수 있습니다.
+- signed link token은 조직, publication, 직원, 만료 시각을 포함하며 변조, 만료, 다른 직원 재사용을 거부하는 테스트가 있습니다.
+- 아직 직원 모바일 화면과 acknowledgement API 전체를 signed token 기반 public 접근으로 전환하지는 않았습니다. 이 전환은 공개 직원 접근 전 남은 release gate입니다.
+
 ## 비공개 관리자판에서 의도적으로 제외한 범위
 
 ### 일반 사용자 휴가 또는 일정 요청
@@ -133,6 +139,7 @@
 ## 남은 출시 리스크
 
 - 인증과 tenant 접근 제어는 공개 URL 또는 실제 외부 파일럿의 release gate입니다. 현재 `X-User-Id` 경로는 trusted upstream 개발 계약이며, signed/session actor extraction으로 교체되어야 합니다.
+- 직원 모바일 화면의 public 접근은 signed link 검증을 실제 조회/확인 API에 연결해야 합니다.
 - production-ready라고 부르기 전 Railway/API/worker/PostgreSQL/Redis 스테이징 검증이 필요합니다.
 - 100명, 31일 기준 강화 benchmark는 opt-in이며 기본 CI runtime gate가 아닙니다.
 - 한국형 warning rule 세분화와 override 전용 운영 화면은 남은 제품화 작업입니다.
