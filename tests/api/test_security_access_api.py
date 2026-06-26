@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import date
 
 import pytest
 from fastapi import Request
@@ -17,6 +18,8 @@ from work_schedule_ai.db.models import (
     EmployeeUserLink,
     Membership,
     Organization,
+    RagDocument,
+    RagDocumentChunk,
     Role,
     SchedulePolicy,
     User,
@@ -263,6 +266,48 @@ def test_auth_required_viewer_policy_read_does_not_create_policy(monkeypatch):
     assert session.query(SchedulePolicy).count() == 0
 
 
+def test_auth_required_viewer_can_list_rag_documents_but_cannot_delete(monkeypatch):
+    _enable_trusted_header_auth(monkeypatch)
+    client, session = _client_and_session(
+        seed_membership=True,
+        role="viewer",
+        user_id="user_viewer",
+    )
+    _seed_rag_document(session)
+
+    list_response = client.get(
+        "/organizations/org_1/rag/documents",
+        headers={"X-User-Id": "user_viewer"},
+    )
+    delete_response = client.delete(
+        "/organizations/org_1/rag/documents/rag_doc_1",
+        headers={"X-User-Id": "user_viewer"},
+    )
+
+    assert list_response.status_code == 200
+    assert list_response.json()["documents"][0]["document_title"] == "RAG 문서"
+    assert delete_response.status_code == 403
+    assert delete_response.json()["detail"]["code"] == "ROLE_NOT_ALLOWED"
+
+
+def test_auth_required_employee_cannot_list_rag_documents(monkeypatch):
+    _enable_trusted_header_auth(monkeypatch)
+    client, session = _client_and_session(
+        seed_membership=True,
+        role="employee",
+        user_id="user_employee",
+    )
+    _seed_rag_document(session)
+
+    response = client.get(
+        "/organizations/org_1/rag/documents",
+        headers={"X-User-Id": "user_employee"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "ROLE_NOT_ALLOWED"
+
+
 def test_auth_required_restricts_employee_request_to_linked_employee(monkeypatch):
     _enable_trusted_header_auth(monkeypatch)
     client = _client(
@@ -417,3 +462,26 @@ def _client_and_session(
 
     app.dependency_overrides[get_db_session] = override_session
     return TestClient(app), session
+
+
+def _seed_rag_document(session: Session) -> None:
+    session.add(
+        RagDocument(
+            id="rag_doc_1",
+            organization_id="org_1",
+            source_type="organization_policy",
+            document_title="RAG 문서",
+            checked_at=date(2026, 6, 26),
+            content_hash="hash_1",
+        )
+    )
+    session.add(
+        RagDocumentChunk(
+            id="rag_chunk_1",
+            organization_id="org_1",
+            document_id="rag_doc_1",
+            chunk_index=0,
+            excerpt="근무표 설명 근거입니다.",
+        )
+    )
+    session.commit()

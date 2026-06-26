@@ -7,9 +7,9 @@ import re
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
@@ -49,6 +49,11 @@ class RagDocumentResponse(BaseModel):
     document_title: str
     checked_at: date
     chunk_count: int
+
+
+class RagDocumentListResponse(BaseModel):
+    organization_id: str
+    documents: list[RagDocumentResponse]
 
 
 class RagQueryRequest(BaseModel):
@@ -104,6 +109,73 @@ def ingest_rag_document(
         checked_at=document.checked_at,
         chunk_count=len(request.chunks),
     )
+
+
+@router.get(
+    "/{organization_id}/rag/documents",
+    response_model=RagDocumentListResponse,
+)
+def list_rag_documents(
+    organization_id: str,
+    db_session: Session = Depends(get_db_session),
+) -> RagDocumentListResponse:
+    require_roles(db_session, READ_ROLES)
+    _get_organization_or_404(organization_id, db_session)
+    rows = db_session.execute(
+        select(RagDocument, func.count(RagDocumentChunk.id))
+        .join(RagDocumentChunk, RagDocumentChunk.document_id == RagDocument.id)
+        .where(
+            RagDocument.organization_id == organization_id,
+            RagDocumentChunk.organization_id == organization_id,
+        )
+        .group_by(
+            RagDocument.id,
+            RagDocument.organization_id,
+            RagDocument.source_type,
+            RagDocument.document_title,
+            RagDocument.checked_at,
+            RagDocument.content_hash,
+            RagDocument.created_at,
+        )
+        .order_by(RagDocument.checked_at.desc(), RagDocument.document_title)
+    ).all()
+    return RagDocumentListResponse(
+        organization_id=organization_id,
+        documents=[
+            _document_response(document, chunk_count=chunk_count)
+            for document, chunk_count in rows
+        ],
+    )
+
+
+@router.delete(
+    "/{organization_id}/rag/documents/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_rag_document(
+    organization_id: str,
+    document_id: str,
+    db_session: Session = Depends(get_db_session),
+) -> Response:
+    require_roles(db_session, ADMIN_ROLES)
+    _get_organization_or_404(organization_id, db_session)
+    document = db_session.execute(
+        select(RagDocument).where(
+            RagDocument.organization_id == organization_id,
+            RagDocument.id == document_id,
+        )
+    ).scalar_one_or_none()
+    if document is None:
+        raise HTTPException(status_code=404, detail="RagDocument not found")
+    db_session.execute(
+        delete(RagDocumentChunk).where(
+            RagDocumentChunk.organization_id == organization_id,
+            RagDocumentChunk.document_id == document_id,
+        )
+    )
+    db_session.delete(document)
+    db_session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
@@ -220,6 +292,17 @@ def _get_organization_or_404(
     if organization is None:
         raise HTTPException(status_code=404, detail="Organization not found")
     return organization
+
+
+def _document_response(document: RagDocument, *, chunk_count: int) -> RagDocumentResponse:
+    return RagDocumentResponse(
+        id=document.id,
+        organization_id=document.organization_id,
+        source_type=document.source_type,
+        document_title=document.document_title,
+        checked_at=document.checked_at,
+        chunk_count=chunk_count,
+    )
 
 
 def _stable_hash(payload: object) -> str:

@@ -53,6 +53,102 @@ def test_rag_query_returns_tenant_scoped_evidence_and_audit(client: TestClient, 
     assert db_session.query(RagQueryAudit).count() == 1
 
 
+def test_rag_documents_can_be_listed_with_tenant_scoped_chunk_counts(client: TestClient):
+    first_response = client.post(
+        "/organizations/org_1/rag/documents",
+        json={
+            "source_type": "organization_policy",
+            "document_title": "이전 근무 규칙",
+            "checked_at": "2026-06-20",
+            "chunks": ["첫 번째 근거", "두 번째 근거"],
+        },
+    )
+    assert first_response.status_code == 201
+    latest_response = client.post(
+        "/organizations/org_1/rag/documents",
+        json={
+            "source_type": "compliance_guide",
+            "document_title": "최신 휴식 가이드",
+            "checked_at": "2026-06-26",
+            "chunks": ["최신 근거"],
+        },
+    )
+    assert latest_response.status_code == 201
+    other_response = client.post(
+        "/organizations/org_2/rag/documents",
+        json={
+            "source_type": "organization_policy",
+            "document_title": "다른 조직 문서",
+            "checked_at": "2026-06-26",
+            "chunks": ["org_1 목록에 나오면 안 됩니다."],
+        },
+    )
+    assert other_response.status_code == 201
+
+    response = client.get("/organizations/org_1/rag/documents")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["organization_id"] == "org_1"
+    assert [item["document_title"] for item in payload["documents"]] == [
+        "최신 휴식 가이드",
+        "이전 근무 규칙",
+    ]
+    assert [item["chunk_count"] for item in payload["documents"]] == [1, 2]
+    assert "다른 조직 문서" not in str(payload)
+
+
+def test_rag_document_delete_removes_document_from_retrieval(client: TestClient):
+    ingest_response = client.post(
+        "/organizations/org_1/rag/documents",
+        json={
+            "source_type": "organization_policy",
+            "document_title": "삭제 대상 정책",
+            "checked_at": "2026-06-26",
+            "chunks": ["삭제 후에는 검색되면 안 되는 휴식 규칙입니다."],
+        },
+    )
+    assert ingest_response.status_code == 201
+    document_id = ingest_response.json()["id"]
+
+    delete_response = client.delete(f"/organizations/org_1/rag/documents/{document_id}")
+    assert delete_response.status_code == 204
+
+    query_response = client.post(
+        "/organizations/org_1/rag/query",
+        json={"query": "휴식 규칙", "purpose": "schedule_explanation"},
+    )
+
+    assert query_response.status_code == 200
+    payload = query_response.json()
+    assert payload["status"] == "insufficient_evidence"
+    assert payload["evidence"] == []
+
+
+def test_rag_document_delete_is_tenant_scoped(client: TestClient):
+    ingest_response = client.post(
+        "/organizations/org_2/rag/documents",
+        json={
+            "source_type": "organization_policy",
+            "document_title": "org_2 전용 정책",
+            "checked_at": "2026-06-26",
+            "chunks": ["org_2 전용 휴식 규칙입니다."],
+        },
+    )
+    assert ingest_response.status_code == 201
+    document_id = ingest_response.json()["id"]
+
+    delete_response = client.delete(f"/organizations/org_1/rag/documents/{document_id}")
+
+    assert delete_response.status_code == 404
+    org_2_query = client.post(
+        "/organizations/org_2/rag/query",
+        json={"query": "휴식 규칙", "purpose": "schedule_explanation"},
+    )
+    assert org_2_query.status_code == 200
+    assert org_2_query.json()["evidence"][0]["document_title"] == "org_2 전용 정책"
+
+
 def test_rag_ingest_rejects_unknown_source_type(client: TestClient):
     response = client.post(
         "/organizations/org_1/rag/documents",
@@ -100,6 +196,12 @@ def test_rag_query_scores_document_title_matches_before_generic_chunks(
     payload = query_response.json()
     assert payload["status"] == "grounded"
     assert payload["evidence"][0]["document_title"] == "야간 휴식 규정"
+    citation = payload["evidence"][0]
+    assert citation["source_type"] == "organization_policy"
+    assert citation["document_id"] == title_match_response.json()["id"]
+    assert citation["chunk_id"]
+    assert citation["checked_at"] == "2026-06-26"
+    assert 0 < citation["confidence"] <= 1
 
 
 def test_rag_query_does_not_mutate_solver_or_policy_state(
