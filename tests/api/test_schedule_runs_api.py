@@ -28,6 +28,7 @@ from work_schedule_ai.db.models import (
     Role,
     Assignment,
     ScheduleIssue,
+    DemandDriver,
     ScheduleRecalculationRequest,
     ScheduleInputSnapshot,
     RelaxationProposal,
@@ -164,6 +165,47 @@ def test_create_schedule_run_enqueues_without_inline_solver_execution(
     payload = response.json()
     assert payload["status"] == "queued"
     assert enqueued_run_ids == [payload["id"]]
+
+
+def test_schedule_run_solver_request_includes_demand_staffing_targets(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _create_day_shift_type(db_session)
+    db_session.add(
+        DemandDriver(
+            id="demand_1",
+            organization_id="org_1",
+            local_date=date(2026, 7, 1),
+            segment="shift_type_day",
+            demand_count=100,
+            required_staff_count=1,
+            source="test",
+        )
+    )
+    db_session.commit()
+    captured_requests = []
+    original_solve_schedule = schedule_runs_module.solve_schedule
+
+    def record_solver_request(request):
+        captured_requests.append(request)
+        return original_solve_schedule(request)
+
+    monkeypatch.setattr(schedule_runs_module, "solve_schedule", record_solver_request)
+
+    response = client.post(
+        "/organizations/org_1/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-01"},
+    )
+    assert response.status_code == 202
+    _process_next_schedule_run(client)
+
+    assert len(captured_requests) == 1
+    assert [
+        (target.slot_id, target.target_staff_count)
+        for target in captured_requests[0].staffing_targets
+    ] == [("slot_2026_07_01_shift_type_day", 1)]
 
 
 def test_create_schedule_run_is_idempotent_with_same_key(

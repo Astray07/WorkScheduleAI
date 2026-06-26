@@ -44,6 +44,7 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
     model = cp_model.CpModel()
     assignment_vars: dict[tuple[str, str], cp_model.IntVar] = {}
     vars_by_employee_slot: dict[tuple[str, str], list[cp_model.IntVar]] = defaultdict(list)
+    vars_by_slot: dict[str, list[cp_model.IntVar]] = defaultdict(list)
     vars_by_requirement: dict[str, list[cp_model.IntVar]] = defaultdict(list)
     vars_by_employee_slot_for_pair: dict[tuple[str, str], list[cp_model.IntVar]] = (
         defaultdict(list)
@@ -72,6 +73,7 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
             )
             assignment_vars[(requirement.id, employee.id)] = variable
             vars_by_requirement[requirement.id].append(variable)
+            vars_by_slot[requirement.slot_id].append(variable)
             vars_by_employee_slot[(employee.id, requirement.slot_id)].append(variable)
             vars_by_employee_slot_for_pair[(employee.id, requirement.slot_id)].append(
                 variable
@@ -103,6 +105,38 @@ def solve_schedule(request: SolveScheduleRequest) -> SolveScheduleResult:
             == requirement.required_count
         )
         objective_terms.append(unfilled * requirement.unfilled_weight * 100_000)
+
+    for staffing_target in request.staffing_targets:
+        variables = vars_by_slot[staffing_target.slot_id]
+        max_staff_count = sum(
+            requirement.required_count
+            for requirement in requirements
+            if requirement.slot_id == staffing_target.slot_id
+        )
+        assigned_count = model.NewIntVar(
+            0,
+            max_staff_count,
+            f"assigned_staff_count_{staffing_target.slot_id}",
+        )
+        model.Add(assigned_count == sum(variables))
+        under_target = model.NewIntVar(
+            0,
+            max(staffing_target.target_staff_count, 0),
+            f"under_staffing_target_{staffing_target.slot_id}",
+        )
+        over_target = model.NewIntVar(
+            0,
+            max(max_staff_count - staffing_target.target_staff_count, 0),
+            f"over_staffing_target_{staffing_target.slot_id}",
+        )
+        model.Add(staffing_target.target_staff_count - assigned_count <= under_target)
+        model.Add(assigned_count - staffing_target.target_staff_count <= over_target)
+        objective_terms.append(
+            under_target * max(staffing_target.under_staffing_penalty, 0)
+        )
+        objective_terms.append(
+            over_target * max(staffing_target.over_staffing_penalty, 0)
+        )
 
     for variables in vars_by_employee_slot.values():
         model.Add(sum(variables) <= 1)

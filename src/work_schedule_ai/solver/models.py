@@ -50,12 +50,21 @@ class AvoidPair:
 
 
 @dataclass(frozen=True)
+class StaffingTargetPenalty:
+    slot_id: str
+    target_staff_count: int
+    under_staffing_penalty: int = 0
+    over_staffing_penalty: int = 0
+
+
+@dataclass(frozen=True)
 class SolveScheduleRequest:
     employees: list[EmployeeInput]
     slots: list[ScheduleSlotInput]
     requirements: list[ScheduleRequirementInput]
     blocked_pairs: list[BlockedPair]
     avoid_pairs: list[AvoidPair] = field(default_factory=list)
+    staffing_targets: list[StaffingTargetPenalty] = field(default_factory=list)
     timeout_seconds: int = 30
     random_seed: int = 1
     global_max_shifts_per_week: int | None = None

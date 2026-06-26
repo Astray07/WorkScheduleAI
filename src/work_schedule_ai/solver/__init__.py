@@ -6,6 +6,7 @@ from work_schedule_ai.solver.models import (
     ScheduleSlotInput,
     SolveScheduleRequest,
     SolveScheduleResult,
+    StaffingTargetPenalty,
 )
 from work_schedule_ai.solver.ortools_solver import solve_schedule
 
@@ -17,5 +18,6 @@ __all__ = [
     "ScheduleSlotInput",
     "SolveScheduleRequest",
     "SolveScheduleResult",
+    "StaffingTargetPenalty",
     "solve_schedule",
 ]

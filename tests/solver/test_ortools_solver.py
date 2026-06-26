@@ -7,6 +7,7 @@ from work_schedule_ai.solver.models import (
     ScheduleRequirementInput,
     ScheduleSlotInput,
     SolveScheduleRequest,
+    StaffingTargetPenalty,
 )
 from work_schedule_ai.solver.ortools_solver import solve_schedule
 
@@ -154,6 +155,60 @@ def test_solver_balances_assignments_across_equivalent_employees():
     }
     assert result.issues == []
     assert sorted(assignment_counts.values()) == [1, 1, 1, 1]
+
+
+def test_solver_applies_explicit_staffing_target_penalty():
+    base_request = SolveScheduleRequest(
+        employees=[
+            EmployeeInput(id="emp_1", role_ids=frozenset({"role_any"})),
+            EmployeeInput(id="emp_2", role_ids=frozenset({"role_any"})),
+        ],
+        slots=[ScheduleSlotInput(id="slot_1", local_date="2026-07-01")],
+        requirements=[
+            ScheduleRequirementInput(
+                id="req_1",
+                slot_id="slot_1",
+                role_id="role_any",
+                required_count=2,
+                unfilled_weight=0,
+            )
+        ],
+        blocked_pairs=[],
+        timeout_seconds=5,
+        random_seed=1,
+    )
+    one_staff_request = SolveScheduleRequest(
+        **{
+            **base_request.__dict__,
+            "staffing_targets": [
+                StaffingTargetPenalty(
+                    slot_id="slot_1",
+                    target_staff_count=1,
+                    under_staffing_penalty=1_000_000,
+                    over_staffing_penalty=1_000_000,
+                )
+            ],
+        }
+    )
+    two_staff_request = SolveScheduleRequest(
+        **{
+            **base_request.__dict__,
+            "staffing_targets": [
+                StaffingTargetPenalty(
+                    slot_id="slot_1",
+                    target_staff_count=2,
+                    under_staffing_penalty=1_000_000,
+                    over_staffing_penalty=1_000_000,
+                )
+            ],
+        }
+    )
+
+    one_staff_result = solve_schedule(one_staff_request)
+    two_staff_result = solve_schedule(two_staff_request)
+
+    assert len(one_staff_result.assignments) == 1
+    assert len(two_staff_result.assignments) == 2
 
 
 def test_solver_respects_employee_weekly_shift_cap():

@@ -28,6 +28,7 @@ from work_schedule_ai.db.models import (
     AuditLog,
     Assignment as AssignmentRecord,
     ComplianceWarningOverride,
+    DemandDriver,
     Employee,
     EmployeeRole,
     Organization,
@@ -59,6 +60,7 @@ from work_schedule_ai.solver.models import (
     ScheduleRequirementInput,
     ScheduleSlotInput,
     SolveScheduleRequest,
+    StaffingTargetPenalty,
 )
 from work_schedule_ai.solver.ortools_solver import solve_schedule
 from work_schedule_ai.worker.schedule_worker import (
@@ -68,6 +70,9 @@ from work_schedule_ai.worker.queue import enqueue_schedule_run
 
 
 router = APIRouter(prefix="/organizations", tags=["schedule-runs"])
+
+DEMAND_UNDER_STAFFING_OBJECTIVE_WEIGHT = 100_000
+DEMAND_OVER_STAFFING_OBJECTIVE_WEIGHT = 25_000
 
 class ScheduleRunCreateRequest(BaseModel):
     period_start: date
@@ -2288,10 +2293,11 @@ def _solver_result_artifacts(
     for requirements in requirements_by_shift_type.values():
         requirements.sort(key=lambda requirement: role_by_id[requirement.role_id].name)
 
-    slots = _solver_slots(run, shift_types)
+    slot_pairs = _solver_slot_pairs(run, shift_types)
+    slots = [slot for slot, _shift_type in slot_pairs]
     shift_type_by_slot_id = {
         slot.id: shift_type
-        for slot, shift_type in _solver_slot_pairs(run, shift_types)
+        for slot, shift_type in slot_pairs
     }
     response_requirements: list[ShiftRequirementResponse] = []
     solver_requirements: list[ScheduleRequirementInput] = []
@@ -2360,8 +2366,13 @@ def _solver_result_artifacts(
             is_weekend=slot.local_date.weekday() >= 5,
             is_night=_is_night_shift(shift_type),
         )
-        for slot, shift_type in _solver_slot_pairs(run, shift_types)
+        for slot, shift_type in slot_pairs
     ]
+    staffing_targets = _staffing_targets_from_demand_drivers(
+        run,
+        slot_pairs,
+        db_session,
+    )
     solver_result = solve_schedule(
         SolveScheduleRequest(
             employees=solver_employees,
@@ -2373,6 +2384,7 @@ def _solver_result_artifacts(
                 int(policy_values["weight_pair_avoid_violation"]),
                 db_session,
             ),
+            staffing_targets=staffing_targets,
             timeout_seconds=run.timeout_seconds,
             random_seed=1,
             global_max_shifts_per_week=int(policy_values["max_shifts_per_week"]),
@@ -2638,6 +2650,54 @@ def _solver_slot_pairs(
     shift_types: list[ShiftType],
 ) -> list[tuple[ShiftSlotResponse, ShiftType]]:
     return _generated_slot_pairs(run.period_start, run.period_end, shift_types)
+
+
+def _staffing_targets_from_demand_drivers(
+    run: ScheduleRun,
+    slot_pairs: list[tuple[ShiftSlotResponse, ShiftType]],
+    db_session: Session,
+) -> list[StaffingTargetPenalty]:
+    drivers = list(
+        db_session.execute(
+            select(DemandDriver).where(
+                DemandDriver.organization_id == run.organization_id,
+                DemandDriver.local_date >= run.period_start,
+                DemandDriver.local_date <= run.period_end,
+            )
+        ).scalars()
+    )
+    targets: list[StaffingTargetPenalty] = []
+    for slot, shift_type in slot_pairs:
+        matching_required_count = sum(
+            driver.required_staff_count
+            for driver in drivers
+            if driver.local_date == slot.local_date
+            and _demand_segment_matches_shift(driver.segment, slot, shift_type)
+        )
+        if matching_required_count <= 0:
+            continue
+        targets.append(
+            StaffingTargetPenalty(
+                slot_id=slot.id,
+                target_staff_count=matching_required_count,
+                under_staffing_penalty=DEMAND_UNDER_STAFFING_OBJECTIVE_WEIGHT,
+                over_staffing_penalty=DEMAND_OVER_STAFFING_OBJECTIVE_WEIGHT,
+            )
+        )
+    return targets
+
+
+def _demand_segment_matches_shift(
+    segment: str,
+    slot: ShiftSlotResponse,
+    shift_type: ShiftType,
+) -> bool:
+    normalized_segment = segment.strip().lower()
+    return normalized_segment in {
+        shift_type.id.lower(),
+        shift_type.name.lower(),
+        slot.label.lower(),
+    }
 
 
 def _generated_slot_pairs(
