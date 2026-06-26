@@ -410,6 +410,41 @@ def test_employee_request_rejects_unknown_status(session):
         session.commit()
 
 
+def test_employee_request_rejects_cross_tenant_employee_reference(session):
+    session.add_all(
+        [
+            Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul"),
+            Organization(id="org_2", name="Clinic B", timezone="Asia/Seoul"),
+        ]
+    )
+    session.commit()
+    session.add(
+        Employee(
+            id="emp_org_2",
+            organization_id="org_2",
+            employee_code="E002",
+            name="Lee",
+        )
+    )
+    session.commit()
+    session.add(
+        EmployeeRequest(
+            id="employee_request_cross_employee",
+            organization_id="org_1",
+            employee_id="emp_org_2",
+            requested_by_user_id=None,
+            type="unavailable",
+            status="pending",
+            starts_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+            ends_at=datetime(2026, 7, 2, tzinfo=timezone.utc),
+            note=None,
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
 def test_publication_acknowledgement_is_unique_per_employee(session):
     org, employee = _organization_with_employee()
     run = _schedule_run()

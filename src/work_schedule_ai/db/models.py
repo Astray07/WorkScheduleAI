@@ -134,6 +134,12 @@ class EmployeeUserLink(Base):
 class EmployeeRequest(Base):
     __tablename__ = "employee_requests"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "employee_id"],
+            ["employees.organization_id", "employees.id"],
+            name="fk_employee_requests_tenant_employee",
+            ondelete="CASCADE",
+        ),
         CheckConstraint(
             "type IN ('vacation', 'unavailable', 'prefer_shift', 'avoid_shift', 'swap', 'open_shift')",
             name="ck_employee_requests_type",
