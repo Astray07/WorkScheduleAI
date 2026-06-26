@@ -50,6 +50,7 @@
 - 연속 야간 근무 운영 검토 warning
 - 운영 패널 demand driver와 labor budget 입력 UI
 - demand driver 기반 deterministic staffing target solver objective 연결
+- demand/cost preview의 budget warning/blocking policy status
 - Railway API/frontend 배포 자산과 demo seed
 - Railway worker service start command reference
 - 운영 metrics/readiness endpoint
@@ -91,7 +92,7 @@ Staging 게이트:
 - 직원 signed-link 모바일 화면의 변경 알림 상세 UX, public 요청 생성 API, 직원별 notification destination 저장, provider 재시도/모니터링 운영
 - RAG pgvector index 전환, 서버 측 embedding 생성/backfill, ingestion UI 확장, 문서 권한 UX, 평가셋 CI job
 - 한국형 warning rule 추가 확장과 warning override 전용 화면 고도화
-- budget hard constraint/warning policy와 비용 기반 objective 고도화
+- budget hard constraint의 실제 solver feasibility 연결과 비용 기반 objective 고도화
 - assumption literal 기반 고급 CP-SAT 진단 모델 전체
 - 수동 편집 UI와 편집 이력 비교
 - FairnessLedger/ImportBatch 고도화

@@ -197,6 +197,42 @@ def test_demand_and_budget_preview_returns_optimization_policy_without_solver_mu
         "solver_integration_status": "preview_only",
         "solver_objective_applied": False,
     }
+    assert payload["budget_policy_violation"] is True
+    assert payload["budget_constraint_status"] == "warning"
+
+
+def test_demand_and_budget_preview_reports_blocking_budget_constraint_status(
+    client: TestClient,
+):
+    budget_response = client.post(
+        "/organizations/org_1/labor-budgets",
+        json={
+            "period_start": "2026-07-01",
+            "period_end": "2026-07-07",
+            "budget_amount_cents": 100000,
+            "currency": "KRW",
+        },
+    )
+    assert budget_response.status_code == 201
+
+    preview_response = client.get(
+        "/organizations/org_1/demand-cost-preview",
+        params={
+            "period_start": "2026-07-01",
+            "period_end": "2026-07-07",
+            "planned_staff_count": 3,
+            "hourly_rate_cents": 50000,
+            "hours_per_shift": 2,
+            "budget_constraint_mode": "hard_constraint",
+        },
+    )
+
+    assert preview_response.status_code == 200
+    payload = preview_response.json()
+    assert payload["budget_status"] == "over_budget"
+    assert payload["budget_policy_violation"] is True
+    assert payload["budget_constraint_status"] == "blocking"
+    assert payload["optimization_policy"]["solver_objective_applied"] is False
 
 
 @pytest.fixture

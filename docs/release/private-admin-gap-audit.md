@@ -73,8 +73,8 @@
 ### 수요와 비용 Preview
 
 - demand driver와 labor budget preview API는 staffing/cost gap을 보여주는 단계입니다.
-- preview는 under/over/matched staffing 상태, staffing variance, planned labor cost, budget variance, no/within/over budget 상태, staffing penalty score, budget constraint mode를 반환합니다.
-- over/under staffing penalty와 budget constraint mode는 preview 정책 모델로 고정되어 있고 preview 응답 자체는 `solver_objective_applied=false`입니다.
+- preview는 under/over/matched staffing 상태, staffing variance, planned labor cost, budget variance, no/within/over budget 상태, staffing penalty score, budget constraint mode, budget policy violation, warning/blocking budget constraint status를 반환합니다.
+- over/under staffing penalty와 budget constraint mode는 preview 정책 모델로 고정되어 있고 preview 응답 자체는 `solver_objective_applied=false`입니다. `hard_constraint` budget mode도 현재는 solver 강제가 아니라 preview에서 blocking 상태를 노출하는 계약입니다.
 - 근무표 생성 경로는 명시적으로 입력된 demand driver를 deterministic staffing target으로 변환해 solver objective에 반영합니다. segment는 shift type id/name 또는 slot label과 일치해야 하며, LLM/RAG는 이 값을 직접 설정하지 않습니다.
 - 운영 패널에서 demand driver와 labor budget을 입력하고 preview를 다시 계산할 수 있습니다.
 

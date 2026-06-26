@@ -65,6 +65,13 @@ class DemandCostPreviewResponse(BaseModel):
     budget_amount_cents: int | None
     budget_variance_cents: int | None
     budget_status: str
+    budget_policy_violation: bool
+    budget_constraint_status: Literal[
+        "not_applicable",
+        "within_budget",
+        "warning",
+        "blocking",
+    ]
     optimization_policy: DemandCostOptimizationPolicy
 
 
@@ -172,6 +179,13 @@ def get_demand_cost_preview(
     budget_variance = (
         budget_amount - planned_cost_cents if budget_amount is not None else None
     )
+    budget_status = (
+        "no_budget"
+        if budget_amount is None
+        else "over_budget"
+        if planned_cost_cents > budget_amount
+        else "within_budget"
+    )
     return DemandCostPreviewResponse(
         organization_id=organization_id,
         period_start=period_start,
@@ -189,12 +203,11 @@ def get_demand_cost_preview(
         planned_cost_cents=planned_cost_cents,
         budget_amount_cents=budget_amount,
         budget_variance_cents=budget_variance,
-        budget_status=(
-            "no_budget"
-            if budget_amount is None
-            else "over_budget"
-            if planned_cost_cents > budget_amount
-            else "within_budget"
+        budget_status=budget_status,
+        budget_policy_violation=budget_status == "over_budget",
+        budget_constraint_status=_budget_constraint_status(
+            budget_status=budget_status,
+            budget_constraint_mode=budget_constraint_mode,
         ),
         optimization_policy=DemandCostOptimizationPolicy(
             under_staffing_penalty_per_shift=under_staffing_penalty_per_shift,
@@ -212,6 +225,22 @@ def _staffing_status(staffing_variance: int) -> str:
     if staffing_variance > 0:
         return "over_staffed"
     return "matched"
+
+
+def _budget_constraint_status(
+    *,
+    budget_status: str,
+    budget_constraint_mode: str,
+) -> str:
+    if budget_status == "no_budget":
+        return "not_applicable"
+    if budget_status != "over_budget":
+        return "within_budget"
+    if budget_constraint_mode == "hard_constraint":
+        return "blocking"
+    if budget_constraint_mode == "warning":
+        return "warning"
+    return "within_budget"
 
 
 def _get_organization_or_404(
