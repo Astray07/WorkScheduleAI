@@ -763,6 +763,18 @@ button:disabled {
   padding-top: 14px;
 }
 
+.panel-title-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.panel-title-row button {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
 .summary-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

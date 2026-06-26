@@ -778,6 +778,30 @@ export function App() {
     }
   }
 
+  async function exportAuditLogs() {
+    const organizationId = demo?.organizationId ?? workspaceOrganization?.id;
+    if (!organizationId) return;
+    setBusy("audit-export");
+    setError(null);
+    try {
+      const response = await fetch(
+        `${API_BASE}/operations/organizations/${organizationId}/audit-logs/export`,
+      );
+      if (!response.ok) throw new Error(`Audit export failed: ${response.status}`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `work_schedule_audit_${organizationId}.csv`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (caught) {
+      setError(messageFromError(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function ensureWorkspaceOrganization() {
     if (workspaceOrganization) return workspaceOrganization;
     const activeScenario = normalizeScenarioConfig(scenario);
@@ -1849,7 +1873,11 @@ export function App() {
               ragGrounding={ragGrounding}
               requests={employeeRequests}
             />
-            <AuditLogPanel entries={auditLogs} />
+            <AuditLogPanel
+              busy={busy}
+              entries={auditLogs}
+              onExport={exportAuditLogs}
+            />
             <div className="action-stack">
               <button disabled={!result?.proposals.length || busy === "approve"} onClick={approveProposal}>
                 <CheckCircle2 size={16} />
@@ -3574,10 +3602,24 @@ function RunComparisonPanel({
   );
 }
 
-function AuditLogPanel({ entries }: { entries: AuditLogEntry[] }) {
+function AuditLogPanel({
+  busy,
+  entries,
+  onExport,
+}: {
+  busy: string | null;
+  entries: AuditLogEntry[];
+  onExport: () => void;
+}) {
   return (
     <div className="visibility-panel">
-      <SectionTitle title="감사 로그" />
+      <div className="panel-title-row">
+        <SectionTitle title="감사 로그" />
+        <button disabled={busy === "audit-export"} onClick={onExport} type="button">
+          <Download size={16} />
+          CSV
+        </button>
+      </div>
       {!entries.length ? (
         <div className="subtle-box">최근 감사 로그가 없습니다.</div>
       ) : (

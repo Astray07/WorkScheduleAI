@@ -77,7 +77,7 @@
 - 확정본은 변경 불가능한 결과 snapshot을 저장합니다.
 - 확정본 Excel export는 저장된 snapshot을 기준으로 생성됩니다.
 - 수동 배정 저장과 확정본 생성은 audit log를 남깁니다.
-- 조직 audit log는 UI 조회와 CSV export API를 지원하며 tenant scope와 관리자 권한으로 제한됩니다.
+- 조직 audit log는 UI 조회, 운영 패널 CSV 다운로드, CSV export API를 지원하며 tenant scope와 관리자 권한으로 제한됩니다.
 - 컴플라이언스 경고는 법률 자동 판단이 아니라 운영 검토용 warning입니다.
 - blocking warning override는 `warning_code`, 직원, 슬롯 또는 ISO 주차, 현재 warning snapshot hash가 일치해야 확정 시 인정됩니다.
 - warning override 사유와 actor는 audit log에 기록됩니다.
