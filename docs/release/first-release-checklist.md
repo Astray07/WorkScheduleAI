@@ -36,6 +36,7 @@
 - signed actor token 기반 `Authorization: Bearer` actor extraction
 - `/auth/login` 기반 signed session 발급과 운영 콘솔 Authorization header 연결
 - 저장된 운영 콘솔 세션의 `/auth/session` 재검증과 약한 signed actor secret release gate 차단
+- `employee_roles` 대표 cross-tenant composite FK hardening과 확장 계획 문서
 - 직원 publication scoped signed link 발급과 `Authorization: Bearer` 기반 public 조회/확인 API
 - 직원 signed link context의 acknowledgement와 notification records
 - 직원 모바일 화면의 fragment-token 회수, public context 표시, public acknowledgement 연결

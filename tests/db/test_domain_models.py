@@ -159,6 +159,72 @@ def test_employee_role_assignment_cannot_be_duplicated(session):
         session.commit()
 
 
+def test_employee_role_rejects_cross_tenant_employee_reference(session):
+    session.add_all(
+        [
+            Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul"),
+            Organization(id="org_2", name="Clinic B", timezone="Asia/Seoul"),
+        ]
+    )
+    session.commit()
+    session.add_all(
+        [
+            Employee(
+                id="emp_org_2",
+                organization_id="org_2",
+                employee_code="E002",
+                name="Lee",
+            ),
+            Role(id="role_org_1", organization_id="org_1", name="사수"),
+        ]
+    )
+    session.commit()
+    session.add(
+        EmployeeRole(
+            id="employee_role_cross_employee",
+            organization_id="org_1",
+            employee_id="emp_org_2",
+            role_id="role_org_1",
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_employee_role_rejects_cross_tenant_role_reference(session):
+    session.add_all(
+        [
+            Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul"),
+            Organization(id="org_2", name="Clinic B", timezone="Asia/Seoul"),
+        ]
+    )
+    session.commit()
+    session.add_all(
+        [
+            Employee(
+                id="emp_org_1",
+                organization_id="org_1",
+                employee_code="E001",
+                name="Kim",
+            ),
+            Role(id="role_org_2", organization_id="org_2", name="부사수"),
+        ]
+    )
+    session.commit()
+    session.add(
+        EmployeeRole(
+            id="employee_role_cross_role",
+            organization_id="org_1",
+            employee_id="emp_org_1",
+            role_id="role_org_2",
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
 def test_pair_constraint_normalizes_employee_order(session):
     org, employee_a, employee_b = _organization_with_two_employees()
     pair = PairConstraint.create(

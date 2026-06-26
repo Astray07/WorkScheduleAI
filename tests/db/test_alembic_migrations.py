@@ -71,6 +71,9 @@ def test_alembic_upgrade_head_creates_named_constraints(tmp_path):
     employee_role_unique_names = {
         item["name"] for item in inspector.get_unique_constraints("employee_roles")
     }
+    employee_role_fk_names = {
+        item["name"] for item in inspector.get_foreign_keys("employee_roles")
+    }
     pair_unique_names = {
         item["name"] for item in inspector.get_unique_constraints("pair_constraints")
     }
@@ -135,11 +138,15 @@ def test_alembic_upgrade_head_creates_named_constraints(tmp_path):
     }
 
     assert "uq_employees_organization_employee_code" in employee_unique_names
+    assert "uq_employees_organization_id" in employee_unique_names
     assert "uq_roles_organization_name" in role_unique_names
+    assert "uq_roles_organization_id" in role_unique_names
     assert (
         "uq_employee_roles_organization_employee_role"
         in employee_role_unique_names
     )
+    assert "fk_employee_roles_tenant_employee" in employee_role_fk_names
+    assert "fk_employee_roles_tenant_role" in employee_role_fk_names
     assert "uq_pair_constraints_normalized_pair_type" in pair_unique_names
     assert "ck_pair_constraints_normalized_order" in pair_check_names
     assert "ck_unavailabilities_type" in unavailability_check_names
@@ -375,7 +382,7 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260626_0019"
+    assert version == "20260626_0020"
 
 
 def test_alembic_upgrade_head_creates_user_password_hash_column(tmp_path):

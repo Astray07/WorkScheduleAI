@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    Text,
+)
 from sqlalchemy import Index, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -188,6 +197,11 @@ class Employee(Base):
             "employee_code",
             name="uq_employees_organization_employee_code",
         ),
+        UniqueConstraint(
+            "organization_id",
+            "id",
+            name="uq_employees_organization_id",
+        ),
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -259,6 +273,7 @@ class Role(Base):
     __tablename__ = "roles"
     __table_args__ = (
         UniqueConstraint("organization_id", "name", name="uq_roles_organization_name"),
+        UniqueConstraint("organization_id", "id", name="uq_roles_organization_id"),
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -444,6 +459,18 @@ class EmployeeRole(Base):
             "employee_id",
             "role_id",
             name="uq_employee_roles_organization_employee_role",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "employee_id"],
+            ["employees.organization_id", "employees.id"],
+            name="fk_employee_roles_tenant_employee",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "role_id"],
+            ["roles.organization_id", "roles.id"],
+            name="fk_employee_roles_tenant_role",
+            ondelete="CASCADE",
         ),
     )
 
