@@ -16,9 +16,13 @@ from work_schedule_ai.db.models import (
     ScheduleRun,
 )
 from work_schedule_ai.notifications.dispatcher import dispatch_pending_notifications
+from work_schedule_ai.notifications.providers import NotificationDelivery
 
 
-def test_dispatcher_marks_in_app_notifications_sent_without_external_provider():
+def test_dispatcher_marks_in_app_notifications_sent_without_external_provider(
+    monkeypatch,
+):
+    _clear_provider_env(monkeypatch)
     session = _session()
     notification = session.get(PublicationNotification, "notification_in_app")
     assert notification is not None
@@ -41,7 +45,8 @@ def test_dispatcher_marks_in_app_notifications_sent_without_external_provider():
     assert "provider_not_configured" in (email_notification.last_delivery_error or "")
 
 
-def test_dispatcher_does_not_log_or_store_signed_link_tokens():
+def test_dispatcher_does_not_log_or_store_signed_link_tokens(monkeypatch):
+    _clear_provider_env(monkeypatch)
     session = _session()
 
     dispatch_pending_notifications(session)
@@ -53,6 +58,79 @@ def test_dispatcher_does_not_log_or_store_signed_link_tokens():
     )
     assert "token" not in serialized.lower()
     assert "employee-link" not in serialized.lower()
+
+
+def test_dispatcher_calls_configured_provider_for_external_notifications():
+    session = _session()
+    provider = RecordingProvider()
+
+    summary = dispatch_pending_notifications(session, provider=provider)
+
+    assert summary.sent == 2
+    assert summary.suppressed == 0
+    assert summary.failed == 0
+    assert [(item.channel, item.notification_id) for item in provider.deliveries] == [
+        ("email", "notification_email")
+    ]
+    email_notification = session.get(PublicationNotification, "notification_email")
+    assert email_notification is not None
+    assert email_notification.status == "sent"
+    assert email_notification.delivered_at is not None
+    assert email_notification.delivery_attempts == 1
+    assert email_notification.last_delivery_error is None
+
+
+def test_dispatcher_records_provider_failure_without_secret_details():
+    session = _session()
+    provider = FailingProvider()
+
+    summary = dispatch_pending_notifications(session, provider=provider)
+
+    assert summary.sent == 1
+    assert summary.suppressed == 0
+    assert summary.failed == 1
+    email_notification = session.get(PublicationNotification, "notification_email")
+    assert email_notification is not None
+    assert email_notification.status == "failed"
+    assert email_notification.delivered_at is None
+    assert email_notification.delivery_attempts == 1
+    assert email_notification.last_delivery_error == "delivery_failed:email:RuntimeError"
+
+
+class RecordingProvider:
+    def __init__(self) -> None:
+        self.deliveries: list[NotificationDelivery] = []
+
+    def can_deliver(self, channel: str) -> bool:
+        return channel == "email"
+
+    def deliver(self, delivery: NotificationDelivery) -> None:
+        self.deliveries.append(delivery)
+
+
+class FailingProvider:
+    def can_deliver(self, channel: str) -> bool:
+        return channel == "email"
+
+    def deliver(self, delivery: NotificationDelivery) -> None:
+        raise RuntimeError(
+            "smtp rejected employee-link token=secret-token-value"
+        )
+
+
+def _clear_provider_env(monkeypatch) -> None:
+    for name in (
+        "WORKSCHEDULEAI_EMAIL_NOTIFICATIONS_ENABLED",
+        "WORKSCHEDULEAI_SMTP_HOST",
+        "WORKSCHEDULEAI_SMTP_PORT",
+        "WORKSCHEDULEAI_SMTP_USERNAME",
+        "WORKSCHEDULEAI_SMTP_PASSWORD",
+        "WORKSCHEDULEAI_SMTP_FROM",
+        "WORKSCHEDULEAI_NOTIFICATION_EMAIL_TO",
+        "WORKSCHEDULEAI_SLACK_NOTIFICATIONS_ENABLED",
+        "WORKSCHEDULEAI_SLACK_WEBHOOK_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 def _session() -> Session:

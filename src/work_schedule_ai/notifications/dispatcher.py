@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.db.models import PublicationNotification, utc_now
+from work_schedule_ai.notifications.providers import (
+    EnvironmentNotificationDeliveryProvider,
+    NotificationDelivery,
+    NotificationDeliveryProvider,
+)
 
 
 PENDING_STATUS = "pending_recorded"
@@ -24,6 +28,7 @@ def dispatch_pending_notifications(
     *,
     organization_id: str | None = None,
     limit: int = 100,
+    provider: NotificationDeliveryProvider | None = None,
 ) -> NotificationDispatchSummary:
     query = select(PublicationNotification).where(
         PublicationNotification.status == PENDING_STATUS
@@ -39,13 +44,29 @@ def dispatch_pending_notifications(
     sent = 0
     suppressed = 0
     failed = 0
+    delivery_provider = provider or EnvironmentNotificationDeliveryProvider.from_env()
     for notification in notifications:
         notification.delivery_attempts += 1
-        if _can_deliver(notification.channel):
+        if notification.channel == "in_app":
             notification.status = "sent"
             notification.delivered_at = utc_now()
             notification.last_delivery_error = None
             sent += 1
+        elif delivery_provider.can_deliver(notification.channel):
+            try:
+                delivery_provider.deliver(_delivery_from_notification(notification))
+            except Exception as exc:
+                notification.status = "failed"
+                notification.delivered_at = None
+                notification.last_delivery_error = (
+                    f"delivery_failed:{notification.channel}:{type(exc).__name__}"
+                )
+                failed += 1
+            else:
+                notification.status = "sent"
+                notification.delivered_at = utc_now()
+                notification.last_delivery_error = None
+                sent += 1
         else:
             notification.status = "suppressed"
             notification.delivered_at = None
@@ -57,11 +78,25 @@ def dispatch_pending_notifications(
     return NotificationDispatchSummary(sent=sent, suppressed=suppressed, failed=failed)
 
 
-def _can_deliver(channel: str) -> bool:
-    if channel == "in_app":
-        return True
-    if channel == "email":
-        return os.environ.get("WORKSCHEDULEAI_EMAIL_NOTIFICATIONS_ENABLED") == "1"
-    if channel == "slack":
-        return os.environ.get("WORKSCHEDULEAI_SLACK_NOTIFICATIONS_ENABLED") == "1"
-    return False
+def _delivery_from_notification(
+    notification: PublicationNotification,
+) -> NotificationDelivery:
+    subject = f"WorkScheduleAI publication {notification.notification_type}"
+    body = "\n".join(
+        [
+            f"Publication {notification.publication_id} was {notification.notification_type}.",
+            f"Organization: {notification.organization_id}",
+            f"Employee: {notification.employee_id}",
+            f"Notification: {notification.id}",
+        ]
+    )
+    return NotificationDelivery(
+        notification_id=notification.id,
+        organization_id=notification.organization_id,
+        publication_id=notification.publication_id,
+        employee_id=notification.employee_id,
+        notification_type=notification.notification_type,
+        channel=notification.channel,
+        subject=subject,
+        body=body,
+    )
