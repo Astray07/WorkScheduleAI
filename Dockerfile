@@ -11,8 +11,8 @@ COPY alembic ./alembic
 COPY scripts ./scripts
 COPY src ./src
 
-RUN python -m pip install --upgrade pip \
-    && python -m pip install ".[deploy]"
+RUN python -m pip install --upgrade pip setuptools wheel \
+    && python -m pip install --no-build-isolation ".[deploy]"
 
 EXPOSE 8000
 

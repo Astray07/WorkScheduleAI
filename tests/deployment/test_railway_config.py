@@ -33,3 +33,10 @@ def test_railway_frontend_service_uses_frontend_commands():
     )
     assert "startCommand" not in frontend_config["deploy"]
     assert frontend_config["deploy"]["healthcheckPath"] == "/"
+
+
+def test_api_dockerfile_avoids_pep517_build_isolation_downloads():
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "setuptools" in dockerfile
+    assert 'python -m pip install --no-build-isolation ".[deploy]"' in dockerfile
