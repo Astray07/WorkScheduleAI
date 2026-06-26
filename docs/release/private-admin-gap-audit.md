@@ -66,8 +66,8 @@
 - RAG API는 tenant-scoped 문서 chunk와 query audit만 저장합니다.
 - RAG 문서는 tenant-scoped 목록 조회와 관리자 삭제 API로 관리할 수 있으며, 운영 패널에서 문서 목록과 삭제 액션을 제공합니다. viewer는 목록 조회만 가능하고 employee/member는 문서 관리 API에서 거부됩니다.
 - RAG query는 `SchedulePolicy` 또는 `ScheduleRun`을 직접 생성하거나 수정하지 않는 guardrail 테스트로 고정되어 있습니다.
-- 현재 retrieval은 keyword 기반이며 문서 제목과 chunk 본문을 함께 점수화합니다. evidence citation은 문서 ID, chunk ID, 제목, 출처 유형, checked_at, confidence를 포함하고, query 응답은 `retrieval_mode="keyword"`를 명시합니다.
-- RAG chunk는 nullable embedding metadata를 저장할 수 있지만 live vector retrieval은 아직 켜지지 않았습니다. pgvector rollout과 hybrid retrieval은 `docs/release/rag-vector-evaluation-plan.md`에 분리했습니다.
+- 현재 retrieval은 기본적으로 keyword 기반이며 문서 제목과 chunk 본문을 함께 점수화합니다. evidence citation은 문서 ID, chunk ID, 제목, 출처 유형, checked_at, confidence를 포함하고, query 응답은 기본 `retrieval_mode="keyword"`를 명시합니다.
+- RAG chunk는 nullable embedding metadata를 저장할 수 있고, `WORKSCHEDULEAI_RAG_HYBRID_RETRIEVAL=1`과 query embedding이 함께 제공될 때 저장된 JSON vector와 keyword 점수를 결합한 `retrieval_mode="hybrid"`를 사용할 수 있습니다. pgvector index, 서버 측 embedding 생성/backfill, CI 장기 평가셋 실행은 `docs/release/rag-vector-evaluation-plan.md`에 후속으로 남겼습니다.
 - RAG API 경로에서 prompt injection chunk drop, PII redaction, solver/policy non-mutation guardrail을 테스트로 고정했습니다. 장기 citation 평가셋은 `work_schedule_ai.llm.rag_evaluation`에 초기 샘플로 추가했습니다.
 
 ### 수요와 비용 Preview

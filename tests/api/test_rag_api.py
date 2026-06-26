@@ -219,6 +219,101 @@ def test_rag_ingest_rejects_embedding_count_mismatch(client: TestClient):
     assert response.status_code == 422
 
 
+def test_rag_query_uses_hybrid_embedding_retrieval_when_enabled(
+    client: TestClient,
+    monkeypatch,
+):
+    monkeypatch.setenv("WORKSCHEDULEAI_RAG_HYBRID_RETRIEVAL", "1")
+    vector_response = client.post(
+        "/organizations/org_1/rag/documents",
+        json={
+            "source_type": "organization_policy",
+            "document_title": "벡터 기반 휴식 정책",
+            "checked_at": "2026-06-26",
+            "chunks": ["근접 벡터로 선택되는 운영 정책입니다."],
+            "embeddings": [
+                {
+                    "model": "text-embedding-test-1",
+                    "vector": [1.0, 0.0],
+                }
+            ],
+        },
+    )
+    assert vector_response.status_code == 201
+    keyword_response = client.post(
+        "/organizations/org_1/rag/documents",
+        json={
+            "source_type": "organization_policy",
+            "document_title": "야간 휴식 일반 메모",
+            "checked_at": "2026-06-26",
+            "chunks": ["야간 휴식 키워드만 있는 일반 문서입니다."],
+            "embeddings": [
+                {
+                    "model": "text-embedding-test-1",
+                    "vector": [-1.0, 0.0],
+                }
+            ],
+        },
+    )
+    assert keyword_response.status_code == 201
+
+    query_response = client.post(
+        "/organizations/org_1/rag/query",
+        json={
+            "query": "야간 휴식",
+            "purpose": "schedule_explanation",
+            "query_embedding": {
+                "model": "text-embedding-test-1",
+                "vector": [1.0, 0.0],
+            },
+        },
+    )
+
+    assert query_response.status_code == 200
+    payload = query_response.json()
+    assert payload["retrieval_mode"] == "hybrid"
+    assert payload["status"] == "grounded"
+    assert payload["evidence"][0]["document_title"] == "벡터 기반 휴식 정책"
+
+
+def test_rag_query_keeps_keyword_mode_when_hybrid_flag_is_disabled(
+    client: TestClient,
+    monkeypatch,
+):
+    monkeypatch.delenv("WORKSCHEDULEAI_RAG_HYBRID_RETRIEVAL", raising=False)
+    response = client.post(
+        "/organizations/org_1/rag/documents",
+        json={
+            "source_type": "organization_policy",
+            "document_title": "야간 휴식 규정",
+            "checked_at": "2026-06-26",
+            "chunks": ["야간 휴식 키워드가 있는 문서입니다."],
+            "embeddings": [
+                {
+                    "model": "text-embedding-test-1",
+                    "vector": [1.0, 0.0],
+                }
+            ],
+        },
+    )
+    assert response.status_code == 201
+
+    query_response = client.post(
+        "/organizations/org_1/rag/query",
+        json={
+            "query": "야간 휴식",
+            "purpose": "schedule_explanation",
+            "query_embedding": {
+                "model": "text-embedding-test-1",
+                "vector": [1.0, 0.0],
+            },
+        },
+    )
+
+    assert query_response.status_code == 200
+    assert query_response.json()["retrieval_mode"] == "keyword"
+
+
 def test_rag_query_scores_document_title_matches_before_generic_chunks(
     client: TestClient,
 ):

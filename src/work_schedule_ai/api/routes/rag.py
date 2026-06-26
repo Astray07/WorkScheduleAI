@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date
 import hashlib
 import json
+import math
+import os
 import re
 from typing import Annotated
 from uuid import uuid4
@@ -71,6 +73,7 @@ class RagDocumentListResponse(BaseModel):
 class RagQueryRequest(BaseModel):
     query: str = Field(min_length=1, max_length=500)
     purpose: str = Field(min_length=1, max_length=80)
+    query_embedding: RagChunkEmbedding | None = None
 
 
 @router.post(
@@ -221,11 +224,17 @@ def query_rag_evidence(
 ) -> RagGroundingResult:
     require_roles(db_session, READ_ROLES)
     _get_organization_or_404(organization_id, db_session)
-    chunks = _retrieve_chunks(organization_id, request.query, db_session)
+    chunks, retrieval_mode = _retrieve_chunks(
+        organization_id,
+        request.query,
+        db_session,
+        query_embedding=request.query_embedding,
+    )
     grounding = build_grounded_explanation_context(
         organization_id=organization_id,
         retrieved_chunks=chunks,
     )
+    grounding = grounding.model_copy(update={"retrieval_mode": retrieval_mode})
     db_session.add(
         RagQueryAudit(
             id=_new_id("rag_audit"),
@@ -248,8 +257,15 @@ def _retrieve_chunks(
     organization_id: str,
     query: str,
     db_session: Session,
-) -> list[RetrievedDocumentChunk]:
+    *,
+    query_embedding: RagChunkEmbedding | None = None,
+) -> tuple[list[RetrievedDocumentChunk], str]:
     query_terms = _query_terms(query)
+    retrieval_mode = (
+        "hybrid"
+        if query_embedding is not None and _hybrid_retrieval_enabled()
+        else "keyword"
+    )
     rows = db_session.execute(
         select(RagDocument, RagDocumentChunk)
         .join(RagDocumentChunk, RagDocumentChunk.document_id == RagDocument.id)
@@ -261,12 +277,22 @@ def _retrieve_chunks(
     ).all()
     retrieved: list[RetrievedDocumentChunk] = []
     for document, chunk in rows:
-        score = _keyword_score(
+        keyword_score = _keyword_score(
             query_terms=query_terms,
             query=query,
             document_title=document.document_title,
             excerpt=chunk.excerpt,
         )
+        score = keyword_score
+        if retrieval_mode == "hybrid":
+            vector_score = _vector_score(
+                query_embedding=query_embedding,
+                chunk=chunk,
+            )
+            score = _hybrid_score(
+                keyword_score=keyword_score,
+                vector_score=vector_score,
+            )
         if score <= 0:
             continue
         retrieved.append(
@@ -281,7 +307,10 @@ def _retrieve_chunks(
                 retrieval_score=score,
             )
         )
-    return sorted(retrieved, key=lambda item: item.retrieval_score, reverse=True)
+    return (
+        sorted(retrieved, key=lambda item: item.retrieval_score, reverse=True),
+        retrieval_mode,
+    )
 
 
 def _query_terms(query: str) -> set[str]:
@@ -314,6 +343,53 @@ def _keyword_score(
         1.0,
         0.45 + (matches / len(query_terms)) * 0.5 + phrase_boost + title_boost,
     )
+
+
+def _vector_score(
+    *,
+    query_embedding: RagChunkEmbedding | None,
+    chunk: RagDocumentChunk,
+) -> float | None:
+    if query_embedding is None:
+        return None
+    if chunk.embedding_model != query_embedding.model:
+        return None
+    if chunk.embedding_vector_json is None:
+        return None
+    try:
+        chunk_vector = json.loads(chunk.embedding_vector_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(chunk_vector, list):
+        return None
+    if len(chunk_vector) != len(query_embedding.vector):
+        return None
+    if chunk.embedding_dimensions is not None and chunk.embedding_dimensions != len(chunk_vector):
+        return None
+    try:
+        values = [float(value) for value in chunk_vector]
+    except (TypeError, ValueError):
+        return None
+    query_values = [float(value) for value in query_embedding.vector]
+    chunk_norm = math.sqrt(sum(value * value for value in values))
+    query_norm = math.sqrt(sum(value * value for value in query_values))
+    if chunk_norm == 0 or query_norm == 0:
+        return None
+    cosine = sum(
+        query_value * chunk_value
+        for query_value, chunk_value in zip(query_values, values, strict=True)
+    ) / (query_norm * chunk_norm)
+    return max(0.0, min(1.0, (cosine + 1.0) / 2.0))
+
+
+def _hybrid_score(*, keyword_score: float, vector_score: float | None) -> float:
+    if vector_score is None:
+        return round(keyword_score * 0.25, 6)
+    return round(min(1.0, vector_score * 0.75 + keyword_score * 0.25), 6)
+
+
+def _hybrid_retrieval_enabled() -> bool:
+    return os.environ.get("WORKSCHEDULEAI_RAG_HYBRID_RETRIEVAL") == "1"
 
 
 def _get_organization_or_404(
