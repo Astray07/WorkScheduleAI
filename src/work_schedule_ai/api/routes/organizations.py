@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session, set_tenant_context
+from work_schedule_ai.api.security import READ_ROLES, require_roles
 from work_schedule_ai.db.models import Organization, Role
 
 
@@ -75,6 +76,7 @@ def list_roles(
     organization_id: str,
     db_session: Session = Depends(get_db_session),
 ) -> list[RoleResponse]:
+    require_roles(db_session, READ_ROLES)
     organization = db_session.get(Organization, organization_id)
     if organization is None:
         from fastapi import HTTPException

@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api.security import ADMIN_ROLES, READ_ROLES, require_roles
 from work_schedule_ai.db.models import Organization, SchedulePolicy, utc_now
 
 
@@ -53,9 +54,12 @@ def get_schedule_policy(
     organization_id: str,
     db_session: Session = Depends(get_db_session),
 ) -> SchedulePolicyResponse:
+    actor = require_roles(db_session, READ_ROLES)
     _get_organization_or_404(organization_id, db_session)
     policy = _get_policy(organization_id, db_session)
     if policy is None:
+        if actor.auth_required and actor.role not in ADMIN_ROLES:
+            return _default_policy_response(organization_id)
         policy = SchedulePolicy(
             id=_new_id("schedule_policy"),
             organization_id=organization_id,
@@ -75,6 +79,7 @@ def update_schedule_policy(
     request: SchedulePolicyRequest,
     db_session: Session = Depends(get_db_session),
 ) -> SchedulePolicyResponse:
+    require_roles(db_session, ADMIN_ROLES)
     _get_organization_or_404(organization_id, db_session)
     policy = _get_policy(organization_id, db_session)
     if policy is None:
@@ -128,6 +133,14 @@ def _policy_response(policy: SchedulePolicy) -> SchedulePolicyResponse:
         weight_workload_imbalance=policy.weight_workload_imbalance,
         weight_pair_avoid_violation=policy.weight_pair_avoid_violation,
         unfilled_policy=policy.unfilled_policy,
+    )
+
+
+def _default_policy_response(organization_id: str) -> SchedulePolicyResponse:
+    return SchedulePolicyResponse(
+        id="schedule_policy_default",
+        organization_id=organization_id,
+        **DEFAULT_POLICY,
     )
 
 

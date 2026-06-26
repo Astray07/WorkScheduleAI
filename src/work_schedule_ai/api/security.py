@@ -13,6 +13,7 @@ from work_schedule_ai.db.models import Membership
 RBAC_ROLES = ["owner", "admin", "scheduler", "viewer", "employee", "member"]
 ADMIN_ROLES = frozenset({"owner", "admin", "scheduler"})
 READ_ROLES = frozenset({"owner", "admin", "scheduler", "viewer"})
+TRUSTED_UPSTREAM_HEADER_ACTOR_MODE = "trusted_upstream_header"
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,10 @@ def is_trusted_upstream_auth_configured() -> bool:
     return os.environ.get("WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH") == "1"
 
 
+def actor_extraction_mode() -> str:
+    return TRUSTED_UPSTREAM_HEADER_ACTOR_MODE
+
+
 def enforce_organization_access(
     db_session: Session,
     request: Request,
@@ -41,6 +46,18 @@ def enforce_organization_access(
         actor = ActorContext(user_id=user_id, role="admin", auth_required=False)
         db_session.info["actor_context"] = actor
         return actor
+    if not is_trusted_upstream_auth_configured():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "TRUSTED_UPSTREAM_AUTH_REQUIRED",
+                "message": (
+                    "Organization-scoped auth requires a configured trusted "
+                    "upstream before X-User-Id can be accepted."
+                ),
+                "field": "WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH",
+            },
+        )
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

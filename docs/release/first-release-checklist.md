@@ -30,6 +30,8 @@
 - manual edit validation/save API와 AuditLog 기록
 - LLM 개인정보 익명화, schema validation, fallback explanation
 - PostgreSQL RLS migration과 tenant context hook
+- auth enabled 상태에서 trusted upstream 설정이 없으면 조직 스코프 `X-User-Id` 요청 거부
+- release gate가 trusted header actor mode를 공개 SaaS ready로 판정하지 않도록 hardening
 - Railway API/frontend 배포 자산과 demo seed
 - Railway worker service start command reference
 - 운영 metrics/readiness endpoint
@@ -59,12 +61,12 @@ Staging 게이트:
 - API service, worker service, PostgreSQL, Redis가 분리된 Railway 구성으로 떠 있어야 합니다.
 - worker service start command는 `python -m work_schedule_ai.worker.queue_worker`여야 합니다.
 - 실제 Redis queue를 통과하는 P0 happy path와 infeasible/relaxation path를 브라우저에서 1회 이상 관통해야 합니다.
-- 공개 URL 또는 실사용 파일럿이면 관리자 인증, 요청 조직 컨텍스트, tenant 접근 제어가 릴리즈 전 필수입니다.
+- 공개 URL 또는 실사용 파일럿이면 관리자 인증, signed/session actor extraction, 요청 조직 컨텍스트, tenant 접근 제어가 릴리즈 전 필수입니다.
 
 ## 명시적 후속 범위
 
 - 직원 100명/31일 고제약 운영 데이터 성능 hardening
-- 관리자 회원가입/로그인, JWT/session, 요청 조직 컨텍스트 연결
+- 관리자 회원가입/로그인, JWT/session 또는 서명 검증 기반 actor extraction, 요청 조직 컨텍스트 연결
 - assumption literal 기반 고급 CP-SAT 진단 모델 전체
 - 수동 편집 UI와 편집 이력 비교
 - FairnessLedger/ImportBatch 고도화

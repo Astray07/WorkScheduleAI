@@ -11,9 +11,13 @@ from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
 from work_schedule_ai.api.security import (
+    ADMIN_ROLES,
     RBAC_ROLES,
+    READ_ROLES,
+    actor_extraction_mode,
     is_auth_required,
     is_trusted_upstream_auth_configured,
+    require_roles,
 )
 from work_schedule_ai.db.models import (
     Assignment,
@@ -114,6 +118,7 @@ class SecurityReleaseGateResponse(BaseModel):
     rbac_roles: list[str]
     tenant_context_hook: bool
     audit_export_available: bool
+    actor_extraction_mode: str
     public_saas_ready: bool
     warnings: list[str]
 
@@ -159,6 +164,7 @@ def get_schedule_run_metrics(
 def get_security_release_gate() -> SecurityReleaseGateResponse:
     auth_required = is_auth_required()
     trusted_upstream_auth = is_trusted_upstream_auth_configured()
+    actor_mode = actor_extraction_mode()
     warnings = []
     if not auth_required:
         warnings.append("WORKSCHEDULEAI_AUTH_REQUIRED is not enabled.")
@@ -167,11 +173,17 @@ def get_security_release_gate() -> SecurityReleaseGateResponse:
             "WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH is not enabled; "
             "X-User-Id is only a trusted-upstream development contract."
         )
+    if actor_mode == "trusted_upstream_header":
+        warnings.append(
+            "Actor extraction still relies on trusted X-User-Id header mode; "
+            "JWT/session or signed actor verification is not implemented."
+        )
     return SecurityReleaseGateResponse(
         auth_required=auth_required,
         rbac_roles=RBAC_ROLES,
         tenant_context_hook=True,
         audit_export_available=True,
+        actor_extraction_mode=actor_mode,
         public_saas_ready=not warnings,
         warnings=warnings,
     )
@@ -186,6 +198,7 @@ def get_organization_audit_logs(
     limit: int = 20,
     db_session: Session = Depends(get_db_session),
 ) -> AuditLogListResponse:
+    require_roles(db_session, ADMIN_ROLES)
     bounded_limit = min(max(limit, 1), 100)
     logs = list(
         db_session.execute(
@@ -223,6 +236,7 @@ def get_organization_long_term_fairness(
     source: Literal["publications", "runs"] = "publications",
     db_session: Session = Depends(get_db_session),
 ) -> LongTermFairnessResponse:
+    require_roles(db_session, READ_ROLES)
     if period_start is not None and period_end is not None and period_start > period_end:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -291,6 +305,7 @@ def get_organization_fairness_summary(
     schedule_run_id: str | None = None,
     db_session: Session = Depends(get_db_session),
 ) -> FairnessSummaryResponse:
+    require_roles(db_session, READ_ROLES)
     employees = list(
         db_session.execute(
             select(Employee)

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
 from work_schedule_ai.api.routes.policies import DEFAULT_POLICY
+from work_schedule_ai.api.security import ADMIN_ROLES, require_roles
 from work_schedule_ai.db.models import (
     Employee,
     EmployeeRole,
@@ -136,6 +137,7 @@ def preview_import(
     request: ImportRequest,
     db_session: Session = Depends(get_db_session),
 ) -> ImportPreviewResponse:
+    require_roles(db_session, ADMIN_ROLES)
     _get_organization_or_404(organization_id, db_session)
     rows, sheet_name, row_numbers, header_row_no, include_column = _parse_import_rows(request)
     errors = _validate_rows(
@@ -166,6 +168,7 @@ def apply_import(
     request: ImportApplyRequest,
     db_session: Session = Depends(get_db_session),
 ) -> ImportPreviewResponse:
+    require_roles(db_session, ADMIN_ROLES)
     preview = preview_import(
         organization_id=organization_id,
         request=ImportRequest(

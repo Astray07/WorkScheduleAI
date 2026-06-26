@@ -9,6 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api.security import ADMIN_ROLES, READ_ROLES, require_roles
 from work_schedule_ai.db.models import (
     Organization,
     Role,
@@ -91,6 +92,7 @@ def create_shift_type(
     request: ShiftTypeCreateRequest,
     db_session: Session = Depends(get_db_session),
 ) -> ShiftTypeResponse:
+    require_roles(db_session, ADMIN_ROLES)
     organization = db_session.get(Organization, organization_id)
     if organization is None:
         raise HTTPException(
@@ -173,6 +175,7 @@ def list_shift_types(
     organization_id: str,
     db_session: Session = Depends(get_db_session),
 ) -> list[ShiftTypeResponse]:
+    require_roles(db_session, READ_ROLES)
     organization = db_session.get(Organization, organization_id)
     if organization is None:
         raise HTTPException(
@@ -238,6 +241,7 @@ def update_shift_type(
     request: ShiftTypeCreateRequest,
     db_session: Session = Depends(get_db_session),
 ) -> ShiftTypeResponse:
+    require_roles(db_session, ADMIN_ROLES)
     organization = db_session.get(Organization, organization_id)
     if organization is None:
         raise HTTPException(
@@ -323,6 +327,7 @@ def deactivate_shift_type(
     shift_type_id: str,
     db_session: Session = Depends(get_db_session),
 ) -> Response:
+    require_roles(db_session, ADMIN_ROLES)
     organization = db_session.get(Organization, organization_id)
     if organization is None:
         raise HTTPException(

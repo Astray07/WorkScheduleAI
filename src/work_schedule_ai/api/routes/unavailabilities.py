@@ -8,6 +8,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api.security import ADMIN_ROLES, READ_ROLES, require_roles
 from work_schedule_ai.db.models import Employee, Organization, Unavailability
 
 
@@ -41,6 +42,7 @@ def list_unavailabilities(
     organization_id: str,
     db_session: Session = Depends(get_db_session),
 ) -> list[UnavailabilityResponse]:
+    require_roles(db_session, READ_ROLES)
     _get_organization_or_404(organization_id, db_session)
     unavailabilities = db_session.execute(
         select(Unavailability)
@@ -63,6 +65,7 @@ def create_unavailability(
     request: UnavailabilityCreateRequest,
     db_session: Session = Depends(get_db_session),
 ) -> UnavailabilityResponse:
+    require_roles(db_session, ADMIN_ROLES)
     organization = db_session.get(Organization, organization_id)
     if organization is None:
         raise HTTPException(
@@ -115,6 +118,7 @@ def update_unavailability(
     request: UnavailabilityCreateRequest,
     db_session: Session = Depends(get_db_session),
 ) -> UnavailabilityResponse:
+    require_roles(db_session, ADMIN_ROLES)
     _get_organization_or_404(organization_id, db_session)
     _get_employee_in_organization_or_422(
         organization_id,
@@ -144,6 +148,7 @@ def delete_unavailability(
     unavailability_id: str,
     db_session: Session = Depends(get_db_session),
 ) -> Response:
+    require_roles(db_session, ADMIN_ROLES)
     _get_organization_or_404(organization_id, db_session)
     unavailability = db_session.get(Unavailability, unavailability_id)
     if unavailability is None or unavailability.organization_id != organization_id:

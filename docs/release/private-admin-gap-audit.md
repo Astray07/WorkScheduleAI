@@ -53,6 +53,8 @@
 - 장기 fairness 대시보드는 확정본 또는 실행 결과를 기준으로 기간 필터, 배정 수, 야간 수, 주말 수, 역할별 수, 평균 delta를 표시합니다.
 - 운영 지표와 readiness endpoint가 로컬 및 스테이징 점검용으로 존재합니다.
 - PostgreSQL tenant context hook은 존재하지만, 공개 인증과 멤버십 강제는 아직 release gate입니다.
+- `WORKSCHEDULEAI_AUTH_REQUIRED=1`일 때 조직 스코프 API는 `WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH=1` 없이는 `X-User-Id`를 받지 않도록 fail-closed 처리합니다.
+- release gate는 trusted upstream header mode를 공개 SaaS ready로 보지 않습니다. 실제 JWT/session 또는 서명 기반 actor 검증은 아직 남은 작업입니다.
 
 ### 확정과 감사성
 
@@ -121,7 +123,7 @@
 
 ## 남은 출시 리스크
 
-- 인증과 tenant 접근 제어는 공개 URL 또는 실제 외부 파일럿의 release gate입니다.
+- 인증과 tenant 접근 제어는 공개 URL 또는 실제 외부 파일럿의 release gate입니다. 현재 `X-User-Id` 경로는 trusted upstream 개발 계약이며, signed/session actor extraction으로 교체되어야 합니다.
 - production-ready라고 부르기 전 Railway/API/worker/PostgreSQL/Redis 스테이징 검증이 필요합니다.
 - 100명, 31일 기준 강화 benchmark는 opt-in이며 기본 CI runtime gate가 아닙니다.
 - 확정본 snapshot 기반 장기 fairness는 요청 시 JSON을 파싱합니다. 비공개 검증에는 충분하지만, 이력이 커지면 aggregate table 또는 materialized summary가 필요할 수 있습니다.
@@ -131,7 +133,7 @@
 
 ## 제가 보는 현재 남은 일
 
-1. 인증, 멤버십, tenant 접근 제어를 먼저 구현하고 endpoint별 권한 테스트를 추가해야 합니다.
+1. 인증, 멤버십, tenant 접근 제어를 먼저 구현하고 endpoint별 권한 테스트를 계속 추가해야 합니다. 정책, 가져오기, 기준정보 mutation의 저권한 거부 테스트는 추가되었지만 전체 endpoint matrix는 아직 후속 hardening 범위입니다.
 2. Railway 스테이징에서 API, worker, PostgreSQL, Redis, frontend를 실제로 연결한 end-to-end smoke를 실행해야 합니다.
 3. 운영 보안과 관측성을 보강해야 합니다. 최소한 audit log 조회, readiness/metrics 운영 확인, 장애 시 worker 재시도와 실패 추적 기준이 필요합니다.
 4. 장기 fairness 데이터가 커질 경우를 대비해 확정본 snapshot JSON 파싱 방식의 한계를 측정하고, 필요하면 aggregate table로 전환해야 합니다.
@@ -149,7 +151,7 @@
 - `git diff --check`
 - `git rev-list --left-right --count "HEAD...@{u}"`
 
-이번 문서 재작성은 코드 동작을 바꾸지 않는 문서 전용 변경입니다.
+이번 hardening에서는 trusted upstream auth gate와 대표 RBAC deny 테스트를 추가했으며, 공개 SaaS readiness는 여전히 false로 유지합니다.
 
 ## 관련 커밋
 

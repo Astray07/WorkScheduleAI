@@ -7,6 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api.security import ADMIN_ROLES, READ_ROLES, require_roles
 from work_schedule_ai.db.models import Employee, EmployeeRole, Organization, Role
 
 
@@ -76,6 +77,7 @@ def bulk_paste_employees(
     request: EmployeeBulkPasteRequest,
     db_session: Session = Depends(get_db_session),
 ) -> EmployeeBulkPasteResponse:
+    require_roles(db_session, ADMIN_ROLES)
     organization = db_session.get(Organization, organization_id)
     if organization is None:
         raise HTTPException(
@@ -122,6 +124,7 @@ def list_employees(
     organization_id: str,
     db_session: Session = Depends(get_db_session),
 ) -> list[EmployeeDetailResponse]:
+    require_roles(db_session, READ_ROLES)
     _get_organization_or_404(organization_id, db_session)
     employees = list(
         db_session.execute(
@@ -146,6 +149,7 @@ def update_employee(
     request: EmployeeUpdateRequest,
     db_session: Session = Depends(get_db_session),
 ) -> EmployeeDetailResponse:
+    require_roles(db_session, ADMIN_ROLES)
     _get_organization_or_404(organization_id, db_session)
     employee = db_session.get(Employee, employee_id)
     if employee is None or employee.organization_id != organization_id:
@@ -219,6 +223,7 @@ def deactivate_employee(
     employee_id: str,
     db_session: Session = Depends(get_db_session),
 ) -> Response:
+    require_roles(db_session, ADMIN_ROLES)
     _get_organization_or_404(organization_id, db_session)
     employee = db_session.get(Employee, employee_id)
     if employee is None or employee.organization_id != organization_id:

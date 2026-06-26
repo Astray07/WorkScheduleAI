@@ -7,6 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api.security import ADMIN_ROLES, READ_ROLES, require_roles
 from work_schedule_ai.db.models import (
     Employee,
     Organization,
@@ -41,6 +42,7 @@ def list_pair_constraints(
     organization_id: str,
     db_session: Session = Depends(get_db_session),
 ) -> list[PairConstraintResponse]:
+    require_roles(db_session, READ_ROLES)
     _get_organization_or_404(organization_id, db_session)
     pair_constraints = db_session.execute(
         select(PairConstraint)
@@ -63,6 +65,7 @@ def create_pair_constraint(
     request: PairConstraintCreateRequest,
     db_session: Session = Depends(get_db_session),
 ) -> PairConstraintResponse:
+    require_roles(db_session, ADMIN_ROLES)
     organization = db_session.get(Organization, organization_id)
     if organization is None:
         raise HTTPException(
@@ -156,6 +159,7 @@ def update_pair_constraint(
     request: PairConstraintCreateRequest,
     db_session: Session = Depends(get_db_session),
 ) -> PairConstraintResponse:
+    require_roles(db_session, ADMIN_ROLES)
     _get_organization_or_404(organization_id, db_session)
     pair_constraint = db_session.get(PairConstraint, pair_constraint_id)
     if pair_constraint is None or pair_constraint.organization_id != organization_id:
@@ -203,6 +207,7 @@ def delete_pair_constraint(
     pair_constraint_id: str,
     db_session: Session = Depends(get_db_session),
 ) -> Response:
+    require_roles(db_session, ADMIN_ROLES)
     _get_organization_or_404(organization_id, db_session)
     pair_constraint = db_session.get(PairConstraint, pair_constraint_id)
     if pair_constraint is None or pair_constraint.organization_id != organization_id:
