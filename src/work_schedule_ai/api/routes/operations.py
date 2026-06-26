@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import csv
 from datetime import date, datetime
+from io import StringIO
 import json
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -199,15 +201,7 @@ def get_organization_audit_logs(
     db_session: Session = Depends(get_db_session),
 ) -> AuditLogListResponse:
     require_roles(db_session, ADMIN_ROLES)
-    bounded_limit = min(max(limit, 1), 100)
-    logs = list(
-        db_session.execute(
-            select(AuditLog)
-            .where(AuditLog.organization_id == organization_id)
-            .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
-            .limit(bounded_limit)
-        ).scalars()
-    )
+    logs = _audit_logs_for_export(organization_id, limit, db_session, max_limit=100)
     return AuditLogListResponse(
         organization_id=organization_id,
         entries=[
@@ -222,6 +216,51 @@ def get_organization_audit_logs(
             )
             for log in logs
         ],
+    )
+
+
+@router.get("/organizations/{organization_id}/audit-logs/export")
+def export_organization_audit_logs(
+    organization_id: str,
+    format: Literal["csv"] = "csv",
+    limit: int = 1000,
+    db_session: Session = Depends(get_db_session),
+) -> Response:
+    require_roles(db_session, ADMIN_ROLES)
+    _ = format
+    logs = _audit_logs_for_export(organization_id, limit, db_session, max_limit=1000)
+    output = StringIO(newline="")
+    fieldnames = [
+        "id",
+        "created_at",
+        "actor_user_id",
+        "action",
+        "target_type",
+        "target_id",
+        "metadata_json",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for log in logs:
+        writer.writerow(
+            {
+                "id": log.id,
+                "created_at": log.created_at.isoformat(),
+                "actor_user_id": log.actor_user_id or "",
+                "action": log.action,
+                "target_type": log.target_type,
+                "target_id": log.target_id,
+                "metadata_json": log.metadata_json,
+            }
+        )
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="work_schedule_ai_audit_{organization_id}.csv"'
+            )
+        },
     )
 
 
@@ -558,6 +597,24 @@ def _time_part(value: str) -> str | None:
     if "T" not in value:
         return None
     return value.split("T", 1)[1][:5]
+
+
+def _audit_logs_for_export(
+    organization_id: str,
+    limit: int,
+    db_session: Session,
+    *,
+    max_limit: int,
+) -> list[AuditLog]:
+    bounded_limit = min(max(limit, 1), max_limit)
+    return list(
+        db_session.execute(
+            select(AuditLog)
+            .where(AuditLog.organization_id == organization_id)
+            .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+            .limit(bounded_limit)
+        ).scalars()
+    )
 
 
 def _parse_metadata(raw_metadata: str) -> dict[str, Any]:

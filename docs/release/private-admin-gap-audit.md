@@ -77,6 +77,7 @@
 - 확정본은 변경 불가능한 결과 snapshot을 저장합니다.
 - 확정본 Excel export는 저장된 snapshot을 기준으로 생성됩니다.
 - 수동 배정 저장과 확정본 생성은 audit log를 남깁니다.
+- 조직 audit log는 UI 조회와 CSV export API를 지원하며 tenant scope와 관리자 권한으로 제한됩니다.
 - 컴플라이언스 경고는 법률 자동 판단이 아니라 운영 검토용 warning입니다.
 - blocking warning override는 `warning_code`, 직원, 슬롯 또는 ISO 주차, 현재 warning snapshot hash가 일치해야 확정 시 인정됩니다.
 - warning override 사유와 actor는 audit log에 기록됩니다.
@@ -163,7 +164,7 @@
 
 1. 인증, 멤버십, tenant 접근 제어를 먼저 구현하고 endpoint별 권한 테스트를 계속 추가해야 합니다. 정책, 가져오기, 기준정보 mutation의 저권한 거부 테스트는 추가되었지만 전체 endpoint matrix는 아직 후속 hardening 범위입니다.
 2. Railway 스테이징에서 API, worker, PostgreSQL, Redis, frontend를 실제로 연결한 end-to-end smoke를 실행해야 합니다.
-3. 운영 보안과 관측성을 보강해야 합니다. 최소한 audit log 조회, readiness/metrics 운영 확인, 장애 시 worker 재시도와 실패 추적 기준이 필요합니다.
+3. 운영 보안과 관측성을 보강해야 합니다. audit log 조회/export와 readiness/metrics는 존재하지만, 장애 시 worker 재시도와 실패 추적 기준은 더 정리해야 합니다.
 4. 장기 fairness 데이터가 커질 경우를 대비해 확정본 snapshot JSON 파싱 방식의 한계를 측정하고, 필요하면 aggregate table로 전환해야 합니다.
 5. 일반 사용자 요청, 조직 초대, 알림은 공개 또는 다중 사용자 파일럿 전에 구현해야 합니다. 비공개 단일 관리자 검증만 계속한다면 후순위로 둘 수 있습니다.
 6. 제품 운영 문서를 정리해야 합니다. 스테이징 배포 절차, seed data, rollback, 백업, 장애 대응 체크리스트가 필요합니다.

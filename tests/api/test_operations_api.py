@@ -1,5 +1,7 @@
 from collections.abc import Generator
+import csv
 from datetime import date, timedelta
+import io
 import json
 
 import pytest
@@ -130,6 +132,60 @@ def test_organization_audit_logs_returns_recent_entries(
     assert payload["entries"][0]["action"] == "publication_created"
     assert payload["entries"][0]["metadata"] == {"schedule_run_id": "run_1"}
     assert payload["entries"][0]["actor_user_id"] == "user_1"
+
+
+def test_organization_audit_logs_export_returns_tenant_scoped_csv(
+    client: TestClient,
+    db_session: Session,
+):
+    now = utc_now()
+    db_session.add_all(
+        [
+            AuditLog(
+                id="audit_old",
+                organization_id="org_1",
+                actor_user_id=None,
+                action="manual_assignment_saved",
+                target_type="assignment",
+                target_id="assignment_1",
+                metadata_json=json.dumps({"schedule_run_id": "run_1"}),
+                created_at=now - timedelta(minutes=10),
+            ),
+            AuditLog(
+                id="audit_new",
+                organization_id="org_1",
+                actor_user_id="user_1",
+                action="publication_created",
+                target_type="schedule_publication",
+                target_id="publication_1",
+                metadata_json=json.dumps({"schedule_run_id": "run_1"}),
+                created_at=now,
+            ),
+            AuditLog(
+                id="audit_other_org",
+                organization_id="org_2",
+                actor_user_id=None,
+                action="manual_assignment_saved",
+                target_type="assignment",
+                target_id="assignment_other",
+                metadata_json="{}",
+                created_at=now + timedelta(minutes=1),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = client.get("/operations/organizations/org_1/audit-logs/export")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "attachment" in response.headers["content-disposition"]
+    rows = list(csv.DictReader(io.StringIO(response.text)))
+    assert [row["id"] for row in rows] == ["audit_new", "audit_old"]
+    assert rows[0]["actor_user_id"] == "user_1"
+    assert rows[0]["action"] == "publication_created"
+    assert json.loads(rows[0]["metadata_json"]) == {"schedule_run_id": "run_1"}
+    assert "audit_other_org" not in response.text
 
 
 def test_fairness_summary_counts_assignments_for_run(

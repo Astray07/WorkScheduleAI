@@ -308,6 +308,23 @@ def test_auth_required_employee_cannot_list_rag_documents(monkeypatch):
     assert response.json()["detail"]["code"] == "ROLE_NOT_ALLOWED"
 
 
+def test_auth_required_viewer_cannot_export_audit_logs(monkeypatch):
+    _enable_trusted_header_auth(monkeypatch)
+    client = _client(
+        seed_membership=True,
+        role="viewer",
+        user_id="user_viewer",
+    )
+
+    response = client.get(
+        "/operations/organizations/org_1/audit-logs/export",
+        headers={"X-User-Id": "user_viewer"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "ROLE_NOT_ALLOWED"
+
+
 def test_auth_required_restricts_employee_request_to_linked_employee(monkeypatch):
     _enable_trusted_header_auth(monkeypatch)
     client = _client(

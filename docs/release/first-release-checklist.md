@@ -28,6 +28,7 @@
 - 발행된 ScheduleRun 읽기 전용 잠금
 - SchedulePublication snapshot 보존과 Excel 다운로드
 - manual edit validation/save API와 AuditLog 기록
+- 조직 audit log 조회와 CSV export API
 - LLM 개인정보 익명화, schema validation, fallback explanation
 - PostgreSQL RLS migration과 tenant context hook
 - auth enabled 상태에서 trusted upstream 설정이 없으면 조직 스코프 `X-User-Id` 요청 거부
