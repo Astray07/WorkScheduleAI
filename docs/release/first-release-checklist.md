@@ -71,6 +71,7 @@ Staging 게이트:
 - 관리자 회원가입/로그인, JWT/session 또는 서명 검증 기반 actor extraction, 요청 조직 컨텍스트 연결
 - 직원 모바일 signed link 검증을 조회/확인 API와 프론트 화면에 연결
 - 한국형 warning rule 세분화와 warning override 전용 운영 화면
+- demand/budget preview를 solver objective 또는 warning policy로 연결하는 정책 모델
 - assumption literal 기반 고급 CP-SAT 진단 모델 전체
 - 수동 편집 UI와 편집 이력 비교
 - FairnessLedger/ImportBatch 고도화

@@ -62,6 +62,12 @@
 - RAG query는 `SchedulePolicy` 또는 `ScheduleRun`을 직접 생성하거나 수정하지 않는 guardrail 테스트로 고정되어 있습니다.
 - 현재 retrieval은 keyword 기반이며 문서 제목과 chunk 본문을 함께 점수화합니다. embedding/vector index는 후속 품질 고도화 범위입니다.
 
+### 수요와 비용 Preview
+
+- demand driver와 labor budget은 solver objective를 직접 바꾸지 않고 preview API에서 staffing/cost gap을 보여주는 단계입니다.
+- preview는 under/over/matched staffing 상태, staffing variance, planned labor cost, budget variance, no/within/over budget 상태를 반환합니다.
+- over/under staffing penalty나 hard budget constraint를 solver objective로 반영하는 작업은 정책 모델과 테스트를 더 고정한 뒤 진행합니다.
+
 ### 확정과 감사성
 
 - `ScheduleRun`과 `SchedulePublication`은 분리되어 있습니다.

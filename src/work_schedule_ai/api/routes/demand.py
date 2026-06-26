@@ -47,6 +47,8 @@ class DemandCostPreviewResponse(BaseModel):
     period_end: date
     required_staff_count: int
     planned_staff_count: int
+    staffing_variance_count: int
+    staffing_status: str
     under_staffed_count: int
     over_staffed_count: int
     planned_cost_cents: int
@@ -135,6 +137,7 @@ def get_demand_cost_preview(
         ).scalars()
     )
     required_staff_count = sum(driver.required_staff_count for driver in drivers)
+    staffing_variance = planned_staff_count - required_staff_count
     planned_cost_cents = planned_staff_count * hourly_rate_cents * hours_per_shift
     budget = db_session.execute(
         select(LaborBudget)
@@ -155,6 +158,8 @@ def get_demand_cost_preview(
         period_end=period_end,
         required_staff_count=required_staff_count,
         planned_staff_count=planned_staff_count,
+        staffing_variance_count=staffing_variance,
+        staffing_status=_staffing_status(staffing_variance),
         under_staffed_count=max(required_staff_count - planned_staff_count, 0),
         over_staffed_count=max(planned_staff_count - required_staff_count, 0),
         planned_cost_cents=planned_cost_cents,
@@ -168,6 +173,14 @@ def get_demand_cost_preview(
             else "within_budget"
         ),
     )
+
+
+def _staffing_status(staffing_variance: int) -> str:
+    if staffing_variance < 0:
+        return "under_staffed"
+    if staffing_variance > 0:
+        return "over_staffed"
+    return "matched"
 
 
 def _get_organization_or_404(
