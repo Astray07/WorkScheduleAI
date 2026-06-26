@@ -118,11 +118,11 @@
 
 ### 알림
 
-상태: 제외.
+상태: 부분 구현.
 
-이유: 현재 제품은 override 승인에 알림이 필요하다는 정보는 기록하지만, 이메일, Slack, 인앱 알림을 발송하지 않습니다.
+이유: 확정본 publication notification record, 직원 모바일 알림 표시, 관리자용 dispatch endpoint, delivery attempt/status tracking은 구현되어 있습니다. provider 설정이 없는 email/Slack은 발송하지 않고 suppressed 상태로 남깁니다.
 
-리스크: 커뮤니케이션은 수동으로 처리해야 합니다. 비공개 운영자 검증에는 허용 가능하지만, 자율적인 업무 흐름 도입에는 부족합니다.
+리스크: 실제 이메일/Slack provider 연동과 재시도/모니터링 운영은 아직 필요합니다. 비공개 운영자 검증에는 허용 가능하지만, 자율적인 외부 알림 흐름으로 보장하면 안 됩니다.
 
 ### 공개 회원가입
 
@@ -159,7 +159,7 @@
 ## 남은 출시 리스크
 
 - 인증과 tenant 접근 제어는 공개 URL 또는 실제 외부 파일럿의 release gate입니다. signed actor token 추출과 최소 로그인/session UX는 추가되었지만, 관리자 회원가입, 비밀번호 초기 설정/재설정, 키 회전, 운영 배포 검증은 남아 있습니다.
-- 직원 모바일 화면은 signed link 기반 조회/확인 API와 변경 알림 UX에 연결해야 합니다.
+- 직원 모바일 화면은 signed link 기반 조회/확인과 알림 목록에 연결되어 있지만, 변경 알림 상세 UX와 외부 provider 발송은 남아 있습니다.
 - production-ready라고 부르기 전 Railway/API/worker/PostgreSQL/Redis 스테이징 검증이 필요합니다.
 - 100명, 31일 기준 강화 benchmark는 opt-in이며 기본 CI runtime gate가 아닙니다.
 - 한국형 warning rule 세분화와 override 전용 운영 화면은 남은 제품화 작업입니다.

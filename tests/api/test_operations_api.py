@@ -18,6 +18,7 @@ from work_schedule_ai.db.models import (
     Base,
     Employee,
     Organization,
+    PublicationNotification,
     Role,
     SchedulePublication,
     ScheduleRun,
@@ -186,6 +187,75 @@ def test_organization_audit_logs_export_returns_tenant_scoped_csv(
     assert rows[0]["action"] == "publication_created"
     assert json.loads(rows[0]["metadata_json"]) == {"schedule_run_id": "run_1"}
     assert "audit_other_org" not in response.text
+
+
+def test_dispatch_publication_notifications_is_tenant_scoped(
+    client: TestClient,
+    db_session: Session,
+):
+    db_session.add_all(
+        [
+            Employee(id="emp_1", organization_id="org_1", employee_code="E001", name="Kim"),
+            Employee(id="emp_2", organization_id="org_2", employee_code="E002", name="Lee"),
+            _run("run_1", "succeeded"),
+            ScheduleRun(
+                id="run_2",
+                organization_id="org_2",
+                period_start=date(2026, 7, 1),
+                period_end=date(2026, 7, 7),
+                template="one_shift_per_day",
+                deterministic_mode=True,
+                timeout_seconds=30,
+                status="succeeded",
+                solver_status=None,
+                solution_quality="unknown",
+                current_attempt_no=1,
+                recalculation_count=0,
+            ),
+            _publication("publication_1", "run_1", date(2026, 7, 1), date(2026, 7, 7), [], []),
+            SchedulePublication(
+                id="publication_2",
+                organization_id="org_2",
+                schedule_run_id="run_2",
+                period_start=date(2026, 7, 1),
+                period_end=date(2026, 7, 7),
+                status="published",
+                assignment_snapshot_hash="assignment_hash_2",
+                issue_snapshot_hash="issue_hash_2",
+            ),
+            PublicationNotification(
+                id="notification_1",
+                organization_id="org_1",
+                publication_id="publication_1",
+                employee_id="emp_1",
+                notification_type="published",
+                channel="in_app",
+                status="pending_recorded",
+            ),
+            PublicationNotification(
+                id="notification_2",
+                organization_id="org_2",
+                publication_id="publication_2",
+                employee_id="emp_2",
+                notification_type="published",
+                channel="in_app",
+                status="pending_recorded",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = client.post("/operations/organizations/org_1/publication-notifications/dispatch")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "organization_id": "org_1",
+        "sent": 1,
+        "suppressed": 0,
+        "failed": 0,
+    }
+    assert db_session.get(PublicationNotification, "notification_1").status == "sent"
+    assert db_session.get(PublicationNotification, "notification_2").status == "pending_recorded"
 
 
 def test_fairness_summary_counts_assignments_for_run(

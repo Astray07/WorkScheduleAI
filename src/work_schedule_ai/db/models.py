@@ -1199,6 +1199,12 @@ class PublicationNotification(Base):
         nullable=False,
         default=utc_now,
     )
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    delivery_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_delivery_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ComplianceWarningOverride(Base):

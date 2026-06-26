@@ -31,6 +31,7 @@ from work_schedule_ai.db.models import (
     ScheduleRun,
     ShiftSlot,
 )
+from work_schedule_ai.notifications.dispatcher import dispatch_pending_notifications
 
 
 router = APIRouter(prefix="/operations", tags=["operations"])
@@ -126,6 +127,13 @@ class SecurityReleaseGateResponse(BaseModel):
     warnings: list[str]
 
 
+class NotificationDispatchResponse(BaseModel):
+    organization_id: str
+    sent: int
+    suppressed: int
+    failed: int
+
+
 @router.get(
     "/schedule-runs/metrics",
     response_model=ScheduleRunMetricsResponse,
@@ -198,6 +206,29 @@ def get_security_release_gate() -> SecurityReleaseGateResponse:
         actor_extraction_mode=actor_mode,
         public_saas_ready=not warnings,
         warnings=warnings,
+    )
+
+
+@router.post(
+    "/organizations/{organization_id}/publication-notifications/dispatch",
+    response_model=NotificationDispatchResponse,
+)
+def dispatch_organization_publication_notifications(
+    organization_id: str,
+    limit: int = 100,
+    db_session: Session = Depends(get_db_session),
+) -> NotificationDispatchResponse:
+    require_roles(db_session, ADMIN_ROLES)
+    summary = dispatch_pending_notifications(
+        db_session,
+        organization_id=organization_id,
+        limit=limit,
+    )
+    return NotificationDispatchResponse(
+        organization_id=organization_id,
+        sent=summary.sent,
+        suppressed=summary.suppressed,
+        failed=summary.failed,
     )
 
 
