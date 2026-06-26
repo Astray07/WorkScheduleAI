@@ -13,7 +13,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   DEFAULT_SCENARIO_CONFIG,
   MAX_PERIOD_DAYS,
@@ -104,6 +104,15 @@ import {
   sortedLongTermFairnessRows,
   type LongTermFairnessSource,
 } from "./visibility";
+import {
+  acknowledgementStatusLabel,
+  budgetStatusLabel,
+  complianceSeverityLabel,
+  employeeRequestStatusLabel,
+  employeeScheduleCards,
+  ragConfidenceLabel,
+  type EmployeeScheduleCard,
+} from "./roadmap";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "infeasible"]);
@@ -171,6 +180,8 @@ type Slot = {
   id: string;
   local_date: string;
   label: string;
+  starts_at: string;
+  ends_at: string;
 };
 
 type Requirement = {
@@ -297,6 +308,69 @@ type LongTermFairnessSummary = {
   rows: LongTermFairnessRow[];
 };
 
+type EmployeeRequestItem = {
+  id: string;
+  employee_id: string;
+  type: string;
+  status: string;
+  starts_at: string;
+  ends_at: string;
+  note: string | null;
+};
+
+type PublicationAcknowledgementItem = {
+  id: string;
+  publication_id: string;
+  employee_id: string;
+  status: string;
+  acknowledged_at: string | null;
+};
+
+type PublicationAcknowledgementList = {
+  organization_id: string;
+  publication_id: string;
+  acknowledgements: PublicationAcknowledgementItem[];
+};
+
+type ComplianceWarningItem = {
+  code: string;
+  severity: string;
+  publish_blocking: boolean;
+  employee_name: string | null;
+  message: string;
+  hours: number | null;
+};
+
+type ComplianceWarningResponse = {
+  legal_disclaimer: string;
+  warnings: ComplianceWarningItem[];
+};
+
+type RagEvidenceItem = {
+  source_type: string;
+  document_title: string;
+  excerpt: string;
+  checked_at: string;
+  confidence: number;
+};
+
+type RagGrounding = {
+  status: string;
+  confidence: string;
+  evidence: RagEvidenceItem[];
+  safety_notes: string[];
+};
+
+type DemandCostPreview = {
+  required_staff_count: number;
+  planned_staff_count: number;
+  under_staffed_count: number;
+  over_staffed_count: number;
+  planned_cost_cents: number;
+  budget_amount_cents: number | null;
+  budget_status: string;
+};
+
 type FieldError = {
   field: string;
   code: string;
@@ -372,6 +446,14 @@ export function App() {
   const [comparisonBaseRunId, setComparisonBaseRunId] = useState("");
   const [comparisonCandidateRunId, setComparisonCandidateRunId] = useState("");
   const [runComparison, setRunComparison] = useState<ScheduleRunComparison | null>(null);
+  const [employeeRequests, setEmployeeRequests] = useState<EmployeeRequestItem[]>([]);
+  const [publicationAcknowledgements, setPublicationAcknowledgements] = useState<
+    PublicationAcknowledgementItem[]
+  >([]);
+  const [complianceWarningSummary, setComplianceWarningSummary] =
+    useState<ComplianceWarningResponse | null>(null);
+  const [ragGrounding, setRagGrounding] = useState<RagGrounding | null>(null);
+  const [demandPreview, setDemandPreview] = useState<DemandCostPreview | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloadState, setDownloadState] = useState("대기");
@@ -426,6 +508,58 @@ export function App() {
       count: counts.get(employee.id) ?? 0,
     }));
   }, [demo, result]);
+  const mobileEmployee = demo?.employees[0] ?? null;
+  const mobileEmployeeCards = useMemo(() => {
+    if (!mobileEmployee || !result) return [];
+    return employeeScheduleCards(
+      mobileEmployee.id,
+      result.slots,
+      result.assignments,
+      result.requirements,
+    );
+  }, [mobileEmployee, result]);
+
+  useEffect(() => {
+    if (!window.location.pathname.startsWith("/employee") || demo) return;
+    const params = new URLSearchParams(window.location.search);
+    const organizationId = params.get("organizationId") ?? "";
+    const runId = params.get("runId") ?? "";
+    const employeeId = params.get("employeeId") ?? "";
+    if (!organizationId || !runId || !employeeId) return;
+    let canceled = false;
+    async function loadEmployeeContext() {
+      setBusy("employee-load");
+      setError(null);
+      try {
+        const [employees, nextResult] = await Promise.all([
+          api<ManagedEmployee[]>(`/organizations/${organizationId}/employees`),
+          fetchResult(organizationId, runId),
+        ]);
+        if (canceled) return;
+        const employee = employees.find((item) => item.id === employeeId);
+        if (!employee) throw new Error("직원 정보를 찾을 수 없습니다.");
+        setDemo({
+          organizationId,
+          runId,
+          employees: [{
+            id: employee.id,
+            employee_code: employee.employee_code,
+            name: employee.name,
+          }],
+        });
+        setResult(nextResult);
+        await refreshRoadmapPanels(organizationId, runId, nextResult);
+      } catch (caught) {
+        if (!canceled) setError(messageFromError(caught));
+      } finally {
+        if (!canceled) setBusy(null);
+      }
+    }
+    void loadEmployeeContext();
+    return () => {
+      canceled = true;
+    };
+  }, [demo]);
 
   function clearRunState() {
     setDemo(null);
@@ -437,6 +571,11 @@ export function App() {
     setComparisonBaseRunId("");
     setComparisonCandidateRunId("");
     setRunComparison(null);
+    setEmployeeRequests([]);
+    setPublicationAcknowledgements([]);
+    setComplianceWarningSummary(null);
+    setRagGrounding(null);
+    setDemandPreview(null);
     setDownloadState("대기");
     setError(null);
   }
@@ -522,6 +661,7 @@ export function App() {
       const nextResult = await waitForCompletedResult(organization.id, run.id);
       setResult(nextResult);
       await refreshVisibility(organization.id, run.id);
+      await refreshRoadmapPanels(organization.id, run.id, nextResult);
       await refreshReferenceData(organization.id);
     } catch (caught) {
       setError(messageFromError(caught));
@@ -542,8 +682,10 @@ export function App() {
           body: { reason: "운영 관리자 승인", notification_required: true },
         },
       );
-      setResult(await fetchResult(demo.organizationId, demo.runId));
+      const nextResult = await fetchResult(demo.organizationId, demo.runId);
+      setResult(nextResult);
       await refreshVisibility(demo.organizationId, demo.runId);
+      await refreshRoadmapPanels(demo.organizationId, demo.runId, nextResult);
     } catch (caught) {
       setError(messageFromError(caught));
     } finally {
@@ -560,8 +702,10 @@ export function App() {
         method: "POST",
         body: { reason: "승인된 완화안을 반영합니다." },
       });
-      setResult(await waitForCompletedResult(demo.organizationId, demo.runId));
+      const nextResult = await waitForCompletedResult(demo.organizationId, demo.runId);
+      setResult(nextResult);
       await refreshVisibility(demo.organizationId, demo.runId);
+      await refreshRoadmapPanels(demo.organizationId, demo.runId, nextResult);
     } catch (caught) {
       setError(messageFromError(caught));
     } finally {
@@ -581,8 +725,10 @@ export function App() {
           expected_issue_snapshot_hash: result.issue_snapshot_hash,
         },
       });
-      setResult(await fetchResult(demo.organizationId, demo.runId));
+      const nextResult = await fetchResult(demo.organizationId, demo.runId);
+      setResult(nextResult);
       await refreshVisibility(demo.organizationId, demo.runId);
+      await refreshRoadmapPanels(demo.organizationId, demo.runId, nextResult);
     } catch (caught) {
       setError(messageFromError(caught));
     } finally {
@@ -861,8 +1007,10 @@ export function App() {
           body: manualEditRequest(manualEditDraft),
         },
       );
-      setResult(await fetchResult(demo.organizationId, demo.runId));
+      const nextResult = await fetchResult(demo.organizationId, demo.runId);
+      setResult(nextResult);
       await refreshVisibility(demo.organizationId, demo.runId);
+      await refreshRoadmapPanels(demo.organizationId, demo.runId, nextResult);
       await refreshReferenceData(demo.organizationId);
       setManualEditDraft(null);
       setManualEditValidation(null);
@@ -921,6 +1069,172 @@ export function App() {
       if (showBusy) setError(messageFromError(caught));
     } finally {
       if (showBusy) setBusy(null);
+    }
+  }
+
+  async function refreshRoadmapPanels(
+    organizationId: string,
+    runId: string,
+    activeResult = result,
+  ) {
+    const [requestResponse, complianceResponse, acknowledgementResponse] =
+      await Promise.allSettled([
+        api<EmployeeRequestItem[]>(`/organizations/${organizationId}/employee-requests`),
+        api<ComplianceWarningResponse>(
+          `/organizations/${organizationId}/schedule-runs/${runId}/compliance-warnings`,
+        ),
+        activeResult?.publication
+          ? api<PublicationAcknowledgementList>(
+              `/organizations/${organizationId}/schedule-publications/${activeResult.publication.id}/acknowledgements`,
+            )
+          : Promise.resolve({
+              acknowledgements: [],
+              organization_id: organizationId,
+              publication_id: "",
+            }),
+      ]);
+
+    setEmployeeRequests(
+      requestResponse.status === "fulfilled" ? requestResponse.value : [],
+    );
+    setComplianceWarningSummary(
+      complianceResponse.status === "fulfilled" ? complianceResponse.value : null,
+    );
+    setPublicationAcknowledgements(
+      acknowledgementResponse.status === "fulfilled"
+        ? acknowledgementResponse.value.acknowledgements
+        : [],
+    );
+    await Promise.allSettled([
+      loadRagEvidence(organizationId),
+      loadDemandPreview(organizationId, activeResult),
+    ]);
+  }
+
+  async function loadRagEvidence(organizationId = demo?.organizationId ?? workspaceOrganization?.id) {
+    if (!organizationId) return;
+    const response = await api<RagGrounding>(`/organizations/${organizationId}/rag/query`, {
+      method: "POST",
+      body: {
+        query: "근무표 휴식 야간 주 52시간 정책",
+        purpose: "operator_explanation",
+      },
+    });
+    setRagGrounding(response);
+  }
+
+  async function loadDemandPreview(
+    organizationId = demo?.organizationId ?? workspaceOrganization?.id,
+    activeResult = result,
+  ) {
+    if (!organizationId || !activeResult?.slots.length) {
+      setDemandPreview(null);
+      return;
+    }
+    const sortedDates = activeResult.slots
+      .map((slot) => slot.local_date)
+      .sort((left, right) => left.localeCompare(right));
+    const params = new URLSearchParams({
+      period_start: sortedDates[0],
+      period_end: sortedDates[sortedDates.length - 1],
+      planned_staff_count: String(activeResult.assignments.length),
+      hourly_rate_cents: "1500000",
+      hours_per_shift: "8",
+    });
+    const response = await api<DemandCostPreview>(
+      `/organizations/${organizationId}/demand-cost-preview?${params.toString()}`,
+    );
+    setDemandPreview(response);
+  }
+
+  async function submitEmployeeRequest({
+    employeeId,
+    endsAt,
+    note,
+    startsAt,
+  }: {
+    employeeId: string;
+    endsAt: string;
+    note: string;
+    startsAt: string;
+  }) {
+    if (!demo) return;
+    setBusy("employee-request");
+    setError(null);
+    try {
+      await api(`/organizations/${demo.organizationId}/employee-requests`, {
+        method: "POST",
+        body: {
+          employee_id: employeeId,
+          type: "unavailable",
+          starts_at: startsAt,
+          ends_at: endsAt,
+          note: note || null,
+        },
+      });
+      await refreshRoadmapPanels(demo.organizationId, demo.runId, result);
+    } catch (caught) {
+      setError(messageFromError(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function approveEmployeeRequest(requestId: string) {
+    if (!demo) return;
+    setBusy("employee-request");
+    setError(null);
+    try {
+      await api(`/organizations/${demo.organizationId}/employee-requests/${requestId}/approve`, {
+        method: "POST",
+        body: { reason: "운영 관리자 승인" },
+      });
+      await refreshReferenceData(demo.organizationId);
+      await refreshRoadmapPanels(demo.organizationId, demo.runId, result);
+      await refreshVisibility(demo.organizationId, demo.runId);
+    } catch (caught) {
+      setError(messageFromError(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function rejectEmployeeRequest(requestId: string) {
+    if (!demo) return;
+    setBusy("employee-request");
+    setError(null);
+    try {
+      await api(`/organizations/${demo.organizationId}/employee-requests/${requestId}/reject`, {
+        method: "POST",
+        body: { reason: "운영 관리자 거절" },
+      });
+      await refreshRoadmapPanels(demo.organizationId, demo.runId, result);
+      await refreshVisibility(demo.organizationId, demo.runId);
+    } catch (caught) {
+      setError(messageFromError(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function acknowledgePublication(employeeId: string) {
+    if (!demo || !result?.publication) return;
+    setBusy("acknowledge");
+    setError(null);
+    try {
+      await api(
+        `/organizations/${demo.organizationId}/schedule-publications/${result.publication.id}/acknowledgements/${employeeId}`,
+        {
+          method: "POST",
+          body: { status: "acknowledged" },
+        },
+      );
+      await refreshRoadmapPanels(demo.organizationId, demo.runId, result);
+      await refreshVisibility(demo.organizationId, demo.runId);
+    } catch (caught) {
+      setError(messageFromError(caught));
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -1266,6 +1580,24 @@ export function App() {
     };
   }
 
+  if (window.location.pathname.startsWith("/employee")) {
+    return (
+      <EmployeeMobileView
+        acknowledgements={publicationAcknowledgements.filter(
+          (acknowledgement) => acknowledgement.employee_id === mobileEmployee?.id,
+        )}
+        busy={busy}
+        cards={mobileEmployeeCards}
+        employee={mobileEmployee}
+        error={error}
+        onAcknowledge={acknowledgePublication}
+        onSubmitRequest={submitEmployeeRequest}
+        publication={result?.publication ?? null}
+        requests={employeeRequests.filter((request) => request.employee_id === mobileEmployee?.id)}
+      />
+    );
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -1458,6 +1790,19 @@ export function App() {
               }}
               onCompare={() => loadRunComparison()}
             />
+            <RoadmapOpsPanel
+              acknowledgements={publicationAcknowledgements}
+              busy={busy}
+              compliance={complianceWarningSummary}
+              demandPreview={demandPreview}
+              employees={demo?.employees ?? []}
+              onApproveRequest={approveEmployeeRequest}
+              onRefreshDemand={() => loadDemandPreview()}
+              onRefreshRag={() => loadRagEvidence()}
+              onRejectRequest={rejectEmployeeRequest}
+              ragGrounding={ragGrounding}
+              requests={employeeRequests}
+            />
             <AuditLogPanel entries={auditLogs} />
             <div className="action-stack">
               <button disabled={!result?.proposals.length || busy === "approve"} onClick={approveProposal}>
@@ -1604,6 +1949,309 @@ function AssignmentCell({
     );
   }
   return <span className="muted">-</span>;
+}
+
+function RoadmapOpsPanel({
+  acknowledgements,
+  busy,
+  compliance,
+  demandPreview,
+  employees,
+  onApproveRequest,
+  onRefreshDemand,
+  onRefreshRag,
+  onRejectRequest,
+  ragGrounding,
+  requests,
+}: {
+  acknowledgements: PublicationAcknowledgementItem[];
+  busy: string | null;
+  compliance: ComplianceWarningResponse | null;
+  demandPreview: DemandCostPreview | null;
+  employees: Employee[];
+  onApproveRequest: (requestId: string) => void;
+  onRefreshDemand: () => void;
+  onRefreshRag: () => void;
+  onRejectRequest: (requestId: string) => void;
+  ragGrounding: RagGrounding | null;
+  requests: EmployeeRequestItem[];
+}) {
+  const employeeNames = new Map(employees.map((employee) => [employee.id, employee.name]));
+  const pendingRequests = requests.filter((request) => request.status === "pending");
+  const warnings = compliance?.warnings ?? [];
+  return (
+    <div className="roadmap-panel">
+      <SectionTitle title="운영 확장 패널" />
+      <div className="roadmap-section">
+        <div className="roadmap-section-head">
+          <strong>직원 요청 Queue</strong>
+          <span>{pendingRequests.length}건 대기</span>
+        </div>
+        <div className="roadmap-list">
+          {requests.length ? requests.slice(0, 5).map((request) => (
+            <div className="roadmap-row" key={request.id}>
+              <div>
+                <strong>{employeeNames.get(request.employee_id) ?? request.employee_id}</strong>
+                <span>
+                  {employeeRequestStatusLabel(request.status)} · {dateInputValue(request.starts_at)}
+                </span>
+              </div>
+              {request.status === "pending" ? (
+                <div className="roadmap-actions">
+                  <button
+                    disabled={busy === "employee-request"}
+                    onClick={() => onApproveRequest(request.id)}
+                    type="button"
+                  >
+                    승인
+                  </button>
+                  <button
+                    disabled={busy === "employee-request"}
+                    onClick={() => onRejectRequest(request.id)}
+                    type="button"
+                  >
+                    거절
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          )) : <div className="empty-state compact-empty">요청 대기열이 비어 있습니다.</div>}
+        </div>
+      </div>
+
+      <div className="roadmap-section">
+        <div className="roadmap-section-head">
+          <strong>발행 확인 상태</strong>
+          <span>{acknowledgements.length}명</span>
+        </div>
+        <div className="roadmap-list">
+          {acknowledgements.length ? acknowledgements.slice(0, 5).map((acknowledgement) => (
+            <div className="roadmap-row" key={acknowledgement.id}>
+              <div>
+                <strong>{employeeNames.get(acknowledgement.employee_id) ?? acknowledgement.employee_id}</strong>
+                <span>{acknowledgementStatusLabel(acknowledgement.status)}</span>
+              </div>
+              <em>{acknowledgement.acknowledged_at ? formatDateTime(acknowledgement.acknowledged_at) : "대기"}</em>
+            </div>
+          )) : <div className="empty-state compact-empty">확정 후 직원별 확인 상태가 생성됩니다.</div>}
+        </div>
+      </div>
+
+      <div className="roadmap-section">
+        <div className="roadmap-section-head">
+          <strong>컴플라이언스 Warning</strong>
+          <span>{warnings.length}건</span>
+        </div>
+        <div className="roadmap-list">
+          {warnings.length ? warnings.slice(0, 5).map((warning) => (
+            <div className={`roadmap-row warning-${warning.severity}`} key={`${warning.code}-${warning.employee_name ?? "all"}`}>
+              <div>
+                <strong>{complianceSeverityLabel(warning.severity)} · {warning.code}</strong>
+                <span>{warning.message}</span>
+              </div>
+              <em>{warning.publish_blocking ? "차단" : "발행 가능"}</em>
+            </div>
+          )) : <div className="success-box">현재 표시할 경고가 없습니다.</div>}
+        </div>
+        {compliance?.legal_disclaimer ? (
+          <p className="roadmap-note">{compliance.legal_disclaimer}</p>
+        ) : null}
+      </div>
+
+      <div className="roadmap-section">
+        <div className="roadmap-section-head">
+          <strong>RAG 근거</strong>
+          <button onClick={onRefreshRag} type="button">근거 새로고침</button>
+        </div>
+        <div className="roadmap-list">
+          <div className="roadmap-row">
+            <div>
+              <strong>{ragGrounding ? ragConfidenceLabel(ragGrounding.confidence) : "대기"}</strong>
+              <span>{ragGrounding?.status ?? "검색 전"}</span>
+            </div>
+            <em>{ragGrounding?.evidence.length ?? 0}개 조각</em>
+          </div>
+          {ragGrounding?.evidence.slice(0, 3).map((evidence) => (
+            <div className="roadmap-row evidence-row" key={`${evidence.document_title}-${evidence.checked_at}`}>
+              <div>
+                <strong>{evidence.document_title}</strong>
+                <span>
+                  {evidence.source_type} · confidence {Math.round(evidence.confidence * 100)}%
+                  {" · "}
+                  {evidence.excerpt}
+                </span>
+              </div>
+              <em>{dateInputValue(evidence.checked_at)}</em>
+            </div>
+          ))}
+          {ragGrounding?.safety_notes.length ? (
+            <div className="roadmap-row warning-warning">
+              <div>
+                <strong>Safety notes</strong>
+                <span>{ragGrounding.safety_notes.join(" · ")}</span>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="roadmap-section">
+        <div className="roadmap-section-head">
+          <strong>수요/비용 Preview</strong>
+          <button onClick={onRefreshDemand} type="button">계산</button>
+        </div>
+        {demandPreview ? (
+          <>
+            <div className="summary-metrics">
+              <Metric label="필요/계획" value={`${demandPreview.required_staff_count}/${demandPreview.planned_staff_count}`} />
+              <Metric label="부족/초과" value={`${demandPreview.under_staffed_count}/${demandPreview.over_staffed_count}`} />
+              <Metric label="예산" value={budgetStatusLabel(demandPreview.budget_status)} />
+              <Metric label="계획 비용" value={formatWonFromCents(demandPreview.planned_cost_cents)} />
+              <Metric label="예산액" value={formatWonFromCents(demandPreview.budget_amount_cents)} />
+            </div>
+            {demandPreview.required_staff_count === 0 && demandPreview.budget_amount_cents === null ? (
+              <p className="roadmap-note">수요 driver와 예산 데이터가 아직 입력되지 않았습니다.</p>
+            ) : null}
+          </>
+        ) : <div className="empty-state compact-empty">근무표 생성 후 비용 미리보기를 계산합니다.</div>}
+      </div>
+    </div>
+  );
+}
+
+function EmployeeMobileView({
+  acknowledgements,
+  busy,
+  cards,
+  employee,
+  error,
+  onAcknowledge,
+  onSubmitRequest,
+  publication,
+  requests,
+}: {
+  acknowledgements: PublicationAcknowledgementItem[];
+  busy: string | null;
+  cards: EmployeeScheduleCard[];
+  employee: Employee | null;
+  error: string | null;
+  onAcknowledge: (employeeId: string) => void;
+  onSubmitRequest: (request: {
+    employeeId: string;
+    endsAt: string;
+    note: string;
+    startsAt: string;
+  }) => void;
+  publication: Publication | null;
+  requests: EmployeeRequestItem[];
+}) {
+  const [startDate, setStartDate] = useState(todayIsoDate());
+  const [endDate, setEndDate] = useState(todayIsoDate());
+  const [note, setNote] = useState("");
+  const acknowledgement = acknowledgements[0] ?? null;
+  if (!employee) {
+    return (
+      <main className="employee-shell">
+        <div className="employee-empty">
+          <strong>직원 화면 대기</strong>
+          <span>운영 콘솔에서 근무표를 생성하면 모바일 직원 화면이 표시됩니다.</span>
+        </div>
+      </main>
+    );
+  }
+  return (
+    <main className="employee-shell">
+      <header className="employee-topbar">
+        <div>
+          <span>WorkScheduleAI</span>
+          <h1>{employee.name}</h1>
+        </div>
+        <strong>{cards.length}개 근무</strong>
+      </header>
+      {error ? <div className="error-banner">{error}</div> : null}
+      <section className="employee-section">
+        <SectionTitle title="내 근무" />
+        <div className="employee-day-list">
+          {cards.length ? cards.map((card) => (
+            <div className="employee-shift-card" key={card.assignmentId}>
+              <div>
+                <strong>{dateDisplayLabel(card.localDate)}</strong>
+                <span>{slotDisplayLabel(card.label, card.localDate)}</span>
+              </div>
+              <em>{card.roleName}</em>
+            </div>
+          )) : <div className="empty-state compact-empty">아직 배정된 근무가 없습니다.</div>}
+        </div>
+      </section>
+      <section className="employee-section">
+        <SectionTitle title="확정 근무표 확인" />
+        {publication ? (
+          <div className="roadmap-row">
+            <div>
+              <strong>{acknowledgementStatusLabel(acknowledgement?.status ?? "pending")}</strong>
+              <span>{formatDateTime(publication.published_at)}</span>
+            </div>
+            {acknowledgement?.status === "acknowledged" ? (
+              <em>완료</em>
+            ) : (
+              <button
+                disabled={busy === "acknowledge"}
+                onClick={() => onAcknowledge(employee.id)}
+                type="button"
+              >
+                확인 완료
+              </button>
+            )}
+          </div>
+        ) : <div className="empty-state compact-empty">확정된 근무표가 아직 없습니다.</div>}
+      </section>
+      <section className="employee-section">
+        <SectionTitle title="불가 시간 요청" />
+        <div className="employee-request-form">
+          <label className="field-row">
+            <span>시작일</span>
+            <input onChange={(event) => setStartDate(event.target.value)} type="date" value={startDate} />
+          </label>
+          <label className="field-row">
+            <span>종료일</span>
+            <input onChange={(event) => setEndDate(event.target.value)} type="date" value={endDate} />
+          </label>
+          <label className="field-row field-row-wide">
+            <span>메모</span>
+            <textarea onChange={(event) => setNote(event.target.value)} rows={3} value={note} />
+          </label>
+          <button
+            className="primary-action"
+            disabled={busy === "employee-request"}
+            onClick={() =>
+              onSubmitRequest({
+                employeeId: employee.id,
+                endsAt: `${addDaysIso(endDate, 1)}T00:00:00+09:00`,
+                note,
+                startsAt: `${startDate}T00:00:00+09:00`,
+              })
+            }
+            type="button"
+          >
+            요청 제출
+          </button>
+        </div>
+      </section>
+      <section className="employee-section">
+        <SectionTitle title="요청 상태" />
+        <div className="roadmap-list">
+          {requests.length ? requests.map((request) => (
+            <div className="roadmap-row" key={request.id}>
+              <div>
+                <strong>{employeeRequestStatusLabel(request.status)}</strong>
+                <span>{dateInputValue(request.starts_at)} · {request.note ?? "메모 없음"}</span>
+              </div>
+            </div>
+          )) : <div className="empty-state compact-empty">제출한 요청이 없습니다.</div>}
+        </div>
+      </section>
+    </main>
+  );
 }
 
 function ManualEditPanel({
@@ -3562,6 +4210,15 @@ function roleCountsLabel(roleCounts: Record<string, number>) {
   const entries = Object.entries(roleCounts);
   if (!entries.length) return "역할 배정 없음";
   return entries.map(([roleName, count]) => `${roleName} ${count}`).join(" · ");
+}
+
+function formatWonFromCents(value: number | null) {
+  if (value === null) return "없음";
+  return `${Math.round(value / 100).toLocaleString("ko-KR")}원`;
+}
+
+function todayIsoDate() {
+  return new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" });
 }
 
 function dateInputValue(value: string) {

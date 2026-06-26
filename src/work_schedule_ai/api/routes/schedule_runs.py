@@ -16,15 +16,23 @@ from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api.security import ADMIN_ROLES, READ_ROLES, require_roles
 from work_schedule_ai.api.routes.policies import DEFAULT_POLICY
+from work_schedule_ai.compliance import (
+    ComplianceAssignment,
+    evaluate_compliance_warnings,
+)
 from work_schedule_ai.db.models import (
     AuditLog,
     Assignment as AssignmentRecord,
+    ComplianceWarningOverride,
     Employee,
     EmployeeRole,
     Organization,
     OverrideApproval,
     PairConstraint,
+    PublicationAcknowledgement,
+    PublicationNotification,
     RelaxationProposal as RelaxationProposalRecord,
     Role,
     ScheduleIssue as ScheduleIssueRecord,
@@ -355,6 +363,7 @@ def create_schedule_run(
     ),
     db_session: Session = Depends(get_db_session),
 ) -> ScheduleRunResponse:
+    require_roles(db_session, ADMIN_ROLES)
     organization = db_session.get(Organization, organization_id)
     if organization is None:
         raise HTTPException(
@@ -439,6 +448,7 @@ def list_schedule_runs(
     limit: int = 20,
     db_session: Session = Depends(get_db_session),
 ) -> ScheduleRunHistoryResponse:
+    require_roles(db_session, READ_ROLES)
     organization = db_session.get(Organization, organization_id)
     if organization is None:
         raise HTTPException(
@@ -470,6 +480,7 @@ def compare_schedule_runs(
     candidate_run_id: str,
     db_session: Session = Depends(get_db_session),
 ) -> ScheduleRunComparisonResponse:
+    require_roles(db_session, READ_ROLES)
     base_run = _get_schedule_run_or_404(organization_id, base_run_id, db_session)
     candidate_run = _get_schedule_run_or_404(
         organization_id,
@@ -488,6 +499,7 @@ def get_schedule_run(
     schedule_run_id: str,
     db_session: Session = Depends(get_db_session),
 ) -> ScheduleRunResponse:
+    require_roles(db_session, READ_ROLES)
     run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
     return _schedule_run_response(run, db_session)
 
@@ -501,6 +513,7 @@ def get_schedule_run_result(
     schedule_run_id: str,
     db_session: Session = Depends(get_db_session),
 ) -> ScheduleRunResultResponse:
+    require_roles(db_session, READ_ROLES)
     run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
     publication = _get_publication_for_run(run, db_session)
     artifacts = (
@@ -543,6 +556,7 @@ def validate_manual_edit(
     request: ManualEditValidationRequest,
     db_session: Session = Depends(get_db_session),
 ) -> ManualEditValidationResponse:
+    require_roles(db_session, ADMIN_ROLES)
     run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
     publication = _get_publication_for_run(run, db_session)
     if publication is not None and publication.status == "published":
@@ -575,6 +589,7 @@ def save_manual_edit(
     request: ManualEditValidationRequest,
     db_session: Session = Depends(get_db_session),
 ) -> AssignmentResponse:
+    actor = require_roles(db_session, ADMIN_ROLES)
     run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
     publication = _get_publication_for_run(run, db_session)
     if publication is not None and publication.status == "published":
@@ -686,7 +701,7 @@ def save_manual_edit(
         AuditLog(
             id=_new_id("audit"),
             organization_id=organization_id,
-            actor_user_id=None,
+            actor_user_id=actor.user_id,
             action="manual_assignment_saved",
             target_type="assignment",
             target_id=_external_artifact_id(run.id, assignment_id),
@@ -719,6 +734,7 @@ def cancel_schedule_run(
     schedule_run_id: str,
     db_session: Session = Depends(get_db_session),
 ) -> ScheduleRunResponse:
+    require_roles(db_session, ADMIN_ROLES)
     _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
     try:
         run = worker_cancel_schedule_run(db_session, schedule_run_id)
@@ -746,6 +762,7 @@ def approve_relaxation_proposal(
     request: ApproveRelaxationProposalRequest,
     db_session: Session = Depends(get_db_session),
 ) -> OverrideApprovalResponse:
+    require_roles(db_session, ADMIN_ROLES)
     run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
     artifacts = _result_artifacts_for_run(run, db_session)
     proposal = next(
@@ -821,6 +838,7 @@ def recalculate_schedule_run(
     ),
     db_session: Session = Depends(get_db_session),
 ) -> ScheduleRunResponse:
+    require_roles(db_session, ADMIN_ROLES)
     run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
 
     publication = _get_publication_for_run(run, db_session)
@@ -915,6 +933,7 @@ def publish_schedule_run(
     request: PublishScheduleRunRequest,
     db_session: Session = Depends(get_db_session),
 ) -> SchedulePublicationResponse:
+    require_roles(db_session, ADMIN_ROLES)
     run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
     artifacts = _result_artifacts_for_run(run, db_session)
     hashes = _artifact_hashes(artifacts)
@@ -942,6 +961,33 @@ def publish_schedule_run(
                 "field": "schedule_run_id",
             },
         )
+
+    blocking_warning_codes = {
+        warning.code
+        for warning in _compliance_warnings_for_artifacts(artifacts)
+        if warning.publish_blocking
+    }
+    if blocking_warning_codes:
+        overridden_codes = {
+            row[0]
+            for row in db_session.execute(
+                select(ComplianceWarningOverride.warning_code).where(
+                    ComplianceWarningOverride.organization_id == organization_id,
+                    ComplianceWarningOverride.schedule_run_id == schedule_run_id,
+                    ComplianceWarningOverride.warning_code.in_(blocking_warning_codes),
+                )
+            ).all()
+        }
+        missing_override_codes = sorted(blocking_warning_codes - overridden_codes)
+        if missing_override_codes:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "COMPLIANCE_OVERRIDE_REQUIRED",
+                    "message": "Blocking compliance warnings require override reasons.",
+                    "warning_codes": missing_override_codes,
+                },
+            )
 
     existing_publication = _get_publication_for_run(run, db_session)
     if existing_publication is not None:
@@ -991,6 +1037,33 @@ def publish_schedule_run(
         created_at=now,
     )
     db_session.add(publication)
+    db_session.flush()
+    affected_employee_ids = sorted(
+        {assignment.employee_id for assignment in artifacts.assignments}
+    )
+    for employee_id in affected_employee_ids:
+        db_session.add(
+            PublicationAcknowledgement(
+                id=_new_id("ack"),
+                organization_id=organization_id,
+                publication_id=publication.id,
+                employee_id=employee_id,
+                status="pending",
+                created_at=now,
+            )
+        )
+        db_session.add(
+            PublicationNotification(
+                id=_new_id("notification"),
+                organization_id=organization_id,
+                publication_id=publication.id,
+                employee_id=employee_id,
+                notification_type="published",
+                channel="in_app",
+                status="pending_recorded",
+                created_at=now,
+            )
+        )
     db_session.add(
         AuditLog(
             id=_new_id("audit"),
@@ -1022,6 +1095,7 @@ def download_schedule_publication_excel(
     publication_id: str,
     db_session: Session = Depends(get_db_session),
 ) -> Response:
+    require_roles(db_session, READ_ROLES)
     publication = db_session.execute(
         select(SchedulePublication).where(
             SchedulePublication.organization_id == organization_id,
@@ -3239,6 +3313,29 @@ def _stable_hash(payload: object) -> str:
 
 def _llm_explanation() -> LLMExplanation:
     return LLMExplanation(**fallback_explanation())
+
+
+def _compliance_warnings_for_artifacts(
+    artifacts: _MockArtifacts,
+):
+    slots_by_id = {slot.id: slot for slot in artifacts.slots}
+    assignments = []
+    for assignment in artifacts.assignments:
+        slot = slots_by_id.get(assignment.slot_id)
+        if slot is None:
+            continue
+        assignments.append(
+            ComplianceAssignment(
+                employee_id=assignment.employee_id,
+                employee_name=assignment.employee_name,
+                slot_id=slot.id,
+                local_date=slot.local_date.isoformat(),
+                label=slot.label,
+                starts_at=slot.starts_at,
+                ends_at=slot.ends_at,
+            )
+        )
+    return evaluate_compliance_warnings(assignments)
 
 
 def _new_id(prefix: str) -> str:

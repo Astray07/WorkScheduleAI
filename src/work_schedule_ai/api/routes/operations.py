@@ -10,6 +10,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api.security import (
+    RBAC_ROLES,
+    is_auth_required,
+    is_trusted_upstream_auth_configured,
+)
 from work_schedule_ai.db.models import (
     Assignment,
     AuditLog,
@@ -104,6 +109,15 @@ class LongTermFairnessResponse(BaseModel):
     rows: list[LongTermFairnessEmployeeRow]
 
 
+class SecurityReleaseGateResponse(BaseModel):
+    auth_required: bool
+    rbac_roles: list[str]
+    tenant_context_hook: bool
+    audit_export_available: bool
+    public_saas_ready: bool
+    warnings: list[str]
+
+
 @router.get(
     "/schedule-runs/metrics",
     response_model=ScheduleRunMetricsResponse,
@@ -111,6 +125,15 @@ class LongTermFairnessResponse(BaseModel):
 def get_schedule_run_metrics(
     db_session: Session = Depends(get_db_session),
 ) -> ScheduleRunMetricsResponse:
+    if is_auth_required():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "TENANT_SCOPE_REQUIRED",
+                "message": "Global schedule run metrics are disabled when auth is enabled.",
+                "field": "organization_id",
+            },
+        )
     runs = list(db_session.execute(select(ScheduleRun)).scalars())
     status_counts = {status: 0 for status in SCHEDULE_RUN_STATUSES}
     durations: list[float] = []
@@ -126,6 +149,31 @@ def get_schedule_run_metrics(
         completed_average_duration_seconds=(
             round(sum(durations) / len(durations), 3) if durations else None
         ),
+    )
+
+
+@router.get(
+    "/security/release-gate",
+    response_model=SecurityReleaseGateResponse,
+)
+def get_security_release_gate() -> SecurityReleaseGateResponse:
+    auth_required = is_auth_required()
+    trusted_upstream_auth = is_trusted_upstream_auth_configured()
+    warnings = []
+    if not auth_required:
+        warnings.append("WORKSCHEDULEAI_AUTH_REQUIRED is not enabled.")
+    if not trusted_upstream_auth:
+        warnings.append(
+            "WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH is not enabled; "
+            "X-User-Id is only a trusted-upstream development contract."
+        )
+    return SecurityReleaseGateResponse(
+        auth_required=auth_required,
+        rbac_roles=RBAC_ROLES,
+        tenant_context_hook=True,
+        audit_export_available=True,
+        public_saas_ready=not warnings,
+        warnings=warnings,
     )
 
 

@@ -10,9 +10,12 @@ from work_schedule_ai.db.models import (
     Base,
     Employee,
     EmployeeRole,
+    EmployeeRequest,
+    EmployeeUserLink,
     Membership,
     Organization,
     OverrideApproval,
+    PublicationAcknowledgement,
     PairConstraint,
     Role,
     ScheduleRecalculationRequest,
@@ -233,6 +236,117 @@ def test_membership_is_unique_per_organization_user(session):
     session.commit()
     session.expunge(membership)
 
+    session.add(duplicate)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_membership_accepts_scheduler_role(session):
+    org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
+    user = User(id="user_1", email="scheduler@example.com", name="Scheduler")
+    membership = Membership(
+        organization_id="org_1",
+        user_id="user_1",
+        role="scheduler",
+    )
+    session.add_all([org, user])
+    session.commit()
+
+    session.add(membership)
+    session.commit()
+
+    assert session.query(Membership).one().role == "scheduler"
+
+
+def test_employee_user_link_is_unique_per_employee(session):
+    org, employee = _organization_with_employee()
+    user_1 = User(id="user_1", email="one@example.com", name="One")
+    user_2 = User(id="user_2", email="two@example.com", name="Two")
+    link = EmployeeUserLink(
+        id="employee_link_1",
+        organization_id="org_1",
+        employee_id="emp_1",
+        user_id="user_1",
+        status="linked",
+    )
+    duplicate = EmployeeUserLink(
+        id="employee_link_2",
+        organization_id="org_1",
+        employee_id="emp_1",
+        user_id="user_2",
+        status="linked",
+    )
+    session.add_all([org, user_1, user_2])
+    session.commit()
+    session.add(employee)
+    session.commit()
+    session.add(link)
+    session.commit()
+    session.add(duplicate)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_employee_request_rejects_unknown_status(session):
+    org, employee = _organization_with_employee()
+    request = EmployeeRequest(
+        id="employee_request_1",
+        organization_id="org_1",
+        employee_id="emp_1",
+        requested_by_user_id=None,
+        type="unavailable",
+        status="done",
+        starts_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        ends_at=datetime(2026, 7, 2, tzinfo=timezone.utc),
+        note=None,
+    )
+    session.add(org)
+    session.commit()
+    session.add(employee)
+    session.commit()
+    session.add(request)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_publication_acknowledgement_is_unique_per_employee(session):
+    org, employee = _organization_with_employee()
+    run = _schedule_run()
+    publication = db_models.SchedulePublication(
+        id="publication_1",
+        organization_id="org_1",
+        schedule_run_id="run_1",
+        period_start=date(2026, 7, 1),
+        period_end=date(2026, 7, 7),
+        status="published",
+        assignment_snapshot_hash="assignment_hash_1",
+        issue_snapshot_hash="issue_hash_1",
+    )
+    acknowledgement = PublicationAcknowledgement(
+        id="ack_1",
+        organization_id="org_1",
+        publication_id="publication_1",
+        employee_id="emp_1",
+        status="pending",
+    )
+    duplicate = PublicationAcknowledgement(
+        id="ack_2",
+        organization_id="org_1",
+        publication_id="publication_1",
+        employee_id="emp_1",
+        status="pending",
+    )
+    session.add(org)
+    session.commit()
+    session.add_all([employee, run])
+    session.commit()
+    session.add(publication)
+    session.commit()
+    session.add(acknowledgement)
+    session.commit()
     session.add(duplicate)
 
     with pytest.raises(IntegrityError):

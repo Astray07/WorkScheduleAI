@@ -30,6 +30,16 @@ EXPECTED_TABLES = {
     "solver_diagnostic_events",
     "audit_logs",
     "schedule_policies",
+    "employee_user_links",
+    "employee_requests",
+    "publication_acknowledgements",
+    "publication_notifications",
+    "compliance_warning_overrides",
+    "rag_documents",
+    "rag_document_chunks",
+    "rag_query_audits",
+    "demand_drivers",
+    "labor_budgets",
 }
 
 
@@ -357,7 +367,7 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260625_0014"
+    assert version == "20260626_0015"
 
 
 def test_postgresql_rls_migration_defines_tenant_policies():

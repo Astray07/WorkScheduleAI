@@ -45,7 +45,10 @@ class User(Base):
 class Membership(Base):
     __tablename__ = "memberships"
     __table_args__ = (
-        CheckConstraint("role IN ('admin', 'member')", name="ck_memberships_role"),
+        CheckConstraint(
+            "role IN ('owner', 'admin', 'scheduler', 'viewer', 'employee', 'member')",
+            name="ck_memberships_role",
+        ),
     )
 
     organization_id: Mapped[str] = mapped_column(
@@ -59,6 +62,116 @@ class Membership(Base):
         primary_key=True,
     )
     role: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
+class EmployeeUserLink(Base):
+    __tablename__ = "employee_user_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "employee_id",
+            name="uq_employee_user_links_organization_employee",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "user_id",
+            name="uq_employee_user_links_organization_user",
+        ),
+        CheckConstraint(
+            "status IN ('invited', 'linked', 'disabled')",
+            name="ck_employee_user_links_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    employee_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
+class EmployeeRequest(Base):
+    __tablename__ = "employee_requests"
+    __table_args__ = (
+        CheckConstraint(
+            "type IN ('vacation', 'unavailable', 'prefer_shift', 'avoid_shift', 'swap', 'open_shift')",
+            name="ck_employee_requests_type",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected', 'canceled')",
+            name="ck_employee_requests_status",
+        ),
+        CheckConstraint(
+            "starts_at < ends_at",
+            name="ck_employee_requests_time_order",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    employee_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    requested_by_user_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    ends_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    manager_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    source_unavailability_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("unavailabilities.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -988,6 +1101,273 @@ class SchedulePublication(Base):
         nullable=False,
         default=utc_now,
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
+class PublicationAcknowledgement(Base):
+    __tablename__ = "publication_acknowledgements"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "publication_id",
+            "employee_id",
+            name="uq_publication_acknowledgements_employee",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'acknowledged')",
+            name="ck_publication_acknowledgements_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    publication_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("schedule_publications.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    employee_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
+class PublicationNotification(Base):
+    __tablename__ = "publication_notifications"
+    __table_args__ = (
+        CheckConstraint(
+            "notification_type IN ('published', 'changed')",
+            name="ck_publication_notifications_type",
+        ),
+        CheckConstraint(
+            "channel IN ('in_app', 'email', 'slack')",
+            name="ck_publication_notifications_channel",
+        ),
+        CheckConstraint(
+            "status IN ('pending_recorded', 'sent', 'failed', 'suppressed')",
+            name="ck_publication_notifications_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    publication_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("schedule_publications.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    employee_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    notification_type: Mapped[str] = mapped_column(Text, nullable=False)
+    channel: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
+class ComplianceWarningOverride(Base):
+    __tablename__ = "compliance_warning_overrides"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "schedule_run_id",
+            "warning_code",
+            name="uq_compliance_warning_overrides_run_code",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    schedule_run_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("schedule_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    warning_code: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
+class RagDocument(Base):
+    __tablename__ = "rag_documents"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_type: Mapped[str] = mapped_column(Text, nullable=False)
+    document_title: Mapped[str] = mapped_column(Text, nullable=False)
+    checked_at: Mapped[date] = mapped_column(Date, nullable=False)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
+class RagDocumentChunk(Base):
+    __tablename__ = "rag_document_chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "document_id",
+            "chunk_index",
+            name="uq_rag_document_chunks_document_index",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    document_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("rag_documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    excerpt: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
+class RagQueryAudit(Base):
+    __tablename__ = "rag_query_audits"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    purpose: Mapped[str] = mapped_column(Text, nullable=False)
+    query_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    safety_notes_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
+class DemandDriver(Base):
+    __tablename__ = "demand_drivers"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "local_date",
+            "segment",
+            name="uq_demand_drivers_organization_date_segment",
+        ),
+        CheckConstraint("demand_count >= 0", name="ck_demand_drivers_demand_count"),
+        CheckConstraint(
+            "required_staff_count >= 0",
+            name="ck_demand_drivers_required_staff_count",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    local_date: Mapped[date] = mapped_column(Date, nullable=False)
+    segment: Mapped[str] = mapped_column(Text, nullable=False)
+    demand_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    required_staff_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=utc_now,
+    )
+
+
+class LaborBudget(Base):
+    __tablename__ = "labor_budgets"
+    __table_args__ = (
+        CheckConstraint(
+            "period_start <= period_end",
+            name="ck_labor_budgets_period_order",
+        ),
+        CheckConstraint(
+            "budget_amount_cents >= 0",
+            name="ck_labor_budgets_budget_amount",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    organization_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    budget_amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

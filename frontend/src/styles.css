@@ -893,6 +893,226 @@ button:disabled {
   gap: 4px;
 }
 
+.roadmap-panel {
+  border-top: 1px solid #edf1ef;
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.roadmap-section {
+  display: grid;
+  gap: 8px;
+}
+
+.roadmap-section-head {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.roadmap-section-head strong,
+.roadmap-section-head span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.roadmap-section-head strong {
+  font-size: 13px;
+}
+
+.roadmap-section-head span {
+  color: #687870;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.roadmap-section-head button {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.roadmap-list {
+  display: grid;
+  gap: 8px;
+}
+
+.roadmap-row {
+  border: 1px solid #dfe6e2;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px;
+}
+
+.roadmap-row strong,
+.roadmap-row span,
+.roadmap-row em {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.roadmap-row span {
+  color: #687870;
+  font-size: 12px;
+}
+
+.roadmap-row em {
+  align-self: center;
+  color: #1f7a55;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.roadmap-actions {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.roadmap-actions button {
+  min-height: 30px;
+  padding: 0 9px;
+}
+
+.warning-blocking {
+  background: #fff1f0;
+  border-color: #ffc7c1;
+}
+
+.warning-warning {
+  background: #fff8e6;
+  border-color: #ffe0a3;
+}
+
+.warning-info,
+.evidence-row {
+  background: #f7f9f8;
+}
+
+.roadmap-note {
+  color: #687870;
+  font-size: 12px;
+  margin: 0;
+}
+
+.compact-empty {
+  padding: 10px;
+}
+
+.employee-shell {
+  background: #f6f8f7;
+  display: grid;
+  gap: 14px;
+  margin: 0 auto;
+  max-width: 520px;
+  min-height: 100vh;
+  padding: 16px;
+}
+
+.employee-topbar {
+  align-items: center;
+  background: #111827;
+  border-radius: 8px;
+  color: #eff6f2;
+  display: flex;
+  justify-content: space-between;
+  padding: 16px;
+}
+
+.employee-topbar span {
+  color: #a7b3c2;
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.employee-topbar h1 {
+  font-size: 22px;
+  margin: 2px 0 0;
+}
+
+.employee-topbar strong {
+  background: #4fba8f;
+  border-radius: 8px;
+  color: #071712;
+  font-size: 13px;
+  padding: 6px 9px;
+}
+
+.employee-section,
+.employee-empty {
+  background: #ffffff;
+  border: 1px solid #dfe6e2;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.employee-empty {
+  align-content: center;
+  min-height: 220px;
+}
+
+.employee-empty strong,
+.employee-empty span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.employee-empty span {
+  color: #687870;
+  font-size: 13px;
+}
+
+.employee-day-list {
+  display: grid;
+  gap: 8px;
+}
+
+.employee-shift-card {
+  align-items: center;
+  border: 1px solid #dfe6e2;
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.employee-shift-card strong,
+.employee-shift-card span,
+.employee-shift-card em {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.employee-shift-card span {
+  color: #687870;
+  font-size: 12px;
+}
+
+.employee-shift-card em {
+  color: #1f7a55;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.employee-request-form {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.employee-request-form button {
+  grid-column: 1 / -1;
+}
+
 .long-term-fairness-panel {
   display: grid;
   gap: 10px;
@@ -1092,5 +1312,14 @@ button:disabled {
 
   .shift-matrix {
     grid-template-columns: minmax(72px, 1fr) repeat(2, minmax(82px, 1fr));
+  }
+
+  .employee-request-form,
+  .roadmap-row {
+    grid-template-columns: 1fr;
+  }
+
+  .roadmap-actions {
+    justify-content: flex-start;
   }
 }
