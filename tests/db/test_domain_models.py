@@ -355,6 +355,38 @@ def test_employee_user_link_is_unique_per_employee(session):
         session.commit()
 
 
+def test_employee_user_link_rejects_cross_tenant_employee_reference(session):
+    session.add_all(
+        [
+            Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul"),
+            Organization(id="org_2", name="Clinic B", timezone="Asia/Seoul"),
+            User(id="user_1", email="employee@example.com", name="Employee"),
+        ]
+    )
+    session.commit()
+    session.add(
+        Employee(
+            id="emp_org_2",
+            organization_id="org_2",
+            employee_code="E002",
+            name="Lee",
+        )
+    )
+    session.commit()
+    session.add(
+        EmployeeUserLink(
+            id="employee_link_cross_employee",
+            organization_id="org_1",
+            employee_id="emp_org_2",
+            user_id="user_1",
+            status="linked",
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
 def test_employee_request_rejects_unknown_status(session):
     org, employee = _organization_with_employee()
     request = EmployeeRequest(

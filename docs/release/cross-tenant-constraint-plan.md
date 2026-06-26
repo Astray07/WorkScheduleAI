@@ -13,17 +13,20 @@ Date: 2026-06-26
 
 - `(organization_id, employee_id)` -> `employees(organization_id, id)`
 
+`employee_user_links` has a tenant composite foreign key:
+
+- `(organization_id, employee_id)` -> `employees(organization_id, id)`
+
 The parent tables also expose composite unique keys:
 
 - `employees(organization_id, id)`
 - `roles(organization_id, id)`
 
-This prevents role eligibility and employee unavailability rows from mixing employee or role references from another tenant even when the referenced global ID exists.
+This prevents role eligibility, employee unavailability, and employee-user link rows from mixing employee or role references from another tenant even when the referenced global ID exists.
 
 ## Expansion Order
 
 1. Employee-owned rows:
-   - `employee_user_links`
    - `employee_requests`
    - `publication_acknowledgements`
    - `publication_notifications`

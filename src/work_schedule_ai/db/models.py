@@ -82,6 +82,12 @@ class Membership(Base):
 class EmployeeUserLink(Base):
     __tablename__ = "employee_user_links"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "employee_id"],
+            ["employees.organization_id", "employees.id"],
+            name="fk_employee_user_links_tenant_employee",
+            ondelete="CASCADE",
+        ),
         UniqueConstraint(
             "organization_id",
             "employee_id",
