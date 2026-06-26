@@ -10,7 +10,11 @@ from sqlalchemy.pool import StaticPool
 
 from work_schedule_ai.api.app import create_app
 from work_schedule_ai.api.dependencies import get_db_session
-from work_schedule_ai.compliance import compliance_warning_instance_key
+from work_schedule_ai.compliance import (
+    ComplianceAssignment,
+    compliance_warning_instance_key,
+    evaluate_compliance_warnings,
+)
 from work_schedule_ai.db.models import (
     Assignment,
     AuditLog,
@@ -128,6 +132,41 @@ def test_compliance_warning_instance_key_uses_structural_identity():
     )
 
     assert first_key != second_key
+
+
+def test_compliance_rules_flag_consecutive_night_work_as_review_warning():
+    warnings = evaluate_compliance_warnings(
+        [
+            ComplianceAssignment(
+                employee_id="emp_1",
+                employee_name="Kim",
+                slot_id="night_1",
+                local_date="2026-07-01",
+                label="야간",
+                starts_at="2026-07-01T22:00:00+09:00",
+                ends_at="2026-07-02T06:00:00+09:00",
+            ),
+            ComplianceAssignment(
+                employee_id="emp_1",
+                employee_name="Kim",
+                slot_id="night_2",
+                local_date="2026-07-02",
+                label="야간",
+                starts_at="2026-07-02T22:00:00+09:00",
+                ends_at="2026-07-03T06:00:00+09:00",
+            ),
+        ]
+    )
+
+    warning = next(
+        item for item in warnings if item.code == "CONSECUTIVE_NIGHT_SHIFTS_REVIEW"
+    )
+    assert warning.severity == "warning"
+    assert warning.publish_blocking is False
+    assert warning.employee_id == "emp_1"
+    assert warning.slot_id == "night_2"
+    assert "운영 검토" in warning.message
+    assert "위반" not in warning.message
 
 
 def _current_weekly_warning(client: TestClient) -> dict:

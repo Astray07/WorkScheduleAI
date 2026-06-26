@@ -81,6 +81,7 @@
 - 수동 배정 저장과 확정본 생성은 audit log를 남깁니다.
 - 조직 audit log는 UI 조회, 운영 패널 CSV 다운로드, CSV export API를 지원하며 tenant scope와 관리자 권한으로 제한됩니다.
 - 컴플라이언스 경고는 법률 자동 판단이 아니라 운영 검토용 warning입니다.
+- 주 52시간 초과는 blocking warning이고, 최소 휴식 미달/연속 야간/야간/주말 근무는 운영 검토용 warning 또는 info로 분리되어 있습니다.
 - blocking warning override는 `warning_code`, 직원, 슬롯 또는 ISO 주차, 현재 warning snapshot hash가 일치해야 확정 시 인정됩니다.
 - warning override 사유와 actor는 audit log에 기록됩니다.
 - 운영 패널에서 blocking warning별 사유 입력과 예외 승인 저장을 지원합니다.

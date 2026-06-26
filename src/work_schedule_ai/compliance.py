@@ -82,6 +82,7 @@ def evaluate_compliance_warnings(
     warnings.extend(_weekly_hours_warnings(assignments))
     warnings.extend(_minimum_rest_warnings(assignments, min_rest_hours))
     warnings.extend(_night_and_weekend_warnings(assignments))
+    warnings.extend(_consecutive_night_warnings(assignments))
     return [_with_instance_identity(warning, snapshot_hash) for warning in warnings]
 
 
@@ -181,6 +182,46 @@ def _night_and_weekend_warnings(
                 )
             )
     return warnings
+
+
+def _consecutive_night_warnings(
+    assignments: list[ComplianceAssignment],
+) -> list[ComplianceWarning]:
+    by_employee: dict[str, list[ComplianceAssignment]] = defaultdict(list)
+    for assignment in assignments:
+        if _is_night_assignment(assignment):
+            by_employee[assignment.employee_id].append(assignment)
+    warnings: list[ComplianceWarning] = []
+    for employee_id, employee_assignments in by_employee.items():
+        sorted_assignments = sorted(
+            employee_assignments,
+            key=lambda item: _parse_datetime(item.starts_at),
+        )
+        for previous, current in zip(sorted_assignments, sorted_assignments[1:]):
+            previous_start = _parse_datetime(previous.starts_at)
+            current_start = _parse_datetime(current.starts_at)
+            if (current_start.date() - previous_start.date()).days != 1:
+                continue
+            warnings.append(
+                ComplianceWarning(
+                    code="CONSECUTIVE_NIGHT_SHIFTS_REVIEW",
+                    severity="warning",
+                    publish_blocking=False,
+                    employee_id=employee_id,
+                    employee_name=current.employee_name,
+                    slot_id=current.slot_id,
+                    message=(
+                        "연속 야간 근무가 예정되어 있어 피로도와 휴식 보장을 "
+                        "운영 검토해야 합니다."
+                    ),
+                )
+            )
+    return warnings
+
+
+def _is_night_assignment(assignment: ComplianceAssignment) -> bool:
+    start = _parse_datetime(assignment.starts_at)
+    return "야간" in assignment.label or start.hour >= 22 or start.hour < 6
 
 
 def _parse_datetime(value: str) -> datetime:
