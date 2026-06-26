@@ -228,6 +228,12 @@ class Employee(Base):
 class Unavailability(Base):
     __tablename__ = "unavailabilities"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "employee_id"],
+            ["employees.organization_id", "employees.id"],
+            name="fk_unavailabilities_tenant_employee",
+            ondelete="CASCADE",
+        ),
         CheckConstraint(
             "type IN ('vacation', 'business_trip', 'training', 'personal')",
             name="ck_unavailabilities_type",

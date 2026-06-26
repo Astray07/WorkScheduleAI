@@ -465,6 +465,39 @@ def test_unavailability_rejects_non_positive_time_range(session):
         session.commit()
 
 
+def test_unavailability_rejects_cross_tenant_employee_reference(session):
+    session.add_all(
+        [
+            Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul"),
+            Organization(id="org_2", name="Clinic B", timezone="Asia/Seoul"),
+        ]
+    )
+    session.commit()
+    session.add(
+        Employee(
+            id="emp_org_2",
+            organization_id="org_2",
+            employee_code="E002",
+            name="Lee",
+        )
+    )
+    session.commit()
+    session.add(
+        Unavailability(
+            id="unavailability_cross_employee",
+            organization_id="org_1",
+            employee_id="emp_org_2",
+            type="vacation",
+            starts_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+            ends_at=datetime(2026, 7, 2, tzinfo=timezone.utc),
+            override_allowed=False,
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
 def test_schedule_run_rejects_unknown_status(session):
     org = Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
     run = ScheduleRun(

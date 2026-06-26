@@ -83,6 +83,9 @@ def test_alembic_upgrade_head_creates_named_constraints(tmp_path):
     unavailability_check_names = {
         item["name"] for item in inspector.get_check_constraints("unavailabilities")
     }
+    unavailability_fk_names = {
+        item["name"] for item in inspector.get_foreign_keys("unavailabilities")
+    }
     schedule_run_unique_names = {
         item["name"] for item in inspector.get_unique_constraints("schedule_runs")
     }
@@ -151,6 +154,7 @@ def test_alembic_upgrade_head_creates_named_constraints(tmp_path):
     assert "ck_pair_constraints_normalized_order" in pair_check_names
     assert "ck_unavailabilities_type" in unavailability_check_names
     assert "ck_unavailabilities_time_order" in unavailability_check_names
+    assert "fk_unavailabilities_tenant_employee" in unavailability_fk_names
     assert (
         "uq_schedule_runs_organization_idempotency_key"
         in schedule_run_unique_names
@@ -382,7 +386,7 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260626_0020"
+    assert version == "20260626_0021"
 
 
 def test_alembic_upgrade_head_creates_user_password_hash_column(tmp_path):

@@ -59,7 +59,7 @@
 - `/auth/login`은 저장된 PBKDF2 비밀번호 해시와 조직 멤버십을 검증한 뒤 조직 스코프 signed actor token을 발급합니다. 운영 콘솔은 해당 token을 sessionStorage에만 보관하고 조직 API 호출의 `Authorization` header로 보냅니다.
 - 운영 콘솔은 저장된 세션을 복원할 때 `/auth/session`으로 token을 재검증하고, 만료되었거나 변조된 세션은 제거합니다.
 - release gate는 trusted upstream header mode, 약한 signed actor secret, 공개 조직 bootstrap 미잠금 상태를 공개 SaaS ready로 보지 않습니다.
-- 대표 cross-tenant DB hardening으로 `employee_roles`에 tenant composite FK를 추가했습니다. 전체 테이블 확장 순서는 `docs/release/cross-tenant-constraint-plan.md`에 문서화되어 있습니다.
+- cross-tenant DB hardening으로 `employee_roles`와 `unavailabilities`에 tenant composite FK를 추가했습니다. 전체 테이블 확장 순서는 `docs/release/cross-tenant-constraint-plan.md`에 문서화되어 있습니다.
 
 ### RAG와 근거 제시
 

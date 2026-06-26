@@ -2,24 +2,27 @@
 
 Date: 2026-06-26
 
-## Current Implemented Step
+## Current Implemented Steps
 
-`employee_roles` now has representative tenant composite foreign keys:
+`employee_roles` has tenant composite foreign keys:
 
 - `(organization_id, employee_id)` -> `employees(organization_id, id)`
 - `(organization_id, role_id)` -> `roles(organization_id, id)`
+
+`unavailabilities` has a tenant composite foreign key:
+
+- `(organization_id, employee_id)` -> `employees(organization_id, id)`
 
 The parent tables also expose composite unique keys:
 
 - `employees(organization_id, id)`
 - `roles(organization_id, id)`
 
-This prevents a role assignment row from mixing an employee or role from another tenant even when the referenced global ID exists.
+This prevents role eligibility and employee unavailability rows from mixing employee or role references from another tenant even when the referenced global ID exists.
 
 ## Expansion Order
 
 1. Employee-owned rows:
-   - `unavailabilities`
    - `employee_user_links`
    - `employee_requests`
    - `publication_acknowledgements`
