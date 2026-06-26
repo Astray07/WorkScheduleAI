@@ -63,7 +63,8 @@
 - RAG API는 tenant-scoped 문서 chunk와 query audit만 저장합니다.
 - RAG 문서는 tenant-scoped 목록 조회와 관리자 삭제 API로 관리할 수 있으며, 운영 패널에서 문서 목록과 삭제 액션을 제공합니다. viewer는 목록 조회만 가능하고 employee/member는 문서 관리 API에서 거부됩니다.
 - RAG query는 `SchedulePolicy` 또는 `ScheduleRun`을 직접 생성하거나 수정하지 않는 guardrail 테스트로 고정되어 있습니다.
-- 현재 retrieval은 keyword 기반이며 문서 제목과 chunk 본문을 함께 점수화합니다. evidence citation은 문서 ID, chunk ID, 제목, 출처 유형, checked_at, confidence를 포함합니다. embedding/vector index와 평가셋은 후속 품질 고도화 범위입니다.
+- 현재 retrieval은 keyword 기반이며 문서 제목과 chunk 본문을 함께 점수화합니다. evidence citation은 문서 ID, chunk ID, 제목, 출처 유형, checked_at, confidence를 포함합니다.
+- RAG API 경로에서 prompt injection chunk drop, PII redaction, solver/policy non-mutation guardrail을 테스트로 고정했습니다. embedding/vector index와 장기 평가셋은 후속 품질 고도화 범위입니다.
 
 ### 수요와 비용 Preview
 
