@@ -12,3 +12,7 @@ build/
 frontend/dist/
 frontend/node_modules/
 frontend/tsconfig.tsbuildinfo
+.bkit-memory.json
+.pdca-status.json
+docs/superpowers/plans/
+work/tasks/
