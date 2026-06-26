@@ -56,6 +56,12 @@
 - `WORKSCHEDULEAI_AUTH_REQUIRED=1`일 때 조직 스코프 API는 `WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH=1` 없이는 `X-User-Id`를 받지 않도록 fail-closed 처리합니다.
 - release gate는 trusted upstream header mode를 공개 SaaS ready로 보지 않습니다. 실제 JWT/session 또는 서명 기반 actor 검증은 아직 남은 작업입니다.
 
+### RAG와 근거 제시
+
+- RAG API는 tenant-scoped 문서 chunk와 query audit만 저장합니다.
+- RAG query는 `SchedulePolicy` 또는 `ScheduleRun`을 직접 생성하거나 수정하지 않는 guardrail 테스트로 고정되어 있습니다.
+- 현재 retrieval은 keyword 기반이며 문서 제목과 chunk 본문을 함께 점수화합니다. embedding/vector index는 후속 품질 고도화 범위입니다.
+
 ### 확정과 감사성
 
 - `ScheduleRun`과 `SchedulePublication`은 분리되어 있습니다.

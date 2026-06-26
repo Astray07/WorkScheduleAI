@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,7 +9,13 @@ from sqlalchemy.pool import StaticPool
 
 from work_schedule_ai.api.app import create_app
 from work_schedule_ai.api.dependencies import get_db_session
-from work_schedule_ai.db.models import Base, Organization, RagQueryAudit
+from work_schedule_ai.db.models import (
+    Base,
+    Organization,
+    RagQueryAudit,
+    SchedulePolicy,
+    ScheduleRun,
+)
 
 
 def test_rag_query_returns_tenant_scoped_evidence_and_audit(client: TestClient, db_session: Session):
@@ -58,6 +65,131 @@ def test_rag_ingest_rejects_unknown_source_type(client: TestClient):
     )
 
     assert response.status_code == 422
+
+
+def test_rag_query_scores_document_title_matches_before_generic_chunks(
+    client: TestClient,
+):
+    title_match_response = client.post(
+        "/organizations/org_1/rag/documents",
+        json={
+            "source_type": "organization_policy",
+            "document_title": "야간 휴식 규정",
+            "checked_at": "2026-06-26",
+            "chunks": ["최소 11시간을 확보합니다."],
+        },
+    )
+    assert title_match_response.status_code == 201
+    generic_response = client.post(
+        "/organizations/org_1/rag/documents",
+        json={
+            "source_type": "organization_policy",
+            "document_title": "일반 운영 메모",
+            "checked_at": "2026-06-26",
+            "chunks": ["휴식은 운영자가 조정합니다."],
+        },
+    )
+    assert generic_response.status_code == 201
+
+    query_response = client.post(
+        "/organizations/org_1/rag/query",
+        json={"query": "야간 휴식", "purpose": "schedule_explanation"},
+    )
+
+    assert query_response.status_code == 200
+    payload = query_response.json()
+    assert payload["status"] == "grounded"
+    assert payload["evidence"][0]["document_title"] == "야간 휴식 규정"
+
+
+def test_rag_query_does_not_mutate_solver_or_policy_state(
+    client: TestClient,
+    db_session: Session,
+):
+    policy = SchedulePolicy(
+        id="policy_1",
+        organization_id="org_1",
+        name="기본 정책",
+        min_rest_hours=11,
+        max_consecutive_shifts=5,
+        max_shifts_per_week=5,
+        weekend_shift_limit_per_month=4,
+        night_shift_limit_per_month=6,
+        default_unfilled_requirement_weight=100,
+        weight_workload_imbalance=10,
+        weight_pair_avoid_violation=25,
+        unfilled_policy="soft_penalty",
+    )
+    run = ScheduleRun(
+        id="run_1",
+        organization_id="org_1",
+        period_start=date(2026, 7, 1),
+        period_end=date(2026, 7, 7),
+        template="one_shift_per_day",
+        deterministic_mode=True,
+        timeout_seconds=30,
+        status="queued",
+        solver_status=None,
+        solution_quality="unknown",
+        current_attempt_no=1,
+        recalculation_count=0,
+        input_snapshot_hash="before_rag",
+    )
+    db_session.add_all([policy, run])
+    db_session.commit()
+    policy_before = _policy_snapshot(policy)
+    run_before = _run_snapshot(run)
+    ingest_response = client.post(
+        "/organizations/org_1/rag/documents",
+        json={
+            "source_type": "organization_policy",
+            "document_title": "정책 설명 문서",
+            "checked_at": "2026-06-26",
+            "chunks": ["RAG는 근무표 결정이 아니라 근거 제시에만 사용합니다."],
+        },
+    )
+    assert ingest_response.status_code == 201
+
+    query_response = client.post(
+        "/organizations/org_1/rag/query",
+        json={"query": "정책", "purpose": "schedule_explanation"},
+    )
+
+    assert query_response.status_code == 200
+    db_session.refresh(policy)
+    db_session.refresh(run)
+    assert _policy_snapshot(policy) == policy_before
+    assert _run_snapshot(run) == run_before
+    assert db_session.query(SchedulePolicy).count() == 1
+    assert db_session.query(ScheduleRun).count() == 1
+
+
+def _policy_snapshot(policy: SchedulePolicy) -> dict:
+    return {
+        "name": policy.name,
+        "min_rest_hours": policy.min_rest_hours,
+        "max_consecutive_shifts": policy.max_consecutive_shifts,
+        "max_shifts_per_week": policy.max_shifts_per_week,
+        "weekend_shift_limit_per_month": policy.weekend_shift_limit_per_month,
+        "night_shift_limit_per_month": policy.night_shift_limit_per_month,
+        "default_unfilled_requirement_weight": (
+            policy.default_unfilled_requirement_weight
+        ),
+        "weight_workload_imbalance": policy.weight_workload_imbalance,
+        "weight_pair_avoid_violation": policy.weight_pair_avoid_violation,
+        "unfilled_policy": policy.unfilled_policy,
+    }
+
+
+def _run_snapshot(run: ScheduleRun) -> dict:
+    return {
+        "status": run.status,
+        "solver_status": run.solver_status,
+        "solution_quality": run.solution_quality,
+        "current_attempt_no": run.current_attempt_no,
+        "recalculation_count": run.recalculation_count,
+        "input_snapshot_hash": run.input_snapshot_hash,
+    }
 
 
 @pytest.fixture

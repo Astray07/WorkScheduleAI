@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 import hashlib
 import json
+import re
 from typing import Annotated
 from uuid import uuid4
 
@@ -144,11 +145,7 @@ def _retrieve_chunks(
     query: str,
     db_session: Session,
 ) -> list[RetrievedDocumentChunk]:
-    query_terms = {
-        term.strip().lower()
-        for term in query.replace(",", " ").split()
-        if term.strip()
-    }
+    query_terms = _query_terms(query)
     rows = db_session.execute(
         select(RagDocument, RagDocumentChunk)
         .join(RagDocumentChunk, RagDocumentChunk.document_id == RagDocument.id)
@@ -160,7 +157,12 @@ def _retrieve_chunks(
     ).all()
     retrieved: list[RetrievedDocumentChunk] = []
     for document, chunk in rows:
-        score = _keyword_score(query_terms, chunk.excerpt)
+        score = _keyword_score(
+            query_terms=query_terms,
+            query=query,
+            document_title=document.document_title,
+            excerpt=chunk.excerpt,
+        )
         if score <= 0:
             continue
         retrieved.append(
@@ -178,14 +180,36 @@ def _retrieve_chunks(
     return sorted(retrieved, key=lambda item: item.retrieval_score, reverse=True)
 
 
-def _keyword_score(query_terms: set[str], excerpt: str) -> float:
+def _query_terms(query: str) -> set[str]:
+    return {
+        term.strip().lower()
+        for term in re.split(r"[\s,.;:!?()\[\]{}\"'“”‘’]+", query)
+        if term.strip()
+    }
+
+
+def _keyword_score(
+    *,
+    query_terms: set[str],
+    query: str,
+    document_title: str,
+    excerpt: str,
+) -> float:
     if not query_terms:
         return 0.0
-    normalized = excerpt.lower()
+    normalized_title = document_title.lower()
+    normalized_excerpt = excerpt.lower()
+    normalized = f"{normalized_title} {normalized_excerpt}"
     matches = sum(1 for term in query_terms if term in normalized)
     if matches == 0:
         return 0.0
-    return min(1.0, 0.45 + (matches / len(query_terms)) * 0.5)
+    title_matches = sum(1 for term in query_terms if term in normalized_title)
+    phrase_boost = 0.1 if query.strip().lower() in normalized else 0.0
+    title_boost = 0.05 if title_matches else 0.0
+    return min(
+        1.0,
+        0.45 + (matches / len(query_terms)) * 0.5 + phrase_boost + title_boost,
+    )
 
 
 def _get_organization_or_404(
