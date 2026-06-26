@@ -95,7 +95,8 @@
 - 생성된 직원 URL은 token을 query string이 아니라 URL fragment에 담고, public API는 `Authorization: Bearer <employee-link-token>`으로 직원 본인의 확정 근무표 context 조회와 acknowledgement 기록을 허용합니다.
 - 직원 signed link context는 해당 직원의 publication notification records를 함께 내려주므로 모바일 화면에서 발행/변경 알림 상태를 표시할 수 있습니다.
 - archived publication은 signed link public API에서 조회와 acknowledgement가 차단됩니다.
-- 아직 직원 모바일 화면과 변경 알림 UX는 signed link public API에 연결되지 않았습니다. 화면 연결 전에는 직원용 공개 접근을 제품 기능으로 안내하지 않아야 합니다.
+- 직원 모바일 화면은 URL fragment의 signed token을 회수한 뒤 fragment를 제거하고, public signed-link API로 본인 근무 카드, 확인 상태, 발행/변경 알림을 표시합니다.
+- signed-link 모바일 화면의 확인 완료 액션은 public acknowledgement endpoint를 사용합니다. 직원 요청 제출은 아직 public signed-link API가 없으므로 해당 모드에서는 노출하지 않습니다.
 
 ## 비공개 관리자판에서 의도적으로 제외한 범위
 

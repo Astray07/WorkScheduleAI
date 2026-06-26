@@ -44,6 +44,36 @@ export function budgetStatusLabel(status: string) {
   return labels[status] ?? status;
 }
 
+export function employeeLinkTokenFromFragment(fragment: string): string | null {
+  const rawFragment = fragment.startsWith("#") ? fragment.slice(1) : fragment;
+  const token = new URLSearchParams(rawFragment).get("token");
+  return token || null;
+}
+
+export function employeePublicationContextPath({
+  employeeId,
+  organizationId,
+  publicationId,
+}: {
+  employeeId: string;
+  organizationId: string;
+  publicationId: string;
+}): string {
+  const params = new URLSearchParams({
+    organization_id: organizationId,
+    employee_id: employeeId,
+  });
+  return `/employee/schedule-publications/${encodeURIComponent(publicationId)}?${params.toString()}`;
+}
+
+export function employeePublicationAcknowledgementPath(publicationId: string): string {
+  return `/employee/schedule-publications/${encodeURIComponent(publicationId)}/acknowledgement`;
+}
+
+export function isSignedEmployeePublicationUrl(search: string): boolean {
+  return Boolean(new URLSearchParams(search).get("publicationId"));
+}
+
 export type RagDocumentQueueItem = {
   id: string;
   checked_at: string;
@@ -104,6 +134,15 @@ export type EmployeeScheduleCard = {
   endsAt: string;
 };
 
+export type PublicEmployeeScheduleCard = {
+  assignment_id: string;
+  local_date: string;
+  label: string;
+  role_name: string;
+  starts_at: string;
+  ends_at: string;
+};
+
 export function employeeScheduleCards(
   employeeId: string,
   slots: EmployeeScheduleSlot[],
@@ -134,4 +173,41 @@ export function employeeScheduleCards(
       if (dateRank !== 0) return dateRank;
       return left.startsAt.localeCompare(right.startsAt);
     });
+}
+
+export function employeeScheduleCardsFromPublicContext(
+  cards: PublicEmployeeScheduleCard[],
+): EmployeeScheduleCard[] {
+  return cards
+    .map((card) => ({
+      assignmentId: card.assignment_id,
+      localDate: card.local_date,
+      label: card.label,
+      roleName: card.role_name,
+      startsAt: card.starts_at,
+      endsAt: card.ends_at,
+    }))
+    .sort((left, right) => {
+      const dateRank = left.localDate.localeCompare(right.localDate);
+      if (dateRank !== 0) return dateRank;
+      return left.startsAt.localeCompare(right.startsAt);
+    });
+}
+
+export type EmployeeNotificationQueueItem = {
+  id: string;
+  created_at: string;
+};
+
+export function employeeNotificationRows<T extends EmployeeNotificationQueueItem>(
+  notifications: T[],
+  limit = 5,
+): T[] {
+  return [...notifications]
+    .sort((left, right) => {
+      const createdRank = right.created_at.localeCompare(left.created_at);
+      if (createdRank !== 0) return createdRank;
+      return left.id.localeCompare(right.id);
+    })
+    .slice(0, limit);
 }

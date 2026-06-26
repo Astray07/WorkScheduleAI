@@ -38,6 +38,7 @@
 - 저장된 운영 콘솔 세션의 `/auth/session` 재검증과 약한 signed actor secret release gate 차단
 - 직원 publication scoped signed link 발급과 `Authorization: Bearer` 기반 public 조회/확인 API
 - 직원 signed link context의 acknowledgement와 notification records
+- 직원 모바일 화면의 fragment-token 회수, public context 표시, public acknowledgement 연결
 - RAG 문서 ingest/list/delete API, 운영 패널 문서 관리 UI, citation 필드 계약
 - RAG API prompt injection drop, PII redaction, solver/policy non-mutation 평가 테스트
 - 컴플라이언스 warning override 운영 패널 입력/저장 UI
@@ -81,7 +82,7 @@ Staging 게이트:
 
 - 직원 100명/31일 고제약 운영 데이터 성능 hardening
 - 관리자 회원가입, 비밀번호 초기 설정/재설정, signed actor token 키 회전 운영 절차
-- 직원 모바일 signed link 조회/확인 API를 프론트 화면과 알림 UX에 연결
+- 직원 signed-link 모바일 화면의 변경 알림 상세 UX와 public 요청 생성 API
 - RAG embedding/vector index 설계, ingestion UI 확장, 문서 권한 UX, 장기 citation 평가셋
 - 한국형 warning rule 추가 확장과 warning override 전용 화면 고도화
 - demand/budget preview 정책 모델을 solver objective 또는 warning policy로 연결

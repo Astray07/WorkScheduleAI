@@ -1,5 +1,6 @@
 from collections.abc import Generator
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+import json
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -122,6 +123,17 @@ def test_signed_employee_publication_link_can_read_publication_context(
     assert payload["schedule_run_id"] == "run_1"
     assert payload["employee_id"] == "emp_1"
     assert payload["employee_name"] == "Kim"
+    assert payload["published_at"] == "2026-07-01T00:00:00"
+    assert payload["schedule_cards"] == [
+        {
+            "assignment_id": "assignment_1",
+            "local_date": "2026-07-01",
+            "label": "Day",
+            "role_name": "사수",
+            "starts_at": "2026-07-01T09:00:00+09:00",
+            "ends_at": "2026-07-01T17:00:00+09:00",
+        }
+    ]
     assert payload["acknowledgement"]["status"] == "pending"
     assert [
         (item["notification_type"], item["channel"], item["status"])
@@ -159,6 +171,34 @@ def test_signed_employee_publication_link_can_acknowledge_publication(
     assert payload["status"] == "acknowledged"
     persisted = db_session.query(PublicationAcknowledgement).filter_by(id="ack_1").one()
     assert persisted.acknowledged_at is not None
+
+
+def test_signed_employee_publication_context_ignores_malformed_snapshot(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    publication = db_session.get(SchedulePublication, "publication_1")
+    assert publication is not None
+    publication.result_snapshot_json = "{malformed"
+    db_session.commit()
+    link_response = client.post(
+        "/organizations/org_1/schedule-publications/publication_1/employee-links/emp_1",
+        json={"expires_in_hours": 24},
+    )
+
+    response = client.get(
+        "/employee/schedule-publications/publication_1",
+        params={
+            "organization_id": "org_1",
+            "employee_id": "emp_1",
+        },
+        headers={"Authorization": f"Bearer {link_response.json()['token']}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["schedule_cards"] == []
 
 
 def test_signed_employee_publication_link_rejects_wrong_employee(
@@ -424,4 +464,55 @@ def _publication(publication_id: str, organization_id: str, run_id: str) -> Sche
         status="published",
         assignment_snapshot_hash="assignment_hash",
         issue_snapshot_hash="issue_hash",
+        published_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        result_snapshot_json=json.dumps(
+            {
+                "slots": [
+                    {
+                        "id": "slot_1",
+                        "local_date": "2026-07-01",
+                        "label": "Day",
+                        "starts_at": "2026-07-01T09:00:00+09:00",
+                        "ends_at": "2026-07-01T17:00:00+09:00",
+                    },
+                    {
+                        "id": "slot_2",
+                        "local_date": "2026-07-02",
+                        "label": "Night",
+                        "starts_at": "2026-07-02T21:00:00+09:00",
+                        "ends_at": "2026-07-03T06:00:00+09:00",
+                    },
+                ],
+                "requirements": [
+                    {"role_id": "role_1", "role_name": "사수"},
+                    {"role_id": "role_2", "role_name": "부사수"},
+                ],
+                "assignments": [
+                    {
+                        "id": "assignment_1",
+                        "slot_id": "slot_1",
+                        "role_id": "role_1",
+                        "employee_id": "emp_1",
+                        "employee_name": "Kim",
+                    },
+                    {
+                        "id": "assignment_2",
+                        "slot_id": "slot_2",
+                        "role_id": "role_2",
+                        "employee_id": "other_employee",
+                        "employee_name": "Other",
+                    },
+                ],
+                "issues": [],
+                "proposals": [],
+                "score_summary": {
+                    "hard": 0,
+                    "approvable": 0,
+                    "soft": 0,
+                    "severity_label": "none",
+                },
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
     )

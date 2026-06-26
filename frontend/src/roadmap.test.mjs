@@ -47,6 +47,18 @@ try {
   assert.equal(roadmap.ragConfidenceLabel("insufficient"), "근거 부족");
   assert.equal(roadmap.budgetStatusLabel("within_budget"), "예산 내");
   assert.equal(roadmap.budgetStatusLabel("over_budget"), "예산 초과");
+  assert.equal(roadmap.employeeLinkTokenFromFragment("#token=abc%20123"), "abc 123");
+  assert.equal(roadmap.employeeLinkTokenFromFragment("#other=value"), null);
+  assert.equal(roadmap.isSignedEmployeePublicationUrl("?publicationId=publication_1&runId=run_1"), true);
+  assert.equal(roadmap.isSignedEmployeePublicationUrl("?runId=run_1"), false);
+  assert.equal(
+    roadmap.employeePublicationContextPath({
+      employeeId: "emp 1",
+      organizationId: "org_1",
+      publicationId: "publication/1",
+    }),
+    "/employee/schedule-publications/publication%2F1?organization_id=org_1&employee_id=emp+1",
+  );
   assert.deepEqual(
     roadmap.ragDocumentRows(
       [
@@ -122,6 +134,46 @@ try {
       ],
     ).map((card) => `${card.localDate}:${card.roleName}:${card.label}`),
     ["2026-07-01:사수:주간", "2026-07-02:부사수:야간"],
+  );
+  assert.deepEqual(
+    roadmap.employeeScheduleCardsFromPublicContext([
+      {
+        assignment_id: "assign_2",
+        local_date: "2026-07-02",
+        label: "야간",
+        role_name: "부사수",
+        starts_at: "2026-07-02T22:00:00+09:00",
+        ends_at: "2026-07-03T06:00:00+09:00",
+      },
+      {
+        assignment_id: "assign_1",
+        local_date: "2026-07-01",
+        label: "주간",
+        role_name: "사수",
+        starts_at: "2026-07-01T09:00:00+09:00",
+        ends_at: "2026-07-01T18:00:00+09:00",
+      },
+    ]).map((card) => `${card.assignmentId}:${card.localDate}:${card.roleName}`),
+    ["assign_1:2026-07-01:사수", "assign_2:2026-07-02:부사수"],
+  );
+  assert.deepEqual(
+    roadmap.employeeNotificationRows([
+      {
+        id: "notification_old",
+        created_at: "2026-07-01T09:00:00+09:00",
+        notification_type: "published",
+        channel: "in_app",
+        status: "pending_recorded",
+      },
+      {
+        id: "notification_new",
+        created_at: "2026-07-02T09:00:00+09:00",
+        notification_type: "changed",
+        channel: "in_app",
+        status: "sent",
+      },
+    ]).map((notification) => notification.id),
+    ["notification_new", "notification_old"],
   );
 } finally {
   rmSync(outDir, { recursive: true, force: true });

@@ -115,6 +115,15 @@ class PublicationNotificationResponse(BaseModel):
     created_at: datetime
 
 
+class EmployeeScheduleCardResponse(BaseModel):
+    assignment_id: str
+    local_date: date
+    label: str
+    role_name: str
+    starts_at: datetime
+    ends_at: datetime
+
+
 class EmployeePublicationLinkRequest(BaseModel):
     expires_in_hours: int = Field(default=168, ge=1, le=720)
 
@@ -137,6 +146,8 @@ class EmployeePublicationContextResponse(BaseModel):
     employee_name: str
     period_start: date
     period_end: date
+    published_at: datetime
+    schedule_cards: list[EmployeeScheduleCardResponse]
     acknowledgement: PublicationAcknowledgementResponse
     notifications: list[PublicationNotificationResponse]
 
@@ -442,6 +453,8 @@ def get_employee_publication_context(
         employee_name=employee.name,
         period_start=publication.period_start,
         period_end=publication.period_end,
+        published_at=publication.published_at,
+        schedule_cards=_employee_schedule_cards(publication, employee_id),
         acknowledgement=_acknowledgement_response(acknowledgement),
         notifications=[
             _notification_response(notification)
@@ -691,6 +704,79 @@ def _publication_notifications(
             )
             .order_by(PublicationNotification.created_at, PublicationNotification.id)
         ).scalars()
+    )
+
+
+def _employee_schedule_cards(
+    publication: SchedulePublication,
+    employee_id: str,
+) -> list[EmployeeScheduleCardResponse]:
+    if not publication.result_snapshot_json:
+        return []
+    try:
+        payload = json.loads(publication.result_snapshot_json)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, dict):
+        return []
+    slots = payload.get("slots", [])
+    requirements = payload.get("requirements", [])
+    assignments = payload.get("assignments", [])
+    if (
+        not isinstance(slots, list)
+        or not isinstance(requirements, list)
+        or not isinstance(assignments, list)
+    ):
+        return []
+    slots_by_id = {
+        slot.get("id"): slot
+        for slot in slots
+        if isinstance(slot, dict) and isinstance(slot.get("id"), str)
+    }
+    role_names_by_id = {
+        requirement.get("role_id"): requirement.get("role_name")
+        for requirement in requirements
+        if (
+            isinstance(requirement, dict)
+            and isinstance(requirement.get("role_id"), str)
+            and isinstance(requirement.get("role_name"), str)
+        )
+    }
+    cards: list[EmployeeScheduleCardResponse] = []
+    for assignment in assignments:
+        if not isinstance(assignment, dict) or assignment.get("employee_id") != employee_id:
+            continue
+        slot = slots_by_id.get(assignment.get("slot_id"))
+        if not isinstance(slot, dict):
+            continue
+        assignment_id = assignment.get("id")
+        role_id = assignment.get("role_id")
+        local_date = slot.get("local_date")
+        label = slot.get("label")
+        starts_at = slot.get("starts_at")
+        ends_at = slot.get("ends_at")
+        if not isinstance(assignment_id, str) or not isinstance(role_id, str):
+            continue
+        if (
+            not isinstance(local_date, str)
+            or not isinstance(label, str)
+            or not isinstance(starts_at, str)
+            or not isinstance(ends_at, str)
+        ):
+            continue
+        cards.append(
+            EmployeeScheduleCardResponse(
+                assignment_id=assignment_id,
+                local_date=local_date,
+                label=label,
+                role_name=role_names_by_id.get(role_id, role_id),
+                starts_at=starts_at,
+                ends_at=ends_at,
+            )
+        )
+    return sorted(
+        cards,
+        key=lambda card: (card.local_date, card.starts_at, card.assignment_id),
     )
 
 

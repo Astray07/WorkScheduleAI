@@ -110,12 +110,19 @@ import {
   acknowledgementStatusLabel,
   budgetStatusLabel,
   complianceSeverityLabel,
+  employeeLinkTokenFromFragment,
+  employeeNotificationRows,
+  employeePublicationAcknowledgementPath,
+  employeePublicationContextPath,
   employeeRequestStatusLabel,
   employeeScheduleCards,
+  employeeScheduleCardsFromPublicContext,
+  isSignedEmployeePublicationUrl,
   pendingEmployeeRequestQueue,
   ragConfidenceLabel,
   ragDocumentRows,
   type EmployeeScheduleCard,
+  type PublicEmployeeScheduleCard,
 } from "./roadmap";
 import {
   authHeaders,
@@ -345,6 +352,30 @@ type PublicationAcknowledgementList = {
   acknowledgements: PublicationAcknowledgementItem[];
 };
 
+type PublicationNotificationItem = {
+  id: string;
+  publication_id: string;
+  employee_id: string;
+  notification_type: string;
+  channel: string;
+  status: string;
+  created_at: string;
+};
+
+type EmployeePublicationContext = {
+  organization_id: string;
+  publication_id: string;
+  schedule_run_id: string;
+  employee_id: string;
+  employee_name: string;
+  period_start: string;
+  period_end: string;
+  published_at: string;
+  schedule_cards: PublicEmployeeScheduleCard[];
+  acknowledgement: PublicationAcknowledgementItem;
+  notifications: PublicationNotificationItem[];
+};
+
 type ComplianceWarningItem = {
   code: string;
   severity: string;
@@ -509,6 +540,9 @@ export function App() {
   const [ragGrounding, setRagGrounding] = useState<RagGrounding | null>(null);
   const [ragDocuments, setRagDocuments] = useState<RagDocumentItem[]>([]);
   const [demandPreview, setDemandPreview] = useState<DemandCostPreview | null>(null);
+  const [employeePublicationContext, setEmployeePublicationContext] =
+    useState<EmployeePublicationContext | null>(null);
+  const [employeeLinkToken, setEmployeeLinkToken] = useState<string | null>(null);
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => activeAuthSession);
   const [loginDraft, setLoginDraft] = useState<LoginDraft>({
     email: "",
@@ -611,8 +645,17 @@ export function App() {
       count: counts.get(employee.id) ?? 0,
     }));
   }, [demo, result]);
-  const mobileEmployee = demo?.employees[0] ?? null;
+  const mobileEmployee = employeePublicationContext
+    ? {
+        id: employeePublicationContext.employee_id,
+        employee_code: employeePublicationContext.employee_id,
+        name: employeePublicationContext.employee_name,
+      }
+    : demo?.employees[0] ?? null;
   const mobileEmployeeCards = useMemo(() => {
+    if (employeePublicationContext) {
+      return employeeScheduleCardsFromPublicContext(employeePublicationContext.schedule_cards);
+    }
     if (!mobileEmployee || !result) return [];
     return employeeScheduleCards(
       mobileEmployee.id,
@@ -620,20 +663,62 @@ export function App() {
       result.assignments,
       result.requirements,
     );
-  }, [mobileEmployee, result]);
+  }, [employeePublicationContext, mobileEmployee, result]);
+  const mobilePublication = employeePublicationContext
+    ? {
+        id: employeePublicationContext.publication_id,
+        status: "published",
+        published_at: employeePublicationContext.published_at,
+      }
+    : result?.publication ?? null;
+  const mobileNotifications = employeePublicationContext
+    ? employeeNotificationRows(employeePublicationContext.notifications)
+    : [];
 
   useEffect(() => {
-    if (!window.location.pathname.startsWith("/employee") || demo) return;
+    if (!window.location.pathname.startsWith("/employee") || demo || employeePublicationContext) {
+      return;
+    }
     const params = new URLSearchParams(window.location.search);
     const organizationId = params.get("organizationId") ?? "";
+    const publicationId = params.get("publicationId") ?? "";
     const runId = params.get("runId") ?? "";
     const employeeId = params.get("employeeId") ?? "";
-    if (!organizationId || !runId || !employeeId) return;
+    const fragmentToken = employeeLinkTokenFromFragment(window.location.hash);
+    const signedPublicationUrl = isSignedEmployeePublicationUrl(window.location.search);
+    if (fragmentToken && organizationId && publicationId && employeeId) {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    }
+    if (!organizationId || !employeeId) return;
+    if (signedPublicationUrl && !fragmentToken) {
+      setError("직원 링크 토큰이 없습니다. 발급받은 링크를 다시 열어주세요.");
+      return;
+    }
     let canceled = false;
     async function loadEmployeeContext() {
       setBusy("employee-load");
       setError(null);
       try {
+        if (fragmentToken && publicationId) {
+          const context = await api<EmployeePublicationContext>(
+            employeePublicationContextPath({
+              employeeId,
+              organizationId,
+              publicationId,
+            }),
+            {
+              headers: { Authorization: `Bearer ${fragmentToken}` },
+            },
+          );
+          if (canceled) return;
+          setEmployeeLinkToken(fragmentToken);
+          setEmployeePublicationContext(context);
+          setPublicationAcknowledgements([context.acknowledgement]);
+          setEmployeeRequests([]);
+          setResult(null);
+          return;
+        }
+        if (!runId) return;
         const [employees, nextResult] = await Promise.all([
           api<ManagedEmployee[]>(`/organizations/${organizationId}/employees`),
           fetchResult(organizationId, runId),
@@ -662,7 +747,7 @@ export function App() {
     return () => {
       canceled = true;
     };
-  }, [demo]);
+  }, [demo, employeePublicationContext]);
 
   function clearRunState() {
     setDemo(null);
@@ -681,6 +766,8 @@ export function App() {
     setRagGrounding(null);
     setRagDocuments([]);
     setDemandPreview(null);
+    setEmployeePublicationContext(null);
+    setEmployeeLinkToken(null);
     setDownloadState("대기");
     setError(null);
   }
@@ -1479,10 +1566,29 @@ export function App() {
   }
 
   async function acknowledgePublication(employeeId: string) {
-    if (!demo || !result?.publication) return;
     setBusy("acknowledge");
     setError(null);
     try {
+      if (employeePublicationContext && employeeLinkToken) {
+        const params = new URLSearchParams({
+          organization_id: employeePublicationContext.organization_id,
+          employee_id: employeePublicationContext.employee_id,
+        });
+        const acknowledgement = await api<PublicationAcknowledgementItem>(
+          `${employeePublicationAcknowledgementPath(employeePublicationContext.publication_id)}?${params.toString()}`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${employeeLinkToken}` },
+            body: { status: "acknowledged" },
+          },
+        );
+        setEmployeePublicationContext((current) =>
+          current ? { ...current, acknowledgement } : current,
+        );
+        setPublicationAcknowledgements([acknowledgement]);
+        return;
+      }
+      if (!demo || !result?.publication) return;
       await api(
         `/organizations/${demo.organizationId}/schedule-publications/${result.publication.id}/acknowledgements/${employeeId}`,
         {
@@ -1851,9 +1957,11 @@ export function App() {
         cards={mobileEmployeeCards}
         employee={mobileEmployee}
         error={error}
+        notifications={mobileNotifications}
         onAcknowledge={acknowledgePublication}
         onSubmitRequest={submitEmployeeRequest}
-        publication={result?.publication ?? null}
+        publication={mobilePublication}
+        requestsEnabled={!employeePublicationContext}
         requests={employeeRequests.filter((request) => request.employee_id === mobileEmployee?.id)}
       />
     );
@@ -2553,9 +2661,11 @@ function EmployeeMobileView({
   cards,
   employee,
   error,
+  notifications,
   onAcknowledge,
   onSubmitRequest,
   publication,
+  requestsEnabled,
   requests,
 }: {
   acknowledgements: PublicationAcknowledgementItem[];
@@ -2563,6 +2673,7 @@ function EmployeeMobileView({
   cards: EmployeeScheduleCard[];
   employee: Employee | null;
   error: string | null;
+  notifications: PublicationNotificationItem[];
   onAcknowledge: (employeeId: string) => void;
   onSubmitRequest: (request: {
     employeeId: string;
@@ -2571,6 +2682,7 @@ function EmployeeMobileView({
     startsAt: string;
   }) => void;
   publication: Publication | null;
+  requestsEnabled: boolean;
   requests: EmployeeRequestItem[];
 }) {
   const [startDate, setStartDate] = useState(todayIsoDate());
@@ -2633,40 +2745,59 @@ function EmployeeMobileView({
           </div>
         ) : <div className="empty-state compact-empty">확정된 근무표가 아직 없습니다.</div>}
       </section>
-      <section className="employee-section">
-        <SectionTitle title="불가 시간 요청" />
-        <div className="employee-request-form">
-          <label className="field-row">
-            <span>시작일</span>
-            <input onChange={(event) => setStartDate(event.target.value)} type="date" value={startDate} />
-          </label>
-          <label className="field-row">
-            <span>종료일</span>
-            <input onChange={(event) => setEndDate(event.target.value)} type="date" value={endDate} />
-          </label>
-          <label className="field-row field-row-wide">
-            <span>메모</span>
-            <textarea onChange={(event) => setNote(event.target.value)} rows={3} value={note} />
-          </label>
-          <button
-            className="primary-action"
-            disabled={busy === "employee-request"}
-            onClick={() =>
-              onSubmitRequest({
-                employeeId: employee.id,
-                endsAt: `${addDaysIso(endDate, 1)}T00:00:00+09:00`,
-                note,
-                startsAt: `${startDate}T00:00:00+09:00`,
-              })
-            }
-            type="button"
-          >
-            요청 제출
-          </button>
-        </div>
-      </section>
-      <section className="employee-section">
-        <SectionTitle title="요청 상태" />
+      {notifications.length ? (
+        <section className="employee-section">
+          <SectionTitle title="알림" />
+          <div className="roadmap-list">
+            {notifications.map((notification) => (
+              <div className="roadmap-row" key={notification.id}>
+                <div>
+                  <strong>{publicationNotificationTypeLabel(notification.notification_type)}</strong>
+                  <span>{formatDateTime(notification.created_at)}</span>
+                </div>
+                <em>{publicationNotificationStatusLabel(notification.status)}</em>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+      {requestsEnabled ? (
+        <section className="employee-section">
+          <SectionTitle title="불가 시간 요청" />
+          <div className="employee-request-form">
+            <label className="field-row">
+              <span>시작일</span>
+              <input onChange={(event) => setStartDate(event.target.value)} type="date" value={startDate} />
+            </label>
+            <label className="field-row">
+              <span>종료일</span>
+              <input onChange={(event) => setEndDate(event.target.value)} type="date" value={endDate} />
+            </label>
+            <label className="field-row field-row-wide">
+              <span>메모</span>
+              <textarea onChange={(event) => setNote(event.target.value)} rows={3} value={note} />
+            </label>
+            <button
+              className="primary-action"
+              disabled={busy === "employee-request"}
+              onClick={() =>
+                onSubmitRequest({
+                  employeeId: employee.id,
+                  endsAt: `${addDaysIso(endDate, 1)}T00:00:00+09:00`,
+                  note,
+                  startsAt: `${startDate}T00:00:00+09:00`,
+                })
+              }
+              type="button"
+            >
+              요청 제출
+            </button>
+          </div>
+        </section>
+      ) : null}
+      {requestsEnabled ? (
+        <section className="employee-section">
+          <SectionTitle title="요청 상태" />
         <div className="roadmap-list">
           {requests.length ? requests.map((request) => (
             <div className="roadmap-row" key={request.id}>
@@ -2677,7 +2808,8 @@ function EmployeeMobileView({
             </div>
           )) : <div className="empty-state compact-empty">제출한 요청이 없습니다.</div>}
         </div>
-      </section>
+        </section>
+      ) : null}
     </main>
   );
 }
@@ -4644,9 +4776,13 @@ function delay(milliseconds: number) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
-async function api<T>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
+async function api<T>(
+  path: string,
+  options: { method?: string; body?: unknown; headers?: Record<string, string> } = {},
+): Promise<T> {
   const headers = {
     ...authHeaders(activeAuthSession),
+    ...options.headers,
     ...(options.body ? { "Content-Type": "application/json" } : {}),
   };
   const response = await fetch(`${API_BASE}${path}`, {
@@ -4705,6 +4841,24 @@ function vacationTypeLabel(value: string) {
     business_trip: "출장",
     training: "교육",
     personal: "개인",
+  };
+  return labels[value] ?? value;
+}
+
+function publicationNotificationTypeLabel(value: string) {
+  const labels: Record<string, string> = {
+    published: "확정 근무표",
+    changed: "변경 알림",
+  };
+  return labels[value] ?? value;
+}
+
+function publicationNotificationStatusLabel(value: string) {
+  const labels: Record<string, string> = {
+    pending_recorded: "대기",
+    sent: "발송됨",
+    failed: "실패",
+    suppressed: "보류",
   };
   return labels[value] ?? value;
 }
