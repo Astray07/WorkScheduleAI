@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime
+import hashlib
+import json
 from pydantic import BaseModel
 
 
@@ -28,8 +30,46 @@ class ComplianceWarning(BaseModel):
     employee_id: str | None
     employee_name: str | None
     slot_id: str | None
+    week_key: str | None = None
+    snapshot_hash: str = ""
+    instance_key: str = ""
     message: str
     hours: float | None = None
+
+
+def compliance_warning_instance_key(
+    *,
+    warning_code: str,
+    employee_id: str | None,
+    slot_id: str | None,
+    week_key: str | None,
+    snapshot_hash: str,
+) -> str:
+    payload = [
+        warning_code,
+        employee_id or "",
+        slot_id or "",
+        week_key or "",
+        snapshot_hash,
+    ]
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def compliance_warning_identity_payload(
+    warning: ComplianceWarning,
+) -> dict[str, str | None]:
+    return {
+        "warning_code": warning.code,
+        "employee_id": warning.employee_id,
+        "slot_id": warning.slot_id,
+        "week_key": warning.week_key,
+        "snapshot_hash": warning.snapshot_hash,
+    }
 
 
 def evaluate_compliance_warnings(
@@ -37,28 +77,29 @@ def evaluate_compliance_warnings(
     *,
     min_rest_hours: int = 11,
 ) -> list[ComplianceWarning]:
+    snapshot_hash = _assignment_snapshot_hash(assignments)
     warnings: list[ComplianceWarning] = []
     warnings.extend(_weekly_hours_warnings(assignments))
     warnings.extend(_minimum_rest_warnings(assignments, min_rest_hours))
     warnings.extend(_night_and_weekend_warnings(assignments))
-    return warnings
+    return [_with_instance_identity(warning, snapshot_hash) for warning in warnings]
 
 
 def _weekly_hours_warnings(
     assignments: list[ComplianceAssignment],
 ) -> list[ComplianceWarning]:
-    hours_by_employee_week: dict[tuple[str, str, int], float] = defaultdict(float)
+    hours_by_employee_week: dict[tuple[str, str], float] = defaultdict(float)
     names: dict[str, str] = {}
     for assignment in assignments:
         start = _parse_datetime(assignment.starts_at)
         end = _parse_datetime(assignment.ends_at)
-        week_key = start.isocalendar()
-        hours_by_employee_week[
-            (assignment.employee_id, str(week_key.year), week_key.week)
-        ] += (end - start).total_seconds() / 3600
+        week_key = _iso_week_key(start)
+        hours_by_employee_week[(assignment.employee_id, week_key)] += (
+            end - start
+        ).total_seconds() / 3600
         names[assignment.employee_id] = assignment.employee_name
     warnings = []
-    for (employee_id, _year, _week), hours in hours_by_employee_week.items():
+    for (employee_id, week_key), hours in hours_by_employee_week.items():
         if hours > 52:
             warnings.append(
                 ComplianceWarning(
@@ -68,6 +109,7 @@ def _weekly_hours_warnings(
                     employee_id=employee_id,
                     employee_name=names.get(employee_id),
                     slot_id=None,
+                    week_key=week_key,
                     message="주간 예정 근무 시간이 52시간을 초과합니다.",
                     hours=round(hours, 2),
                 )
@@ -143,3 +185,49 @@ def _night_and_weekend_warnings(
 
 def _parse_datetime(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _iso_week_key(value: datetime) -> str:
+    week = value.isocalendar()
+    return f"{week.year}-W{week.week:02d}"
+
+
+def _assignment_snapshot_hash(assignments: list[ComplianceAssignment]) -> str:
+    payload = [
+        assignment.model_dump(mode="json")
+        for assignment in sorted(
+            assignments,
+            key=lambda item: (
+                item.employee_id,
+                item.slot_id,
+                item.starts_at,
+                item.ends_at,
+            ),
+        )
+    ]
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _with_instance_identity(
+    warning: ComplianceWarning,
+    snapshot_hash: str,
+) -> ComplianceWarning:
+    instance_key = compliance_warning_instance_key(
+        warning_code=warning.code,
+        employee_id=warning.employee_id,
+        slot_id=warning.slot_id,
+        week_key=warning.week_key,
+        snapshot_hash=snapshot_hash,
+    )
+    return warning.model_copy(
+        update={
+            "snapshot_hash": snapshot_hash,
+            "instance_key": instance_key,
+        }
+    )

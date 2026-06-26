@@ -62,6 +62,9 @@
 - 확정본은 변경 불가능한 결과 snapshot을 저장합니다.
 - 확정본 Excel export는 저장된 snapshot을 기준으로 생성됩니다.
 - 수동 배정 저장과 확정본 생성은 audit log를 남깁니다.
+- 컴플라이언스 경고는 법률 자동 판단이 아니라 운영 검토용 warning입니다.
+- blocking warning override는 `warning_code`, 직원, 슬롯 또는 ISO 주차, 현재 warning snapshot hash가 일치해야 확정 시 인정됩니다.
+- warning override 사유와 actor는 audit log에 기록됩니다.
 
 ## 비공개 관리자판에서 의도적으로 제외한 범위
 
@@ -126,6 +129,7 @@
 - 인증과 tenant 접근 제어는 공개 URL 또는 실제 외부 파일럿의 release gate입니다. 현재 `X-User-Id` 경로는 trusted upstream 개발 계약이며, signed/session actor extraction으로 교체되어야 합니다.
 - production-ready라고 부르기 전 Railway/API/worker/PostgreSQL/Redis 스테이징 검증이 필요합니다.
 - 100명, 31일 기준 강화 benchmark는 opt-in이며 기본 CI runtime gate가 아닙니다.
+- 한국형 warning rule 세분화와 override 전용 운영 화면은 남은 제품화 작업입니다.
 - 확정본 snapshot 기반 장기 fairness는 요청 시 JSON을 파싱합니다. 비공개 검증에는 충분하지만, 이력이 커지면 aggregate table 또는 materialized summary가 필요할 수 있습니다.
 - 장기 fairness는 현재 active employee를 행 기준으로 사용합니다. 따라서 나중에 직원이 비활성화되면 과거 리포트의 행 구성이 바뀔 수 있습니다.
 - 브라우저 smoke test는 UI 렌더링 확인이 목적일 때 mocked API를 사용했습니다. 실제 Redis-backed end-to-end 스테이징 smoke는 별도로 남아 있습니다.

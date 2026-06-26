@@ -1207,7 +1207,11 @@ class ComplianceWarningOverride(Base):
             "organization_id",
             "schedule_run_id",
             "warning_code",
-            name="uq_compliance_warning_overrides_run_code",
+            "employee_id",
+            "slot_id",
+            "week_key",
+            "snapshot_hash",
+            name="uq_compliance_warning_overrides_instance",
         ),
     )
 
@@ -1225,6 +1229,10 @@ class ComplianceWarningOverride(Base):
         index=True,
     )
     warning_code: Mapped[str] = mapped_column(Text, nullable=False)
+    employee_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    slot_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    week_key: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    snapshot_hash: Mapped[str] = mapped_column(Text, nullable=False, default="")
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_by_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

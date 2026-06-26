@@ -62,11 +62,13 @@ Staging 게이트:
 - worker service start command는 `python -m work_schedule_ai.worker.queue_worker`여야 합니다.
 - 실제 Redis queue를 통과하는 P0 happy path와 infeasible/relaxation path를 브라우저에서 1회 이상 관통해야 합니다.
 - 공개 URL 또는 실사용 파일럿이면 관리자 인증, signed/session actor extraction, 요청 조직 컨텍스트, tenant 접근 제어가 릴리즈 전 필수입니다.
+- blocking 컴플라이언스 warning은 현재 warning instance(`warning_code` + 직원 + 슬롯/ISO 주차 + snapshot hash)와 override가 정확히 일치해야 확정 가능합니다.
 
 ## 명시적 후속 범위
 
 - 직원 100명/31일 고제약 운영 데이터 성능 hardening
 - 관리자 회원가입/로그인, JWT/session 또는 서명 검증 기반 actor extraction, 요청 조직 컨텍스트 연결
+- 한국형 warning rule 세분화와 warning override 전용 운영 화면
 - assumption literal 기반 고급 CP-SAT 진단 모델 전체
 - 수동 편집 UI와 편집 이력 비교
 - FairnessLedger/ImportBatch 고도화

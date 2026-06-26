@@ -129,6 +129,10 @@ def test_alembic_upgrade_head_creates_named_constraints(tmp_path):
     schedule_policy_check_names = {
         item["name"] for item in inspector.get_check_constraints("schedule_policies")
     }
+    compliance_override_unique_names = {
+        item["name"]
+        for item in inspector.get_unique_constraints("compliance_warning_overrides")
+    }
 
     assert "uq_employees_organization_employee_code" in employee_unique_names
     assert "uq_roles_organization_name" in role_unique_names
@@ -162,6 +166,10 @@ def test_alembic_upgrade_head_creates_named_constraints(tmp_path):
     assert "ck_shift_requirements_required_count" in shift_requirement_check_names
     assert "uq_schedule_policies_organization_id" in schedule_policy_unique_names
     assert "ck_schedule_policies_unfilled_policy" in schedule_policy_check_names
+    assert (
+        "uq_compliance_warning_overrides_instance"
+        in compliance_override_unique_names
+    )
 
 
 def test_alembic_upgrade_head_creates_schedule_policy_indexes(tmp_path):
@@ -367,7 +375,7 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260626_0015"
+    assert version == "20260626_0016"
 
 
 def test_postgresql_rls_migration_defines_tenant_policies():

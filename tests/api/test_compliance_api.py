@@ -1,5 +1,6 @@
 from collections.abc import Generator
 from datetime import date
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,7 +10,18 @@ from sqlalchemy.pool import StaticPool
 
 from work_schedule_ai.api.app import create_app
 from work_schedule_ai.api.dependencies import get_db_session
-from work_schedule_ai.db.models import Assignment, Base, Employee, Organization, Role, ScheduleRun, ShiftSlot
+from work_schedule_ai.compliance import compliance_warning_instance_key
+from work_schedule_ai.db.models import (
+    Assignment,
+    AuditLog,
+    Base,
+    ComplianceWarningOverride,
+    Employee,
+    Organization,
+    Role,
+    ScheduleRun,
+    ShiftSlot,
+)
 
 
 def test_compliance_warnings_detect_weekly_hours_over_52(client: TestClient):
@@ -20,16 +32,56 @@ def test_compliance_warnings_detect_weekly_hours_over_52(client: TestClient):
     assert payload["legal_disclaimer"]
     assert any(warning["code"] == "WEEKLY_HOURS_OVER_52" for warning in payload["warnings"])
     assert any(warning["publish_blocking"] for warning in payload["warnings"])
+    weekly_warning = _weekly_warning(payload["warnings"])
+    assert weekly_warning["employee_id"] == "emp_1"
+    assert weekly_warning["slot_id"] is None
+    assert weekly_warning["week_key"] == "2026-W28"
+    assert weekly_warning["snapshot_hash"]
+    assert weekly_warning["instance_key"]
 
 
-def test_compliance_warning_override_records_reason(client: TestClient):
+def test_compliance_warning_override_records_instance_reason_and_actor(
+    client: TestClient,
+    db_session: Session,
+):
+    warning = _current_weekly_warning(client)
+
     response = client.post(
         "/organizations/org_1/schedule-runs/run_1/compliance-warning-overrides",
-        json={"warning_code": "WEEKLY_HOURS_OVER_52", "reason": "운영자 검토 완료"},
+        json={
+            "warning_code": warning["code"],
+            "employee_id": warning["employee_id"],
+            "slot_id": warning["slot_id"],
+            "week_key": warning["week_key"],
+            "snapshot_hash": warning["snapshot_hash"],
+            "reason": "운영자 검토 완료",
+            "created_by_user_id": "manager_1",
+        },
     )
 
     assert response.status_code == 201
-    assert response.json()["warning_code"] == "WEEKLY_HOURS_OVER_52"
+    payload = response.json()
+    assert payload["warning_code"] == "WEEKLY_HOURS_OVER_52"
+    assert payload["employee_id"] == "emp_1"
+    assert payload["slot_id"] is None
+    assert payload["week_key"] == "2026-W28"
+    assert payload["snapshot_hash"] == warning["snapshot_hash"]
+
+    override = db_session.query(ComplianceWarningOverride).one()
+    assert override.employee_id == "emp_1"
+    assert override.slot_id == ""
+    assert override.week_key == "2026-W28"
+    assert override.snapshot_hash == warning["snapshot_hash"]
+    assert override.created_by_user_id == "manager_1"
+
+    audit_log = db_session.query(AuditLog).one()
+    assert audit_log.actor_user_id == "manager_1"
+    audit_metadata = json.loads(audit_log.metadata_json)
+    assert audit_metadata["warning_code"] == "WEEKLY_HOURS_OVER_52"
+    assert audit_metadata["employee_id"] == "emp_1"
+    assert audit_metadata["week_key"] == "2026-W28"
+    assert audit_metadata["snapshot_hash"] == warning["snapshot_hash"]
+    assert audit_metadata["reason"] == "운영자 검토 완료"
 
 
 def test_compliance_warning_override_rejects_non_current_warning(client: TestClient):
@@ -39,6 +91,57 @@ def test_compliance_warning_override_rejects_non_current_warning(client: TestCli
     )
 
     assert response.status_code == 422
+
+
+def test_compliance_warning_override_rejects_mismatched_instance(client: TestClient):
+    warning = _current_weekly_warning(client)
+
+    response = client.post(
+        "/organizations/org_1/schedule-runs/run_1/compliance-warning-overrides",
+        json={
+            "warning_code": warning["code"],
+            "employee_id": "emp_missing",
+            "slot_id": warning["slot_id"],
+            "week_key": warning["week_key"],
+            "snapshot_hash": warning["snapshot_hash"],
+            "reason": "다른 직원 경고에는 적용되면 안 됩니다.",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_compliance_warning_instance_key_uses_structural_identity():
+    first_key = compliance_warning_instance_key(
+        warning_code="A|B",
+        employee_id="C",
+        slot_id=None,
+        week_key=None,
+        snapshot_hash="snapshot",
+    )
+    second_key = compliance_warning_instance_key(
+        warning_code="A",
+        employee_id="B|C",
+        slot_id=None,
+        week_key=None,
+        snapshot_hash="snapshot",
+    )
+
+    assert first_key != second_key
+
+
+def _current_weekly_warning(client: TestClient) -> dict:
+    response = client.get("/organizations/org_1/schedule-runs/run_1/compliance-warnings")
+    assert response.status_code == 200
+    return _weekly_warning(response.json()["warnings"])
+
+
+def _weekly_warning(warnings: list[dict]) -> dict:
+    return next(
+        warning
+        for warning in warnings
+        if warning["code"] == "WEEKLY_HOURS_OVER_52"
+    )
 
 
 @pytest.fixture

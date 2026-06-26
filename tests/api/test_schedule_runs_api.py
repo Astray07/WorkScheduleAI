@@ -14,8 +14,13 @@ from sqlalchemy.pool import StaticPool
 from work_schedule_ai.api.app import create_app
 from work_schedule_ai.api.dependencies import get_db_session
 from work_schedule_ai.api.routes import schedule_runs as schedule_runs_module
+from work_schedule_ai.compliance import (
+    ComplianceWarning,
+    compliance_warning_instance_key,
+)
 from work_schedule_ai.db.models import (
     Base,
+    ComplianceWarningOverride,
     Employee,
     EmployeeRole,
     Organization,
@@ -1911,6 +1916,177 @@ def test_publish_schedule_run_rejects_stale_snapshot_hash(client: TestClient):
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "SCHEDULE_RESULT_STALE"
+
+
+def test_publish_schedule_run_requires_each_blocking_compliance_instance(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    run_id, result_payload = _create_recalculated_result(client)
+    snapshot_hash = "compliance_snapshot_for_test"
+    warnings = [
+        ComplianceWarning(
+            code="WEEKLY_HOURS_OVER_52",
+            severity="blocking",
+            publish_blocking=True,
+            employee_id="emp_1",
+            employee_name="Kim",
+            slot_id=None,
+            week_key="2026-W28",
+            snapshot_hash=snapshot_hash,
+            instance_key=compliance_warning_instance_key(
+                warning_code="WEEKLY_HOURS_OVER_52",
+                employee_id="emp_1",
+                slot_id=None,
+                week_key="2026-W28",
+                snapshot_hash=snapshot_hash,
+            ),
+            message="주간 예정 근무 시간이 52시간을 초과합니다.",
+            hours=63,
+        ),
+        ComplianceWarning(
+            code="WEEKLY_HOURS_OVER_52",
+            severity="blocking",
+            publish_blocking=True,
+            employee_id="emp_2",
+            employee_name="Lee",
+            slot_id=None,
+            week_key="2026-W28",
+            snapshot_hash=snapshot_hash,
+            instance_key=compliance_warning_instance_key(
+                warning_code="WEEKLY_HOURS_OVER_52",
+                employee_id="emp_2",
+                slot_id=None,
+                week_key="2026-W28",
+                snapshot_hash=snapshot_hash,
+            ),
+            message="주간 예정 근무 시간이 52시간을 초과합니다.",
+            hours=63,
+        ),
+    ]
+    monkeypatch.setattr(
+        schedule_runs_module,
+        "_compliance_warnings_for_artifacts",
+        lambda _artifacts: warnings,
+    )
+    db_session.add(
+        ComplianceWarningOverride(
+            id="compliance_override_1",
+            organization_id="org_1",
+            schedule_run_id=run_id,
+            warning_code="WEEKLY_HOURS_OVER_52",
+            employee_id="emp_1",
+            slot_id="",
+            week_key="2026-W28",
+            snapshot_hash=snapshot_hash,
+            reason="emp_1 warning reviewed",
+        )
+    )
+    db_session.commit()
+
+    response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/publications",
+        json={
+            "expected_assignment_snapshot_hash": result_payload[
+                "assignment_snapshot_hash"
+            ],
+            "expected_issue_snapshot_hash": result_payload["issue_snapshot_hash"],
+        },
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "COMPLIANCE_OVERRIDE_REQUIRED"
+    assert detail["warning_instances"] == [
+        {
+            "warning_code": "WEEKLY_HOURS_OVER_52",
+            "employee_id": "emp_2",
+            "slot_id": None,
+            "week_key": "2026-W28",
+            "snapshot_hash": snapshot_hash,
+        }
+    ]
+
+
+def test_publish_schedule_run_accepts_current_compliance_override_instance(
+    client: TestClient,
+    db_session: Session,
+):
+    run_id, _result_payload = _create_recalculated_result(client)
+    db_session.query(Assignment).filter_by(
+        organization_id="org_1",
+        schedule_run_id=run_id,
+    ).delete(synchronize_session=False)
+    slots = (
+        db_session.query(ShiftSlot)
+        .filter_by(organization_id="org_1", schedule_run_id=run_id)
+        .order_by(ShiftSlot.local_date, ShiftSlot.id)
+        .all()
+    )
+    for slot in slots:
+        slot.label = "장시간 근무"
+        slot.starts_at = f"{slot.local_date.isoformat()}T00:00:00+09:00"
+        slot.ends_at = f"{slot.local_date.isoformat()}T20:00:00+09:00"
+    db_session.add_all(
+        [
+            Assignment(
+                id=f"{run_id}__compliance_assignment_{index}",
+                organization_id="org_1",
+                schedule_run_id=run_id,
+                shift_slot_id=slot.id,
+                role_id="role_senior",
+                employee_id="emp_1",
+                employee_name="Kim",
+                source="solver",
+                locked_by_user=False,
+                warning_state="none",
+                warning_message=None,
+                attempt_no=1,
+            )
+            for index, slot in enumerate(slots, start=1)
+        ]
+    )
+    db_session.commit()
+
+    refreshed_result_response = client.get(
+        f"/organizations/org_1/schedule-runs/{run_id}/result"
+    )
+    assert refreshed_result_response.status_code == 200
+    refreshed_result = refreshed_result_response.json()
+    warnings_response = client.get(
+        f"/organizations/org_1/schedule-runs/{run_id}/compliance-warnings"
+    )
+    assert warnings_response.status_code == 200
+    warning = next(
+        item
+        for item in warnings_response.json()["warnings"]
+        if item["code"] == "WEEKLY_HOURS_OVER_52"
+    )
+    override_response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/compliance-warning-overrides",
+        json={
+            "warning_code": warning["code"],
+            "employee_id": warning["employee_id"],
+            "slot_id": warning["slot_id"],
+            "week_key": warning["week_key"],
+            "snapshot_hash": warning["snapshot_hash"],
+            "reason": "현재 warning instance 검토 완료",
+        },
+    )
+    assert override_response.status_code == 201
+
+    publish_response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/publications",
+        json={
+            "expected_assignment_snapshot_hash": refreshed_result[
+                "assignment_snapshot_hash"
+            ],
+            "expected_issue_snapshot_hash": refreshed_result["issue_snapshot_hash"],
+        },
+    )
+
+    assert publish_response.status_code == 201
 
 
 def test_download_schedule_publication_excel_returns_workbook(client: TestClient):

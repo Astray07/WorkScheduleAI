@@ -20,6 +20,8 @@ from work_schedule_ai.api.security import ADMIN_ROLES, READ_ROLES, require_roles
 from work_schedule_ai.api.routes.policies import DEFAULT_POLICY
 from work_schedule_ai.compliance import (
     ComplianceAssignment,
+    compliance_warning_identity_payload,
+    compliance_warning_instance_key,
     evaluate_compliance_warnings,
 )
 from work_schedule_ai.db.models import (
@@ -962,30 +964,53 @@ def publish_schedule_run(
             },
         )
 
-    blocking_warning_codes = {
-        warning.code
+    blocking_warnings = [
+        warning
         for warning in _compliance_warnings_for_artifacts(artifacts)
         if warning.publish_blocking
-    }
-    if blocking_warning_codes:
-        overridden_codes = {
-            row[0]
-            for row in db_session.execute(
-                select(ComplianceWarningOverride.warning_code).where(
-                    ComplianceWarningOverride.organization_id == organization_id,
-                    ComplianceWarningOverride.schedule_run_id == schedule_run_id,
-                    ComplianceWarningOverride.warning_code.in_(blocking_warning_codes),
-                )
-            ).all()
+    ]
+    if blocking_warnings:
+        blocking_warning_keys = {
+            warning.instance_key for warning in blocking_warnings
         }
-        missing_override_codes = sorted(blocking_warning_codes - overridden_codes)
-        if missing_override_codes:
+        override_rows = db_session.execute(
+            select(
+                ComplianceWarningOverride.warning_code,
+                ComplianceWarningOverride.employee_id,
+                ComplianceWarningOverride.slot_id,
+                ComplianceWarningOverride.week_key,
+                ComplianceWarningOverride.snapshot_hash,
+            ).where(
+                ComplianceWarningOverride.organization_id == organization_id,
+                ComplianceWarningOverride.schedule_run_id == schedule_run_id,
+                ComplianceWarningOverride.warning_code.in_(
+                    {warning.code for warning in blocking_warnings}
+                ),
+            )
+        ).all()
+        overridden_keys = {
+            compliance_warning_instance_key(
+                warning_code=row.warning_code,
+                employee_id=_identity_api_value(row.employee_id),
+                slot_id=_identity_api_value(row.slot_id),
+                week_key=_identity_api_value(row.week_key),
+                snapshot_hash=row.snapshot_hash,
+            )
+            for row in override_rows
+        }
+        missing_warning_keys = blocking_warning_keys - overridden_keys
+        if missing_warning_keys:
+            missing_warnings = [
+                compliance_warning_identity_payload(warning)
+                for warning in blocking_warnings
+                if warning.instance_key in missing_warning_keys
+            ]
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
                     "code": "COMPLIANCE_OVERRIDE_REQUIRED",
                     "message": "Blocking compliance warnings require override reasons.",
-                    "warning_codes": missing_override_codes,
+                    "warning_instances": missing_warnings,
                 },
             )
 
@@ -3340,6 +3365,10 @@ def _compliance_warnings_for_artifacts(
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex}"
+
+
+def _identity_api_value(value: str) -> str | None:
+    return value or None
 
 
 def _build_schedule_workbook(
