@@ -81,6 +81,7 @@
 - 컴플라이언스 경고는 법률 자동 판단이 아니라 운영 검토용 warning입니다.
 - blocking warning override는 `warning_code`, 직원, 슬롯 또는 ISO 주차, 현재 warning snapshot hash가 일치해야 확정 시 인정됩니다.
 - warning override 사유와 actor는 audit log에 기록됩니다.
+- 운영 패널에서 blocking warning별 사유 입력과 예외 승인 저장을 지원합니다.
 
 ### 직원 모바일 접근
 

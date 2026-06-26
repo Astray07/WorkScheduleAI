@@ -338,7 +338,12 @@ type ComplianceWarningItem = {
   code: string;
   severity: string;
   publish_blocking: boolean;
+  employee_id: string | null;
   employee_name: string | null;
+  slot_id: string | null;
+  week_key: string | null;
+  snapshot_hash: string;
+  instance_key: string;
   message: string;
   hours: number | null;
 };
@@ -468,6 +473,9 @@ export function App() {
   >([]);
   const [complianceWarningSummary, setComplianceWarningSummary] =
     useState<ComplianceWarningResponse | null>(null);
+  const [complianceOverrideReasons, setComplianceOverrideReasons] = useState<
+    Record<string, string>
+  >({});
   const [ragGrounding, setRagGrounding] = useState<RagGrounding | null>(null);
   const [ragDocuments, setRagDocuments] = useState<RagDocumentItem[]>([]);
   const [demandPreview, setDemandPreview] = useState<DemandCostPreview | null>(null);
@@ -591,6 +599,7 @@ export function App() {
     setEmployeeRequests([]);
     setPublicationAcknowledgements([]);
     setComplianceWarningSummary(null);
+    setComplianceOverrideReasons({});
     setRagGrounding(null);
     setRagDocuments([]);
     setDemandPreview(null);
@@ -1283,6 +1292,40 @@ export function App() {
     }
   }
 
+  async function overrideComplianceWarning(warning: ComplianceWarningItem) {
+    if (!demo || !result) return;
+    const reason = complianceOverrideReasons[warning.instance_key]?.trim();
+    if (!reason) {
+      setError("컴플라이언스 warning 예외 승인 사유를 입력해주세요.");
+      return;
+    }
+    setBusy("compliance-override");
+    setError(null);
+    try {
+      await api(`/organizations/${demo.organizationId}/schedule-runs/${demo.runId}/compliance-warning-overrides`, {
+        method: "POST",
+        body: {
+          warning_code: warning.code,
+          employee_id: warning.employee_id,
+          slot_id: warning.slot_id,
+          week_key: warning.week_key,
+          snapshot_hash: warning.snapshot_hash,
+          reason,
+        },
+      });
+      setComplianceOverrideReasons((current) => {
+        const next = { ...current };
+        delete next[warning.instance_key];
+        return next;
+      });
+      await refreshRoadmapPanels(demo.organizationId, demo.runId, result);
+    } catch (caught) {
+      setError(messageFromError(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function acknowledgePublication(employeeId: string) {
     if (!demo || !result?.publication) return;
     setBusy("acknowledge");
@@ -1860,10 +1903,18 @@ export function App() {
               acknowledgements={publicationAcknowledgements}
               busy={busy}
               compliance={complianceWarningSummary}
+              complianceOverrideReasons={complianceOverrideReasons}
               demandPreview={demandPreview}
               employees={demo?.employees ?? []}
               onApproveRequest={approveEmployeeRequest}
+              onComplianceOverrideReasonChange={(instanceKey, reason) => {
+                setComplianceOverrideReasons((current) => ({
+                  ...current,
+                  [instanceKey]: reason,
+                }));
+              }}
               onDeleteRagDocument={deleteRagDocument}
+              onOverrideComplianceWarning={overrideComplianceWarning}
               onRefreshDemand={() => loadDemandPreview()}
               onRefreshRag={() => {
                 void Promise.allSettled([loadRagEvidence(), loadRagDocuments()]);
@@ -2029,10 +2080,13 @@ function RoadmapOpsPanel({
   acknowledgements,
   busy,
   compliance,
+  complianceOverrideReasons,
   demandPreview,
   employees,
   onApproveRequest,
+  onComplianceOverrideReasonChange,
   onDeleteRagDocument,
+  onOverrideComplianceWarning,
   onRefreshDemand,
   onRefreshRag,
   onRejectRequest,
@@ -2043,10 +2097,13 @@ function RoadmapOpsPanel({
   acknowledgements: PublicationAcknowledgementItem[];
   busy: string | null;
   compliance: ComplianceWarningResponse | null;
+  complianceOverrideReasons: Record<string, string>;
   demandPreview: DemandCostPreview | null;
   employees: Employee[];
   onApproveRequest: (requestId: string) => void;
+  onComplianceOverrideReasonChange: (instanceKey: string, reason: string) => void;
   onDeleteRagDocument: (documentId: string) => void;
+  onOverrideComplianceWarning: (warning: ComplianceWarningItem) => void;
   onRefreshDemand: () => void;
   onRefreshRag: () => void;
   onRejectRequest: (requestId: string) => void;
@@ -2121,10 +2178,29 @@ function RoadmapOpsPanel({
         </div>
         <div className="roadmap-list">
           {warnings.length ? warnings.slice(0, 5).map((warning) => (
-            <div className={`roadmap-row warning-${warning.severity}`} key={`${warning.code}-${warning.employee_name ?? "all"}`}>
+            <div className={`roadmap-row warning-${warning.severity}`} key={warning.instance_key}>
               <div>
                 <strong>{complianceSeverityLabel(warning.severity)} · {warning.code}</strong>
                 <span>{warning.message}</span>
+                {warning.publish_blocking ? (
+                  <div className="warning-override-controls">
+                    <input
+                      onChange={(event) => onComplianceOverrideReasonChange(
+                        warning.instance_key,
+                        event.target.value,
+                      )}
+                      placeholder="예외 승인 사유"
+                      value={complianceOverrideReasons[warning.instance_key] ?? ""}
+                    />
+                    <button
+                      disabled={busy === "compliance-override"}
+                      onClick={() => onOverrideComplianceWarning(warning)}
+                      type="button"
+                    >
+                      예외 승인
+                    </button>
+                  </div>
+                ) : null}
               </div>
               <em>{warning.publish_blocking ? "차단" : "발행 가능"}</em>
             </div>

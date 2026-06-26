@@ -1001,6 +1001,22 @@ button:disabled {
   padding: 0 9px;
 }
 
+.warning-override-controls {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-top: 8px;
+}
+
+.warning-override-controls input {
+  min-height: 34px;
+}
+
+.warning-override-controls button {
+  min-height: 34px;
+  padding: 0 10px;
+}
+
 .warning-blocking {
   background: #fff1f0;
   border-color: #ffc7c1;
