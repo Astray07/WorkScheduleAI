@@ -6,6 +6,8 @@ import {
   Clock3,
   Download,
   FileSpreadsheet,
+  LogIn,
+  LogOut,
   Plus,
   Play,
   RefreshCw,
@@ -115,12 +117,21 @@ import {
   ragDocumentRows,
   type EmployeeScheduleCard,
 } from "./roadmap";
+import {
+  authHeaders,
+  sessionLabel,
+  sessionVerificationPath,
+  type AuthSession,
+  type SessionIdentity,
+} from "./authSession";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const AUTH_SESSION_STORAGE_KEY = "workscheduleai.authSession";
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "infeasible"]);
 const FAILED_RUN_STATUSES = new Set(["failed", "canceled"]);
 const RESULT_POLL_INTERVAL_MS = 1000;
 const RESULT_POLL_ATTEMPTS = 60;
+let activeAuthSession: AuthSession | null = loadStoredAuthSession();
 
 type Employee = {
   id: string;
@@ -405,6 +416,12 @@ type LaborBudgetDraft = {
   budgetAmountWon: string;
 };
 
+type LoginDraft = {
+  email: string;
+  password: string;
+  organizationId: string;
+};
+
 type FieldError = {
   field: string;
   code: string;
@@ -492,6 +509,12 @@ export function App() {
   const [ragGrounding, setRagGrounding] = useState<RagGrounding | null>(null);
   const [ragDocuments, setRagDocuments] = useState<RagDocumentItem[]>([]);
   const [demandPreview, setDemandPreview] = useState<DemandCostPreview | null>(null);
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => activeAuthSession);
+  const [loginDraft, setLoginDraft] = useState<LoginDraft>({
+    email: "",
+    password: "",
+    organizationId: "",
+  });
   const [demandDriverDraft, setDemandDriverDraft] = useState<DemandDriverDraft>({
     localDate: DEFAULT_SCENARIO_CONFIG.startDate,
     segment: "day",
@@ -538,6 +561,37 @@ export function App() {
     ],
     [employeeRows.length, normalizedScenario, normalizedShiftCoverage, pairRows.length, vacationRows.length],
   );
+  useEffect(() => {
+    activeAuthSession = authSession;
+    if (authSession) {
+      window.sessionStorage.setItem(AUTH_SESSION_STORAGE_KEY, JSON.stringify(authSession));
+    } else {
+      window.sessionStorage.removeItem(AUTH_SESSION_STORAGE_KEY);
+    }
+  }, [authSession]);
+  useEffect(() => {
+    if (!authSession) return;
+    let canceled = false;
+    const sessionToVerify = authSession;
+    async function verifySession() {
+      try {
+        await api<SessionIdentity>(sessionVerificationPath(sessionToVerify));
+      } catch {
+        if (!canceled) {
+          setAuthSession(null);
+          setError("저장된 세션이 만료되어 로그아웃되었습니다.");
+        }
+      }
+    }
+    void verifySession();
+    return () => {
+      canceled = true;
+    };
+  }, [authSession]);
+  useEffect(() => {
+    if (!workspaceOrganization || loginDraft.organizationId) return;
+    setLoginDraft((current) => ({ ...current, organizationId: workspaceOrganization.id }));
+  }, [loginDraft.organizationId, workspaceOrganization]);
   const roles = useMemo(() => {
     const seen = new Map<string, string>();
     result?.requirements.forEach((requirement) => {
@@ -656,6 +710,31 @@ export function App() {
   function updateShiftCoverage(nextCoverage: ShiftCoverage) {
     setShiftCoverage(normalizeShiftCoverage(nextCoverage));
     clearRunState();
+  }
+
+  async function loginSession() {
+    setBusy("login");
+    setError(null);
+    try {
+      const session = await api<AuthSession>("/auth/login", {
+        method: "POST",
+        body: {
+          email: loginDraft.email,
+          password: loginDraft.password,
+          organization_id: loginDraft.organizationId,
+        },
+      });
+      setAuthSession(session);
+      setLoginDraft((current) => ({ ...current, password: "" }));
+    } catch (caught) {
+      setError(messageFromError(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function logoutSession() {
+    setAuthSession(null);
   }
 
   function replaceEmployeeRows(nextRows: EmployeeTableRow[]) {
@@ -794,6 +873,7 @@ export function App() {
     try {
       const response = await fetch(
         `${API_BASE}/organizations/${demo.organizationId}/schedule-publications/${result.publication.id}/excel`,
+        { headers: authHeaders(activeAuthSession) },
       );
       if (!response.ok) throw new Error(`Excel download failed: ${response.status}`);
       const blob = await response.blob();
@@ -819,6 +899,7 @@ export function App() {
     try {
       const response = await fetch(
         `${API_BASE}/operations/organizations/${organizationId}/audit-logs/export`,
+        { headers: authHeaders(activeAuthSession) },
       );
       if (!response.ok) throw new Error(`Audit export failed: ${response.status}`);
       const blob = await response.blob();
@@ -1792,6 +1873,14 @@ export function App() {
           <span>현재 조직</span>
           <strong>{normalizedScenario.organizationName}</strong>
         </div>
+        <SessionPanel
+          busy={busy}
+          draft={loginDraft}
+          onDraftChange={(patch) => setLoginDraft((current) => ({ ...current, ...patch }))}
+          onLogin={loginSession}
+          onLogout={logoutSession}
+          session={authSession}
+        />
         <nav className="nav-list">
           {operationSections.map((section) => {
             const Icon = section.icon;
@@ -2590,6 +2679,68 @@ function EmployeeMobileView({
         </div>
       </section>
     </main>
+  );
+}
+
+function SessionPanel({
+  busy,
+  draft,
+  onDraftChange,
+  onLogin,
+  onLogout,
+  session,
+}: {
+  busy: string | null;
+  draft: LoginDraft;
+  onDraftChange: (patch: Partial<LoginDraft>) => void;
+  onLogin: () => void;
+  onLogout: () => void;
+  session: AuthSession | null;
+}) {
+  return (
+    <div className="session-panel">
+      <div className="session-heading">
+        <span>세션</span>
+        <strong>{sessionLabel(session)}</strong>
+      </div>
+      {session ? (
+        <button className="session-button" onClick={onLogout} type="button">
+          <LogOut size={15} />
+          로그아웃
+        </button>
+      ) : (
+        <div className="session-form">
+          <input
+            onChange={(event) => onDraftChange({ organizationId: event.target.value })}
+            placeholder="organization id"
+            value={draft.organizationId}
+          />
+          <input
+            autoComplete="username"
+            onChange={(event) => onDraftChange({ email: event.target.value })}
+            placeholder="email"
+            type="email"
+            value={draft.email}
+          />
+          <input
+            autoComplete="current-password"
+            onChange={(event) => onDraftChange({ password: event.target.value })}
+            placeholder="password"
+            type="password"
+            value={draft.password}
+          />
+          <button
+            className="session-button"
+            disabled={busy === "login" || !draft.email || !draft.password || !draft.organizationId}
+            onClick={onLogin}
+            type="button"
+          >
+            <LogIn size={15} />
+            {busy === "login" ? "확인 중" : "로그인"}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -4494,9 +4645,13 @@ function delay(milliseconds: number) {
 }
 
 async function api<T>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
+  const headers = {
+    ...authHeaders(activeAuthSession),
+    ...(options.body ? { "Content-Type": "application/json" } : {}),
+  };
   const response = await fetch(`${API_BASE}${path}`, {
     method: options.method ?? "GET",
-    headers: options.body ? { "Content-Type": "application/json" } : undefined,
+    headers: Object.keys(headers).length ? headers : undefined,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
   if (!response.ok) {
@@ -4507,6 +4662,24 @@ async function api<T>(path: string, options: { method?: string; body?: unknown }
     return null as T;
   }
   return response.json() as Promise<T>;
+}
+
+function loadStoredAuthSession(): AuthSession | null {
+  if (typeof window === "undefined") return null;
+  const stored = window.sessionStorage.getItem(AUTH_SESSION_STORAGE_KEY);
+  if (!stored) return null;
+  try {
+    const parsed = JSON.parse(stored) as Partial<AuthSession>;
+    if (!parsed.access_token || !parsed.organization_id || !parsed.user_id || !parsed.role) {
+      return null;
+    }
+    if (parsed.expires_at && Date.parse(parsed.expires_at) <= Date.now()) {
+      return null;
+    }
+    return parsed as AuthSession;
+  } catch {
+    return null;
+  }
 }
 
 function qualityLabel(value?: string) {

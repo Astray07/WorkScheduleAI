@@ -55,8 +55,10 @@
 - 운영 지표와 readiness endpoint가 로컬 및 스테이징 점검용으로 존재합니다.
 - PostgreSQL tenant context hook은 존재하지만, 공개 인증과 멤버십 강제는 아직 release gate입니다.
 - `WORKSCHEDULEAI_AUTH_REQUIRED=1`일 때 조직 스코프 API는 `WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH=1` 없이는 `X-User-Id`를 받지 않도록 fail-closed 처리합니다.
-- `WORKSCHEDULEAI_SIGNED_ACTOR_SECRET`이 설정되면 조직 스코프 API는 `Authorization: Bearer <signed actor token>`을 검증해 actor를 추출할 수 있습니다.
-- release gate는 trusted upstream header mode를 공개 SaaS ready로 보지 않으며, signed actor token mode와 구분합니다.
+- `WORKSCHEDULEAI_SIGNED_ACTOR_SECRET`이 최소 길이 정책을 만족하면 조직 스코프 API는 `Authorization: Bearer <signed actor token>`을 검증해 actor를 추출할 수 있습니다.
+- `/auth/login`은 저장된 PBKDF2 비밀번호 해시와 조직 멤버십을 검증한 뒤 조직 스코프 signed actor token을 발급합니다. 운영 콘솔은 해당 token을 sessionStorage에만 보관하고 조직 API 호출의 `Authorization` header로 보냅니다.
+- 운영 콘솔은 저장된 세션을 복원할 때 `/auth/session`으로 token을 재검증하고, 만료되었거나 변조된 세션은 제거합니다.
+- release gate는 trusted upstream header mode, 약한 signed actor secret, 공개 조직 bootstrap 미잠금 상태를 공개 SaaS ready로 보지 않습니다.
 
 ### RAG와 근거 제시
 
@@ -155,7 +157,7 @@
 
 ## 남은 출시 리스크
 
-- 인증과 tenant 접근 제어는 공개 URL 또는 실제 외부 파일럿의 release gate입니다. signed actor token 추출은 추가되었지만, 관리자 회원가입/로그인, 세션 UX, 키 관리와 운영 배포 검증은 남아 있습니다.
+- 인증과 tenant 접근 제어는 공개 URL 또는 실제 외부 파일럿의 release gate입니다. signed actor token 추출과 최소 로그인/session UX는 추가되었지만, 관리자 회원가입, 비밀번호 초기 설정/재설정, 키 회전, 운영 배포 검증은 남아 있습니다.
 - 직원 모바일 화면은 signed link 기반 조회/확인 API와 변경 알림 UX에 연결해야 합니다.
 - production-ready라고 부르기 전 Railway/API/worker/PostgreSQL/Redis 스테이징 검증이 필요합니다.
 - 100명, 31일 기준 강화 benchmark는 opt-in이며 기본 CI runtime gate가 아닙니다.

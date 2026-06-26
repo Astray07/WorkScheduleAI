@@ -18,6 +18,7 @@ from work_schedule_ai.api.security import (
     READ_ROLES,
     actor_extraction_mode,
     is_auth_required,
+    is_signed_actor_secret_configured_but_weak,
     is_trusted_upstream_auth_configured,
     require_roles,
 )
@@ -170,6 +171,11 @@ def get_security_release_gate() -> SecurityReleaseGateResponse:
     warnings = []
     if not auth_required:
         warnings.append("WORKSCHEDULEAI_AUTH_REQUIRED is not enabled.")
+    if is_signed_actor_secret_configured_but_weak():
+        warnings.append(
+            "WORKSCHEDULEAI_SIGNED_ACTOR_SECRET is configured but too weak for "
+            "signed actor token mode."
+        )
     if actor_mode == "trusted_upstream_header" and not trusted_upstream_auth:
         warnings.append(
             "WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH is not enabled; "
@@ -180,6 +186,10 @@ def get_security_release_gate() -> SecurityReleaseGateResponse:
             "Actor extraction still relies on trusted X-User-Id header mode; "
             "JWT/session or signed actor verification is not implemented."
         )
+    warnings.append(
+        "Public organization bootstrap is not locked to an authenticated owner "
+        "session/onboarding flow."
+    )
     return SecurityReleaseGateResponse(
         auth_required=auth_required,
         rbac_roles=RBAC_ROLES,

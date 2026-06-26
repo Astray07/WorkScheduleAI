@@ -375,7 +375,19 @@ def test_alembic_upgrade_head_stamps_expected_revision(tmp_path):
             text("select version_num from alembic_version")
         ).scalar_one()
 
-    assert version == "20260626_0016"
+    assert version == "20260626_0017"
+
+
+def test_alembic_upgrade_head_creates_user_password_hash_column(tmp_path):
+    db_path = tmp_path / "migration-test.sqlite"
+
+    _upgrade_head(db_path)
+
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    inspector = inspect(engine)
+    user_columns = {item["name"] for item in inspector.get_columns("users")}
+
+    assert "password_hash" in user_columns
 
 
 def test_postgresql_rls_migration_defines_tenant_policies():

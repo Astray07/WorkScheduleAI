@@ -103,6 +103,54 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.session-panel {
+  background: #182334;
+  border: 1px solid #243244;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 12px;
+}
+
+.session-heading {
+  display: grid;
+  gap: 3px;
+}
+
+.session-heading span {
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.session-heading strong {
+  color: #eff6f2;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.session-form {
+  display: grid;
+  gap: 8px;
+}
+
+.session-form input {
+  background: #111827;
+  border: 1px solid #2f3d51;
+  border-radius: 8px;
+  color: #eff6f2;
+  min-height: 34px;
+  padding: 0 10px;
+  width: 100%;
+}
+
+.session-button {
+  min-height: 34px;
+  padding: 0 10px;
+  width: 100%;
+}
+
 .nav-list {
   display: grid;
   gap: 8px;

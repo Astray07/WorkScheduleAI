@@ -19,6 +19,7 @@ ADMIN_ROLES = frozenset({"owner", "admin", "scheduler"})
 READ_ROLES = frozenset({"owner", "admin", "scheduler", "viewer"})
 TRUSTED_UPSTREAM_HEADER_ACTOR_MODE = "trusted_upstream_header"
 SIGNED_ACTOR_TOKEN_MODE = "signed_actor_token"
+SIGNED_ACTOR_SECRET_MIN_LENGTH = 32
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,16 @@ def is_trusted_upstream_auth_configured() -> bool:
 
 
 def is_signed_actor_auth_configured() -> bool:
-    return bool(os.environ.get("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET"))
+    return is_signed_actor_secret_strong(os.environ.get("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET"))
+
+
+def is_signed_actor_secret_strong(secret: str | None) -> bool:
+    return bool(secret and len(secret) >= SIGNED_ACTOR_SECRET_MIN_LENGTH)
+
+
+def is_signed_actor_secret_configured_but_weak() -> bool:
+    secret = os.environ.get("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET")
+    return bool(secret and not is_signed_actor_secret_strong(secret))
 
 
 def actor_extraction_mode() -> str:

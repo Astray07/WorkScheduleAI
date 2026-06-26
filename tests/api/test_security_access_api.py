@@ -26,6 +26,9 @@ from work_schedule_ai.db.models import (
 )
 
 
+TEST_ACTOR_SECRET = "test-actor-secret-with-at-least-32-bytes"
+
+
 def _enable_trusted_header_auth(monkeypatch):
     monkeypatch.setenv("WORKSCHEDULEAI_AUTH_REQUIRED", "1")
     monkeypatch.setenv("WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH", "1")
@@ -69,11 +72,11 @@ def test_auth_required_allows_member(monkeypatch):
 
 def test_auth_required_allows_signed_actor_without_trusted_upstream(monkeypatch):
     monkeypatch.setenv("WORKSCHEDULEAI_AUTH_REQUIRED", "1")
-    monkeypatch.setenv("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET", "test-actor-secret")
+    monkeypatch.setenv("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET", TEST_ACTOR_SECRET)
     monkeypatch.delenv("WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH", raising=False)
     client = _client(seed_membership=True)
     token = sign_actor_token(
-        secret="test-actor-secret",
+        secret=TEST_ACTOR_SECRET,
         organization_id="org_1",
         user_id="user_scheduler",
     )
@@ -88,10 +91,10 @@ def test_auth_required_allows_signed_actor_without_trusted_upstream(monkeypatch)
 
 def test_auth_required_rejects_tampered_signed_actor(monkeypatch):
     monkeypatch.setenv("WORKSCHEDULEAI_AUTH_REQUIRED", "1")
-    monkeypatch.setenv("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET", "test-actor-secret")
+    monkeypatch.setenv("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET", TEST_ACTOR_SECRET)
     client = _client(seed_membership=True)
     token = sign_actor_token(
-        secret="test-actor-secret",
+        secret=TEST_ACTOR_SECRET,
         organization_id="org_1",
         user_id="user_scheduler",
     )
@@ -109,10 +112,10 @@ def test_auth_required_rejects_tampered_signed_actor(monkeypatch):
 
 def test_auth_required_rejects_signed_actor_for_other_organization(monkeypatch):
     monkeypatch.setenv("WORKSCHEDULEAI_AUTH_REQUIRED", "1")
-    monkeypatch.setenv("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET", "test-actor-secret")
+    monkeypatch.setenv("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET", TEST_ACTOR_SECRET)
     client = _client(seed_membership=True)
     token = sign_actor_token(
-        secret="test-actor-secret",
+        secret=TEST_ACTOR_SECRET,
         organization_id="org_2",
         user_id="user_scheduler",
     )
@@ -389,9 +392,9 @@ def test_security_release_gate_reports_auth_mode(monkeypatch):
     assert any("X-User-Id" in warning for warning in payload["warnings"])
 
 
-def test_security_release_gate_accepts_signed_actor_mode(monkeypatch):
+def test_security_release_gate_keeps_signed_actor_mode_not_public_ready(monkeypatch):
     monkeypatch.setenv("WORKSCHEDULEAI_AUTH_REQUIRED", "1")
-    monkeypatch.setenv("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET", "test-actor-secret")
+    monkeypatch.setenv("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET", TEST_ACTOR_SECRET)
     monkeypatch.delenv("WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH", raising=False)
     client = _client(seed_membership=True)
 
@@ -401,8 +404,23 @@ def test_security_release_gate_accepts_signed_actor_mode(monkeypatch):
     payload = response.json()
     assert payload["auth_required"] is True
     assert payload["actor_extraction_mode"] == "signed_actor_token"
-    assert payload["public_saas_ready"] is True
-    assert payload["warnings"] == []
+    assert payload["public_saas_ready"] is False
+    assert any("organization bootstrap" in warning for warning in payload["warnings"])
+
+
+def test_security_release_gate_rejects_weak_signed_actor_secret(monkeypatch):
+    monkeypatch.setenv("WORKSCHEDULEAI_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET", "short-secret")
+    monkeypatch.delenv("WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH", raising=False)
+    client = _client(seed_membership=True)
+
+    response = client.get("/operations/security/release-gate")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["actor_extraction_mode"] == "trusted_upstream_header"
+    assert payload["public_saas_ready"] is False
+    assert any("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET" in warning for warning in payload["warnings"])
 
 
 def _client(

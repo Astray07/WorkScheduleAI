@@ -34,6 +34,8 @@
 - auth enabled 상태에서 trusted upstream 설정이 없으면 조직 스코프 `X-User-Id` 요청 거부
 - release gate가 trusted header actor mode를 공개 SaaS ready로 판정하지 않도록 hardening
 - signed actor token 기반 `Authorization: Bearer` actor extraction
+- `/auth/login` 기반 signed session 발급과 운영 콘솔 Authorization header 연결
+- 저장된 운영 콘솔 세션의 `/auth/session` 재검증과 약한 signed actor secret release gate 차단
 - 직원 publication scoped signed link 발급과 `Authorization: Bearer` 기반 public 조회/확인 API
 - 직원 signed link context의 acknowledgement와 notification records
 - RAG 문서 ingest/list/delete API, 운영 패널 문서 관리 UI, citation 필드 계약
@@ -71,13 +73,14 @@ Staging 게이트:
 - worker service start command는 `python -m work_schedule_ai.worker.queue_worker`여야 합니다.
 - 실제 Redis queue를 통과하는 P0 happy path와 infeasible/relaxation path를 브라우저에서 1회 이상 관통해야 합니다.
 - 공개 URL 또는 실사용 파일럿이면 관리자 인증, signed/session actor extraction, 요청 조직 컨텍스트, tenant 접근 제어가 릴리즈 전 필수입니다.
+- 공개 SaaS ready 판정은 authenticated owner onboarding에 묶이지 않은 공개 조직 bootstrap과 약한 `WORKSCHEDULEAI_SIGNED_ACTOR_SECRET`을 허용하지 않습니다.
 - blocking 컴플라이언스 warning은 현재 warning instance(`warning_code` + 직원 + 슬롯/ISO 주차 + snapshot hash)와 override가 정확히 일치해야 확정 가능합니다.
 - 직원 모바일 public 접근은 signed publication link 조회/확인 API 또는 직원 인증을 통해서만 허용합니다. signed link token은 직원 URL query string에 두지 않고 fragment에서 회수해 API `Authorization` header로 전달해야 합니다.
 
 ## 명시적 후속 범위
 
 - 직원 100명/31일 고제약 운영 데이터 성능 hardening
-- 관리자 회원가입/로그인, 세션 UX, signed actor token 발급/회전 운영 절차
+- 관리자 회원가입, 비밀번호 초기 설정/재설정, signed actor token 키 회전 운영 절차
 - 직원 모바일 signed link 조회/확인 API를 프론트 화면과 알림 UX에 연결
 - RAG embedding/vector index 설계, ingestion UI 확장, 문서 권한 UX, 장기 citation 평가셋
 - 한국형 warning rule 추가 확장과 warning override 전용 화면 고도화

@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api.routes.auth import router as auth_router
 from work_schedule_ai.api.routes.employees import router as employees_router
 from work_schedule_ai.api.routes.compliance import router as compliance_router
 from work_schedule_ai.api.routes.demand import router as demand_router
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(organizations_router)
+    app.include_router(auth_router)
     app.include_router(employees_router)
     app.include_router(employee_self_service_router)
     app.include_router(employee_self_service_public_router)
