@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from work_schedule_ai.db.models import PublicationNotification, utc_now
+from work_schedule_ai.db.models import (
+    EmployeeUserLink,
+    PublicationNotification,
+    User,
+    utc_now,
+)
 from work_schedule_ai.notifications.providers import (
     EnvironmentNotificationDeliveryProvider,
     NotificationDelivery,
@@ -54,7 +59,9 @@ def dispatch_pending_notifications(
             sent += 1
         elif delivery_provider.can_deliver(notification.channel):
             try:
-                delivery_provider.deliver(_delivery_from_notification(notification))
+                delivery_provider.deliver(
+                    _delivery_from_notification(db_session, notification)
+                )
             except Exception as exc:
                 notification.status = "failed"
                 notification.delivered_at = None
@@ -79,6 +86,7 @@ def dispatch_pending_notifications(
 
 
 def _delivery_from_notification(
+    db_session: Session,
     notification: PublicationNotification,
 ) -> NotificationDelivery:
     subject = f"WorkScheduleAI publication {notification.notification_type}"
@@ -99,4 +107,24 @@ def _delivery_from_notification(
         channel=notification.channel,
         subject=subject,
         body=body,
+        recipient=_recipient_for_notification(db_session, notification),
     )
+
+
+def _recipient_for_notification(
+    db_session: Session,
+    notification: PublicationNotification,
+) -> str | None:
+    if notification.channel != "email":
+        return None
+    return db_session.execute(
+        select(User.email)
+        .join(EmployeeUserLink, EmployeeUserLink.user_id == User.id)
+        .where(
+            EmployeeUserLink.organization_id == notification.organization_id,
+            EmployeeUserLink.employee_id == notification.employee_id,
+            EmployeeUserLink.status == "linked",
+        )
+        .order_by(User.created_at.desc(), User.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()

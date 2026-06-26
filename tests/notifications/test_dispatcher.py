@@ -10,10 +10,12 @@ from sqlalchemy.pool import StaticPool
 from work_schedule_ai.db.models import (
     Base,
     Employee,
+    EmployeeUserLink,
     Organization,
     PublicationNotification,
     SchedulePublication,
     ScheduleRun,
+    User,
 )
 from work_schedule_ai.notifications.dispatcher import dispatch_pending_notifications
 from work_schedule_ai.notifications.providers import NotificationDelivery
@@ -78,6 +80,18 @@ def test_dispatcher_calls_configured_provider_for_external_notifications():
     assert email_notification.delivered_at is not None
     assert email_notification.delivery_attempts == 1
     assert email_notification.last_delivery_error is None
+
+
+def test_dispatcher_uses_linked_employee_user_email_for_email_delivery():
+    session = _session()
+    provider = RecordingProvider()
+
+    dispatch_pending_notifications(session, provider=provider)
+
+    assert len(provider.deliveries) == 1
+    delivery = provider.deliveries[0]
+    assert delivery.channel == "email"
+    assert delivery.recipient == "employee@example.com"
 
 
 def test_dispatcher_records_provider_failure_without_secret_details():
@@ -150,6 +164,14 @@ def _session() -> Session:
 def _rows() -> Generator[object, None, None]:
     yield Organization(id="org_1", name="Clinic A", timezone="Asia/Seoul")
     yield Employee(id="emp_1", organization_id="org_1", employee_code="E001", name="Kim")
+    yield User(id="user_1", email="employee@example.com", name="Kim")
+    yield EmployeeUserLink(
+        id="employee_link_1",
+        organization_id="org_1",
+        employee_id="emp_1",
+        user_id="user_1",
+        status="linked",
+    )
     yield ScheduleRun(
         id="run_1",
         organization_id="org_1",

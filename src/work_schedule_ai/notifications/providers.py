@@ -20,6 +20,7 @@ class NotificationDelivery:
     channel: str
     subject: str
     body: str
+    recipient: str | None = None
 
 
 class NotificationDeliveryProvider(Protocol):
@@ -111,7 +112,6 @@ class EnvironmentNotificationDeliveryProvider:
                 self._email_config.enabled
                 and bool(self._email_config.smtp_host)
                 and bool(self._email_config.sender)
-                and bool(self._email_config.recipient_override)
             )
         if channel == "slack":
             return (
@@ -132,9 +132,12 @@ class EnvironmentNotificationDeliveryProvider:
     def _deliver_email(self, delivery: NotificationDelivery) -> None:
         if not self.can_deliver("email"):
             raise ValueError("Email notification provider is not configured")
+        recipient = delivery.recipient or self._email_config.recipient_override
+        if not recipient:
+            raise ValueError("Email notification recipient is not configured")
         message = EmailMessage()
         message["From"] = self._email_config.sender
-        message["To"] = self._email_config.recipient_override
+        message["To"] = recipient
         message["Subject"] = delivery.subject
         message.set_content(delivery.body)
         with self._smtp_factory(

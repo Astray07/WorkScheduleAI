@@ -123,9 +123,9 @@
 
 상태: 부분 구현.
 
-이유: 확정본 publication notification record, 직원 모바일 알림 표시, 관리자용 dispatch endpoint, delivery attempt/status tracking은 구현되어 있습니다. SMTP catchall email과 Slack webhook provider contract가 추가되어 명시적 환경 변수가 설정된 경우 실제 전송 provider를 호출할 수 있습니다. provider 설정이 없거나 수신 목적지가 없으면 email/Slack은 발송하지 않고 suppressed 상태로 남깁니다.
+이유: 확정본 publication notification record, 직원 모바일 알림 표시, 관리자용 dispatch endpoint, delivery attempt/status tracking은 구현되어 있습니다. SMTP email은 `EmployeeUserLink`가 `linked`인 직원의 `User.email`을 우선 수신자로 사용하고, 수신자가 없으면 catchall `WORKSCHEDULEAI_NOTIFICATION_EMAIL_TO`를 사용할 수 있습니다. Slack webhook provider contract도 명시적 환경 변수가 설정된 경우 호출할 수 있습니다. provider 설정이 없으면 email/Slack은 발송하지 않고 suppressed 상태로 남깁니다.
 
-리스크: 직원별 email/Slack destination 저장, provider별 운영 재시도 스케줄, 실패 모니터링과 알림 템플릿 고도화는 아직 필요합니다. 비공개 운영자 검증에는 허용 가능하지만, 자율적인 외부 알림 흐름으로 보장하면 안 됩니다.
+리스크: 직원별 Slack destination 저장, provider별 운영 재시도 스케줄, 실패 모니터링과 알림 템플릿 고도화는 아직 필요합니다. 비공개 운영자 검증에는 허용 가능하지만, 자율적인 외부 알림 흐름으로 보장하면 안 됩니다.
 
 ### 공개 회원가입
 

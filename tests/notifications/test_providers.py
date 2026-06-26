@@ -59,6 +59,41 @@ def test_environment_email_provider_sends_smtp_message_from_env_config():
     assert "publication_1" in message.get_content()
 
 
+def test_environment_email_provider_prefers_delivery_recipient_over_catchall():
+    sent_messages: list[Any] = []
+
+    class FakeSmtp:
+        def __init__(self, host: str, port: int, timeout: float) -> None:
+            return None
+
+        def __enter__(self) -> FakeSmtp:
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def starttls(self) -> None:
+            return None
+
+        def send_message(self, message: Any) -> None:
+            sent_messages.append(message)
+
+    provider = EnvironmentNotificationDeliveryProvider.from_env(
+        env={
+            "WORKSCHEDULEAI_EMAIL_NOTIFICATIONS_ENABLED": "1",
+            "WORKSCHEDULEAI_SMTP_HOST": "smtp.example.com",
+            "WORKSCHEDULEAI_SMTP_FROM": "noreply@example.com",
+            "WORKSCHEDULEAI_NOTIFICATION_EMAIL_TO": "ops@example.com",
+        },
+        smtp_factory=FakeSmtp,
+    )
+
+    provider.deliver(_delivery("email", recipient="employee@example.com"))
+
+    assert len(sent_messages) == 1
+    assert sent_messages[0]["To"] == "employee@example.com"
+
+
 def test_environment_slack_provider_posts_webhook_payload_from_env_config():
     requests: list[Any] = []
 
@@ -96,7 +131,7 @@ def test_environment_slack_provider_posts_webhook_payload_from_env_config():
     assert "secret" not in body["text"]
 
 
-def _delivery(channel: str) -> NotificationDelivery:
+def _delivery(channel: str, *, recipient: str | None = None) -> NotificationDelivery:
     return NotificationDelivery(
         notification_id="notification_1",
         organization_id="org_1",
@@ -106,4 +141,5 @@ def _delivery(channel: str) -> NotificationDelivery:
         channel=channel,
         subject="WorkScheduleAI publication published",
         body="Publication publication_1 was published for employee emp_1.",
+        recipient=recipient,
     )

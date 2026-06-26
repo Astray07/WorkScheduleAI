@@ -42,6 +42,7 @@
 - 직원 모바일 화면의 fragment-token 회수, public context 표시, public acknowledgement 연결
 - publication notification dispatch endpoint와 delivery attempt/status tracking
 - SMTP catchall email과 Slack webhook 기반 publication notification provider contract
+- linked employee user email 기반 publication email recipient resolution
 - RAG 문서 ingest/list/delete API, 운영 패널 문서 관리 UI, citation 필드 계약
 - RAG API prompt injection drop, PII redaction, solver/policy non-mutation 평가 테스트
 - RAG chunk embedding metadata 저장 계약과 장기 citation 평가셋
@@ -89,7 +90,7 @@ Staging 게이트:
 
 - 직원 100명/31일 고제약 운영 데이터 성능 hardening
 - 관리자 회원가입, 비밀번호 초기 설정/재설정, signed actor token 키 회전 운영 절차
-- 직원 signed-link 모바일 화면의 변경 알림 상세 UX, public 요청 생성 API, 직원별 notification destination 저장, provider 재시도/모니터링 운영
+- 직원 signed-link 모바일 화면의 변경 알림 상세 UX, public 요청 생성 API, 직원별 Slack destination 저장, provider 재시도/모니터링 운영
 - RAG pgvector index 전환, 서버 측 embedding 생성/backfill, ingestion UI 확장, 문서 권한 UX, 평가셋 CI job
 - 한국형 warning rule 추가 확장과 warning override 전용 화면 고도화
 - budget hard constraint의 실제 solver feasibility 연결과 비용 기반 objective 고도화
