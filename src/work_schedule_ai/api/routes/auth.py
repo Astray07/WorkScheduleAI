@@ -24,6 +24,9 @@ from work_schedule_ai.db.models import Membership, User, utc_now
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+LOGIN_CONFIGURATION_MESSAGE = (
+    "로그인 기능 설정이 완료되지 않았습니다. 관리자에게 문의해주세요."
+)
 
 
 class LoginRequest(BaseModel):
@@ -197,8 +200,8 @@ def _signed_actor_secret() -> str:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
                 "code": "SIGNED_ACTOR_SECRET_REQUIRED",
-                "message": "Login sessions require WORKSCHEDULEAI_SIGNED_ACTOR_SECRET.",
-                "field": "WORKSCHEDULEAI_SIGNED_ACTOR_SECRET",
+                "message": LOGIN_CONFIGURATION_MESSAGE,
+                "field": "login",
             },
         )
     if not is_signed_actor_secret_strong(secret):
@@ -206,11 +209,8 @@ def _signed_actor_secret() -> str:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
                 "code": "SIGNED_ACTOR_SECRET_WEAK",
-                "message": (
-                    "WORKSCHEDULEAI_SIGNED_ACTOR_SECRET must be at least "
-                    f"{SIGNED_ACTOR_SECRET_MIN_LENGTH} characters."
-                ),
-                "field": "WORKSCHEDULEAI_SIGNED_ACTOR_SECRET",
+                "message": LOGIN_CONFIGURATION_MESSAGE,
+                "field": "login",
             },
         )
     return secret

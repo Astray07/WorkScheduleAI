@@ -114,7 +114,32 @@ def test_login_rejects_weak_signed_actor_secret(monkeypatch):
     )
 
     assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "SIGNED_ACTOR_SECRET_WEAK"
+    detail = response.json()["detail"]
+    assert detail["code"] == "SIGNED_ACTOR_SECRET_WEAK"
+    assert detail["message"] == auth_route.LOGIN_CONFIGURATION_MESSAGE
+    assert detail["field"] == "login"
+    assert "WORKSCHEDULEAI_SIGNED_ACTOR_SECRET" not in detail["message"]
+
+
+def test_login_rejects_missing_signed_actor_secret_without_env_name(monkeypatch):
+    monkeypatch.delenv("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET", raising=False)
+    client = _client()
+
+    response = client.post(
+        "/auth/login",
+        json={
+            "email": "scheduler@example.com",
+            "password": "correct-password",
+            "organization_id": "org_1",
+        },
+    )
+
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "SIGNED_ACTOR_SECRET_REQUIRED"
+    assert detail["message"] == auth_route.LOGIN_CONFIGURATION_MESSAGE
+    assert detail["field"] == "login"
+    assert "WORKSCHEDULEAI_SIGNED_ACTOR_SECRET" not in detail["message"]
 
 
 def test_login_sets_tenant_context_from_request_body(monkeypatch):

@@ -131,6 +131,7 @@ import {
   type AuthSession,
   type SessionIdentity,
 } from "./authSession";
+import { apiErrorMessage } from "./apiErrors";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const AUTH_SESSION_STORAGE_KEY = "workscheduleai.authSession";
@@ -4792,7 +4793,7 @@ async function api<T>(
   });
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(`${response.status} ${detail}`);
+    throw new Error(apiErrorMessage(response.status, detail));
   }
   if (response.status === 204) {
     return null as T;
