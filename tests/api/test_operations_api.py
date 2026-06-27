@@ -27,7 +27,14 @@ from work_schedule_ai.db.models import (
 )
 
 
-def test_schedule_run_metrics_reports_status_counts_and_durations(
+def test_schedule_run_metrics_requires_tenant_scope(client: TestClient):
+    response = client.get("/operations/schedule-runs/metrics")
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "TENANT_SCOPE_REQUIRED"
+
+
+def test_organization_schedule_run_metrics_reports_status_counts_and_durations(
     client: TestClient,
     db_session: Session,
 ):
@@ -48,11 +55,27 @@ def test_schedule_run_metrics_reports_status_counts_and_durations(
                 started_at=now - timedelta(seconds=40),
                 finished_at=now - timedelta(seconds=10),
             ),
+            ScheduleRun(
+                id="run_other_org",
+                organization_id="org_2",
+                period_start=date(2026, 7, 1),
+                period_end=date(2026, 7, 7),
+                template="one_shift_per_day",
+                deterministic_mode=True,
+                timeout_seconds=30,
+                status="succeeded",
+                solver_status=None,
+                solution_quality="unknown",
+                current_attempt_no=1,
+                recalculation_count=0,
+                started_at=now - timedelta(seconds=100),
+                finished_at=now,
+            ),
         ]
     )
     db_session.commit()
 
-    response = client.get("/operations/schedule-runs/metrics")
+    response = client.get("/operations/organizations/org_1/schedule-runs/metrics")
 
     assert response.status_code == 200
     payload = response.json()

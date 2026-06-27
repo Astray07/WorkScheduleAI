@@ -4,6 +4,7 @@ from contextlib import AbstractContextManager
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
+from work_schedule_ai.api.dependencies import set_tenant_context
 from work_schedule_ai.db.models import ScheduleRun, utc_now
 from work_schedule_ai.worker.queue import ScheduleRunQueue
 
@@ -100,6 +101,8 @@ def process_next_schedule_run(
         return False
 
     with db_session_factory() as db_session:
+        if job.organization_id is not None:
+            set_tenant_context(db_session, job.organization_id)
         execute_schedule_run(
             db_session,
             job.schedule_run_id,

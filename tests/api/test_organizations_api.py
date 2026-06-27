@@ -71,6 +71,24 @@ def test_create_organization_persists_organization_and_roles(
     ]
 
 
+def test_auth_required_rejects_public_organization_bootstrap_without_persistence(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("WORKSCHEDULEAI_AUTH_REQUIRED", "1")
+
+    response = client.post(
+        "/organizations",
+        json={"name": "Demo Clinic", "timezone": "Asia/Seoul"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "ORGANIZATION_BOOTSTRAP_LOCKED"
+    assert db_session.query(Organization).count() == 0
+    assert db_session.query(Role).count() == 0
+
+
 def test_create_organization_rejects_empty_name(client: TestClient):
     response = client.post(
         "/organizations",
@@ -78,4 +96,3 @@ def test_create_organization_rejects_empty_name(client: TestClient):
     )
 
     assert response.status_code == 422
-

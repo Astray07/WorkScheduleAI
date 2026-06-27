@@ -94,6 +94,26 @@ def test_dispatcher_uses_linked_employee_user_email_for_email_delivery():
     assert delivery.recipient == "employee@example.com"
 
 
+def test_dispatcher_suppresses_employee_email_without_resolved_recipient():
+    session = _session()
+    session.query(EmployeeUserLink).delete()
+    session.commit()
+    provider = RecordingProvider()
+
+    summary = dispatch_pending_notifications(session, provider=provider)
+
+    assert summary.sent == 1
+    assert summary.suppressed == 1
+    assert summary.failed == 0
+    assert provider.deliveries == []
+    email_notification = session.get(PublicationNotification, "notification_email")
+    assert email_notification is not None
+    assert email_notification.status == "suppressed"
+    assert email_notification.delivered_at is None
+    assert email_notification.delivery_attempts == 1
+    assert email_notification.last_delivery_error == "recipient_not_resolved:email"
+
+
 def test_dispatcher_records_provider_failure_without_secret_details():
     session = _session()
     provider = FailingProvider()

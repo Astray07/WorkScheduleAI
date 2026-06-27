@@ -4,6 +4,7 @@ import csv
 from datetime import date, datetime
 from io import StringIO
 import json
+import os
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -21,6 +22,9 @@ from work_schedule_ai.api.security import (
     is_signed_actor_secret_configured_but_weak,
     is_trusted_upstream_auth_configured,
     require_roles,
+)
+from work_schedule_ai.api.signed_employee_links import (
+    is_employee_link_secret_configured_but_weak,
 )
 from work_schedule_ai.db.models import (
     Assignment,
@@ -141,16 +145,36 @@ class NotificationDispatchResponse(BaseModel):
 def get_schedule_run_metrics(
     db_session: Session = Depends(get_db_session),
 ) -> ScheduleRunMetricsResponse:
-    if is_auth_required():
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "code": "TENANT_SCOPE_REQUIRED",
-                "message": "Global schedule run metrics are disabled when auth is enabled.",
-                "field": "organization_id",
-            },
-        )
-    runs = list(db_session.execute(select(ScheduleRun)).scalars())
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "code": "TENANT_SCOPE_REQUIRED",
+            "message": "Global schedule run metrics require an organization scope.",
+            "field": "organization_id",
+        },
+    )
+
+
+@router.get(
+    "/organizations/{organization_id}/schedule-runs/metrics",
+    response_model=ScheduleRunMetricsResponse,
+)
+def get_organization_schedule_run_metrics(
+    organization_id: str,
+    db_session: Session = Depends(get_db_session),
+) -> ScheduleRunMetricsResponse:
+    require_roles(db_session, READ_ROLES)
+    runs = list(
+        db_session.execute(
+            select(ScheduleRun).where(ScheduleRun.organization_id == organization_id)
+        ).scalars()
+    )
+    return _schedule_run_metrics_response(runs)
+
+
+def _schedule_run_metrics_response(
+    runs: list[ScheduleRun],
+) -> ScheduleRunMetricsResponse:
     status_counts = {status: 0 for status in SCHEDULE_RUN_STATUSES}
     durations: list[float] = []
     for run in runs:
@@ -184,6 +208,13 @@ def get_security_release_gate() -> SecurityReleaseGateResponse:
             "WORKSCHEDULEAI_SIGNED_ACTOR_SECRET is configured but too weak for "
             "signed actor token mode."
         )
+    if is_employee_link_secret_configured_but_weak(
+        os.environ.get("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET")
+    ):
+        warnings.append(
+            "WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET is configured but too weak for "
+            "signed employee publication links."
+        )
     if actor_mode == "trusted_upstream_header" and not trusted_upstream_auth:
         warnings.append(
             "WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH is not enabled; "
@@ -195,8 +226,8 @@ def get_security_release_gate() -> SecurityReleaseGateResponse:
             "JWT/session or signed actor verification is not implemented."
         )
     warnings.append(
-        "Public organization bootstrap is not locked to an authenticated owner "
-        "session/onboarding flow."
+        "Public organization bootstrap is disabled until authenticated owner "
+        "session/onboarding flow is implemented."
     )
     return SecurityReleaseGateResponse(
         auth_required=auth_required,

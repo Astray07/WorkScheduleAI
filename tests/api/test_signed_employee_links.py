@@ -12,7 +12,7 @@ from work_schedule_ai.api.signed_employee_links import (
 def test_signed_employee_deep_link_round_trips_expected_claims():
     expires_at = datetime(2026, 7, 1, 0, 0, tzinfo=timezone.utc)
     token = sign_employee_deep_link(
-        secret="test-secret",
+        secret="test-secret-with-at-least-32-bytes",
         organization_id="org_1",
         publication_id="publication_1",
         employee_id="emp_1",
@@ -22,7 +22,7 @@ def test_signed_employee_deep_link_round_trips_expected_claims():
 
     claims = verify_employee_deep_link(
         token,
-        secret="test-secret",
+        secret="test-secret-with-at-least-32-bytes",
         organization_id="org_1",
         publication_id="publication_1",
         employee_id="emp_1",
@@ -36,9 +36,33 @@ def test_signed_employee_deep_link_round_trips_expected_claims():
     assert claims.expires_at == expires_at
 
 
+def test_signed_employee_deep_link_rejects_weak_signing_secret():
+    with pytest.raises(ValueError, match="at least 32 characters"):
+        sign_employee_deep_link(
+            secret="short-secret",
+            organization_id="org_1",
+            publication_id="publication_1",
+            employee_id="emp_1",
+            expires_at=datetime(2026, 7, 1, 0, 0, tzinfo=timezone.utc),
+        )
+
+
+def test_signed_employee_deep_link_verification_rejects_weak_secret():
+    with pytest.raises(EmployeeDeepLinkTokenError) as error:
+        verify_employee_deep_link(
+            "malformed",
+            secret="short-secret",
+            organization_id="org_1",
+            publication_id="publication_1",
+            employee_id="emp_1",
+        )
+
+    assert error.value.code == "SECRET_WEAK"
+
+
 def test_signed_employee_deep_link_rejects_tampering():
     token = sign_employee_deep_link(
-        secret="test-secret",
+        secret="test-secret-with-at-least-32-bytes",
         organization_id="org_1",
         publication_id="publication_1",
         employee_id="emp_1",
@@ -51,7 +75,7 @@ def test_signed_employee_deep_link_rejects_tampering():
     with pytest.raises(EmployeeDeepLinkTokenError) as error:
         verify_employee_deep_link(
             tampered,
-            secret="test-secret",
+            secret="test-secret-with-at-least-32-bytes",
             organization_id="org_1",
             publication_id="publication_1",
             employee_id="emp_1",
@@ -63,7 +87,7 @@ def test_signed_employee_deep_link_rejects_tampering():
 
 def test_signed_employee_deep_link_rejects_expired_token():
     token = sign_employee_deep_link(
-        secret="test-secret",
+        secret="test-secret-with-at-least-32-bytes",
         organization_id="org_1",
         publication_id="publication_1",
         employee_id="emp_1",
@@ -73,7 +97,7 @@ def test_signed_employee_deep_link_rejects_expired_token():
     with pytest.raises(EmployeeDeepLinkTokenError) as error:
         verify_employee_deep_link(
             token,
-            secret="test-secret",
+            secret="test-secret-with-at-least-32-bytes",
             organization_id="org_1",
             publication_id="publication_1",
             employee_id="emp_1",
@@ -85,7 +109,7 @@ def test_signed_employee_deep_link_rejects_expired_token():
 
 def test_signed_employee_deep_link_rejects_cross_employee_reuse():
     token = sign_employee_deep_link(
-        secret="test-secret",
+        secret="test-secret-with-at-least-32-bytes",
         organization_id="org_1",
         publication_id="publication_1",
         employee_id="emp_1",
@@ -95,7 +119,7 @@ def test_signed_employee_deep_link_rejects_cross_employee_reuse():
     with pytest.raises(EmployeeDeepLinkTokenError) as error:
         verify_employee_deep_link(
             token,
-            secret="test-secret",
+            secret="test-secret-with-at-least-32-bytes",
             organization_id="org_1",
             publication_id="publication_1",
             employee_id="emp_2",

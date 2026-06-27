@@ -441,7 +441,7 @@ def create_schedule_run(
     db_session.add(snapshot)
     db_session.flush()
     db_session.commit()
-    enqueue_schedule_run(run.id)
+    enqueue_schedule_run(run.id, organization_id=organization_id)
 
     return _schedule_run_response(run, db_session)
 
@@ -629,11 +629,21 @@ def save_manual_edit(
             },
         )
 
-    employee = db_session.get(Employee, request.employee_id)
+    employee = db_session.execute(
+        select(Employee).where(
+            Employee.organization_id == organization_id,
+            Employee.id == request.employee_id,
+            Employee.active.is_(True),
+        )
+    ).scalar_one_or_none()
     if employee is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Employee not found",
+            detail={
+                "code": "EMPLOYEE_NOT_FOUND",
+                "message": "Active employee does not exist in this organization.",
+                "field": "employee_id",
+            },
         )
 
     stored_slot_id = _stored_artifact_id(run.id, request.slot_id)
@@ -924,7 +934,7 @@ def recalculate_schedule_run(
     )
     db_session.add(recalculation_request)
     db_session.commit()
-    enqueue_schedule_run(run.id)
+    enqueue_schedule_run(run.id, organization_id=organization_id)
 
     return _schedule_run_response(run, db_session)
 
@@ -940,7 +950,7 @@ def publish_schedule_run(
     request: PublishScheduleRunRequest,
     db_session: Session = Depends(get_db_session),
 ) -> SchedulePublicationResponse:
-    require_roles(db_session, ADMIN_ROLES)
+    actor = require_roles(db_session, ADMIN_ROLES)
     run = _get_schedule_run_or_404(organization_id, schedule_run_id, db_session)
     artifacts = _result_artifacts_for_run(run, db_session)
     hashes = _artifact_hashes(artifacts)
@@ -1098,7 +1108,7 @@ def publish_schedule_run(
         AuditLog(
             id=_new_id("audit"),
             organization_id=organization_id,
-            actor_user_id=None,
+            actor_user_id=actor.user_id if actor.auth_required else None,
             action="publication_created",
             target_type="schedule_publication",
             target_id=publication.id,
@@ -2228,7 +2238,7 @@ def _mock_result_artifacts(
                     role_id=role.id,
                     employee_id=employee.id,
                     employee_name=employee.name,
-                    source="solver",
+                    source="fallback",
                     locked_by_user=False,
                     warning_state="none",
                     warning_message=None,

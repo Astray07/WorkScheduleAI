@@ -314,6 +314,40 @@ def test_rag_query_keeps_keyword_mode_when_hybrid_flag_is_disabled(
     assert query_response.json()["retrieval_mode"] == "keyword"
 
 
+def test_rag_query_keeps_keyword_mode_when_hybrid_flag_has_no_query_embedding(
+    client: TestClient,
+    monkeypatch,
+):
+    monkeypatch.setenv("WORKSCHEDULEAI_RAG_HYBRID_RETRIEVAL", "1")
+    response = client.post(
+        "/organizations/org_1/rag/documents",
+        json={
+            "source_type": "organization_policy",
+            "document_title": "야간 휴식 규정",
+            "checked_at": "2026-06-26",
+            "chunks": ["야간 휴식 키워드가 있는 문서입니다."],
+            "embeddings": [
+                {
+                    "model": "text-embedding-test-1",
+                    "vector": [1.0, 0.0],
+                }
+            ],
+        },
+    )
+    assert response.status_code == 201
+
+    query_response = client.post(
+        "/organizations/org_1/rag/query",
+        json={
+            "query": "야간 휴식",
+            "purpose": "schedule_explanation",
+        },
+    )
+
+    assert query_response.status_code == 200
+    assert query_response.json()["retrieval_mode"] == "keyword"
+
+
 def test_rag_query_scores_document_title_matches_before_generic_chunks(
     client: TestClient,
 ):

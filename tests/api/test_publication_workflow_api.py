@@ -27,6 +27,9 @@ from work_schedule_ai.db.models import (
 )
 
 
+TEST_EMPLOYEE_LINK_SECRET = "test-employee-link-secret-with-32-bytes"
+
+
 def test_publication_acknowledgement_can_be_marked_acknowledged(
     client: TestClient,
     db_session: Session,
@@ -57,7 +60,7 @@ def test_admin_can_create_signed_employee_publication_link(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", TEST_EMPLOYEE_LINK_SECRET)
 
     response = client.post(
         "/organizations/org_1/schedule-publications/publication_1/employee-links/emp_1",
@@ -75,7 +78,7 @@ def test_admin_can_create_signed_employee_publication_link(
     assert parse_qs(parsed_employee_url.fragment)["token"] == [payload["token"]]
     claims = verify_employee_deep_link(
         payload["token"],
-        secret="test-secret",
+        secret=TEST_EMPLOYEE_LINK_SECRET,
         organization_id="org_1",
         publication_id="publication_1",
         employee_id="emp_1",
@@ -83,11 +86,26 @@ def test_admin_can_create_signed_employee_publication_link(
     assert claims.employee_id == "emp_1"
 
 
+def test_signed_employee_publication_link_rejects_weak_secret(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "short-secret")
+
+    response = client.post(
+        "/organizations/org_1/schedule-publications/publication_1/employee-links/emp_1",
+        json={"expires_in_hours": 24},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "EMPLOYEE_LINK_SECRET_WEAK"
+
+
 def test_signed_employee_publication_link_rejects_cross_tenant_employee(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", TEST_EMPLOYEE_LINK_SECRET)
 
     response = client.post(
         "/organizations/org_1/schedule-publications/publication_1/employee-links/emp_2",
@@ -101,7 +119,7 @@ def test_signed_employee_publication_link_can_read_publication_context(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", TEST_EMPLOYEE_LINK_SECRET)
     link_response = client.post(
         "/organizations/org_1/schedule-publications/publication_1/employee-links/emp_1",
         json={"expires_in_hours": 24},
@@ -149,7 +167,7 @@ def test_signed_employee_publication_link_can_acknowledge_publication(
     db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", TEST_EMPLOYEE_LINK_SECRET)
     link_response = client.post(
         "/organizations/org_1/schedule-publications/publication_1/employee-links/emp_1",
         json={"expires_in_hours": 24},
@@ -178,7 +196,7 @@ def test_signed_employee_publication_context_ignores_malformed_snapshot(
     db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", TEST_EMPLOYEE_LINK_SECRET)
     publication = db_session.get(SchedulePublication, "publication_1")
     assert publication is not None
     publication.result_snapshot_json = "{malformed"
@@ -205,7 +223,7 @@ def test_signed_employee_publication_link_rejects_wrong_employee(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", TEST_EMPLOYEE_LINK_SECRET)
     link_response = client.post(
         "/organizations/org_1/schedule-publications/publication_1/employee-links/emp_1",
         json={"expires_in_hours": 24},
@@ -228,7 +246,7 @@ def test_signed_employee_publication_link_rejects_query_token(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", TEST_EMPLOYEE_LINK_SECRET)
     link_response = client.post(
         "/organizations/org_1/schedule-publications/publication_1/employee-links/emp_1",
         json={"expires_in_hours": 24},
@@ -251,9 +269,9 @@ def test_signed_employee_publication_link_rejects_cross_tenant_public_api(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", TEST_EMPLOYEE_LINK_SECRET)
     token = sign_employee_deep_link(
-        secret="test-secret",
+        secret=TEST_EMPLOYEE_LINK_SECRET,
         organization_id="org_1",
         publication_id="publication_1",
         employee_id="emp_1",
@@ -277,9 +295,9 @@ def test_signed_employee_publication_link_rejects_expired_public_api_token(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", TEST_EMPLOYEE_LINK_SECRET)
     token = sign_employee_deep_link(
-        secret="test-secret",
+        secret=TEST_EMPLOYEE_LINK_SECRET,
         organization_id="org_1",
         publication_id="publication_1",
         employee_id="emp_1",
@@ -304,13 +322,13 @@ def test_signed_employee_publication_link_rejects_archived_publication(
     db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", TEST_EMPLOYEE_LINK_SECRET)
     publication = db_session.get(SchedulePublication, "publication_1")
     assert publication is not None
     publication.status = "archived"
     db_session.commit()
     token = sign_employee_deep_link(
-        secret="test-secret",
+        secret=TEST_EMPLOYEE_LINK_SECRET,
         organization_id="org_1",
         publication_id="publication_1",
         employee_id="emp_1",
@@ -335,9 +353,9 @@ def test_signed_employee_publication_link_works_when_organization_auth_is_requir
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setenv("WORKSCHEDULEAI_AUTH_REQUIRED", "1")
-    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "test-secret")
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", TEST_EMPLOYEE_LINK_SECRET)
     token = sign_employee_deep_link(
-        secret="test-secret",
+        secret=TEST_EMPLOYEE_LINK_SECRET,
         organization_id="org_1",
         publication_id="publication_1",
         employee_id="emp_1",

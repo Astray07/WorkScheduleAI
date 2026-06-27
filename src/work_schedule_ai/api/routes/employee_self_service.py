@@ -15,7 +15,9 @@ from sqlalchemy.orm import Session
 from work_schedule_ai.api.dependencies import get_db_session, set_tenant_context
 from work_schedule_ai.api.security import ADMIN_ROLES, current_actor, require_roles
 from work_schedule_ai.api.signed_employee_links import (
+    EMPLOYEE_LINK_SECRET_MIN_LENGTH,
     EmployeeDeepLinkTokenError,
+    is_employee_link_secret_strong,
     sign_employee_deep_link,
     verify_employee_deep_link,
 )
@@ -903,6 +905,18 @@ def _employee_link_secret() -> str:
                 "message": (
                     "Signed employee links require "
                     "WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET."
+                ),
+                "field": "WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET",
+            },
+        )
+    if not is_employee_link_secret_strong(secret):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "EMPLOYEE_LINK_SECRET_WEAK",
+                "message": (
+                    "WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET must be at least "
+                    f"{EMPLOYEE_LINK_SECRET_MIN_LENGTH} characters."
                 ),
                 "field": "WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET",
             },

@@ -1,5 +1,5 @@
 from collections.abc import Generator
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 from fastapi import Request
@@ -14,14 +14,27 @@ from work_schedule_ai.api.security import enforce_organization_access
 from work_schedule_ai.api.signed_actor_tokens import sign_actor_token
 from work_schedule_ai.db.models import (
     Base,
+    Assignment,
+    AuditLog,
+    ComplianceWarningOverride,
     Employee,
+    EmployeeRequest,
     EmployeeUserLink,
+    DemandDriver,
     Membership,
     Organization,
+    OverrideApproval,
     RagDocument,
     RagDocumentChunk,
     Role,
+    ScheduleInputSnapshot,
     SchedulePolicy,
+    SchedulePublication,
+    PublicationNotification,
+    ScheduleRecalculationRequest,
+    ScheduleRun,
+    ShiftType,
+    Unavailability,
     User,
 )
 
@@ -150,7 +163,7 @@ def test_auth_required_rejects_viewer_mutation(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("role", "user_id", "method", "path", "payload"),
+    ("role", "user_id", "method", "path", "payload", "count_model"),
     [
         (
             "viewer",
@@ -169,6 +182,21 @@ def test_auth_required_rejects_viewer_mutation(monkeypatch):
                 "weight_pair_avoid_violation": 60,
                 "unfilled_policy": "soft_penalty",
             },
+            SchedulePolicy,
+        ),
+        (
+            "viewer",
+            "user_viewer",
+            "POST",
+            "/organizations/org_1/demand-drivers",
+            {
+                "local_date": "2026-07-01",
+                "segment": "day",
+                "demand_count": 100,
+                "required_staff_count": 4,
+                "source": "manual",
+            },
+            DemandDriver,
         ),
         (
             "employee",
@@ -181,6 +209,7 @@ def test_auth_required_rejects_viewer_mutation(monkeypatch):
                 "mode": "upsert",
                 "content": "employee_code,name,roles,max_shifts_per_week\nE003,Park,사수,5",
             },
+            Employee,
         ),
         (
             "member",
@@ -203,6 +232,7 @@ def test_auth_required_rejects_viewer_mutation(monkeypatch):
                     }
                 ],
             },
+            ShiftType,
         ),
         (
             "viewer",
@@ -221,6 +251,20 @@ def test_auth_required_rejects_viewer_mutation(monkeypatch):
                     }
                 ],
             },
+            Employee,
+        ),
+        (
+            "viewer",
+            "user_viewer",
+            "POST",
+            "/organizations/org_1/rag/documents",
+            {
+                "source_type": "organization_policy",
+                "document_title": "저권한 생성 금지",
+                "checked_at": "2026-06-26",
+                "chunks": ["저권한 사용자는 RAG 문서를 생성할 수 없습니다."],
+            },
+            RagDocument,
         ),
     ],
 )
@@ -231,14 +275,16 @@ def test_auth_required_rejects_low_privilege_reference_mutations(
     method: str,
     path: str,
     payload: dict,
+    count_model,
 ):
     _enable_trusted_header_auth(monkeypatch)
-    client = _client(
+    client, session = _client_and_session(
         seed_membership=True,
         role=role,
         user_id=user_id,
         seed_reference_data=True,
     )
+    before_count = session.query(count_model).count()
 
     response = client.request(
         method,
@@ -249,6 +295,121 @@ def test_auth_required_rejects_low_privilege_reference_mutations(
 
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "ROLE_NOT_ALLOWED"
+    assert session.query(count_model).count() == before_count
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload", "count_model"),
+    [
+        (
+            "POST",
+            "/organizations/org_1/schedule-runs",
+            {
+                "period_start": "2026-07-01",
+                "period_end": "2026-07-07",
+            },
+            ScheduleRun,
+        ),
+        (
+            "POST",
+            "/organizations/org_1/schedule-runs/run_1/manual-edits",
+            {
+                "slot_id": "slot_1",
+                "role_id": "role_senior",
+                "employee_id": "emp_1",
+                "locked_by_user": True,
+            },
+            Assignment,
+        ),
+        (
+            "POST",
+            (
+                "/organizations/org_1/schedule-runs/run_1/"
+                "relaxation-proposals/proposal_1/approve"
+            ),
+            {
+                "reason": "저권한 승인 금지",
+                "notification_required": False,
+            },
+            OverrideApproval,
+        ),
+        (
+            "POST",
+            "/organizations/org_1/schedule-runs/run_1/recalculate",
+            {"reason": "저권한 재계산 금지"},
+            ScheduleRecalculationRequest,
+        ),
+        (
+            "POST",
+            "/organizations/org_1/schedule-runs/run_1/publications",
+            {
+                "expected_assignment_snapshot_hash": "assignment_hash",
+                "expected_issue_snapshot_hash": "issue_hash",
+            },
+            SchedulePublication,
+        ),
+    ],
+)
+def test_auth_required_rejects_viewer_schedule_run_mutations_without_persistence(
+    monkeypatch,
+    method: str,
+    path: str,
+    payload: dict,
+    count_model,
+):
+    _enable_trusted_header_auth(monkeypatch)
+    client, session = _client_and_session(
+        seed_membership=True,
+        role="viewer",
+        user_id="user_viewer",
+        seed_reference_data=True,
+        seed_schedule_run=True,
+    )
+    before_count = session.query(count_model).count()
+    before_run_count = session.query(ScheduleRun).count()
+    before_snapshot_count = session.query(ScheduleInputSnapshot).count()
+
+    response = client.request(
+        method,
+        path,
+        headers={"X-User-Id": "user_viewer"},
+        json=payload,
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "ROLE_NOT_ALLOWED"
+    assert session.query(count_model).count() == before_count
+    assert session.query(ScheduleRun).count() == before_run_count
+    assert session.query(ScheduleInputSnapshot).count() == before_snapshot_count
+
+
+def test_auth_required_rejects_viewer_cancel_without_state_change(monkeypatch):
+    _enable_trusted_header_auth(monkeypatch)
+    client, session = _client_and_session(
+        seed_membership=True,
+        role="viewer",
+        user_id="user_viewer",
+        seed_schedule_run=True,
+    )
+    run = session.get(ScheduleRun, "run_1")
+    assert run is not None
+    before_status = run.status
+    before_solver_status = run.solver_status
+    before_solution_quality = run.solution_quality
+    before_canceled_at = run.canceled_at
+
+    response = client.post(
+        "/organizations/org_1/schedule-runs/run_1/cancel",
+        headers={"X-User-Id": "user_viewer"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "ROLE_NOT_ALLOWED"
+    session.refresh(run)
+    assert run.status == before_status
+    assert run.solver_status == before_solver_status
+    assert run.solution_quality == before_solution_quality
+    assert run.canceled_at == before_canceled_at
 
 
 def test_auth_required_viewer_policy_read_does_not_create_policy(monkeypatch):
@@ -330,11 +491,34 @@ def test_auth_required_viewer_cannot_export_audit_logs(monkeypatch):
 
 def test_auth_required_viewer_cannot_dispatch_publication_notifications(monkeypatch):
     _enable_trusted_header_auth(monkeypatch)
-    client = _client(
+    client, session = _client_and_session(
         seed_membership=True,
         role="viewer",
         user_id="user_viewer",
+        seed_reference_data=True,
+        seed_schedule_run=True,
     )
+    publication = SchedulePublication(
+        id="publication_1",
+        organization_id="org_1",
+        schedule_run_id="run_1",
+        period_start=date(2026, 7, 1),
+        period_end=date(2026, 7, 7),
+        status="published",
+        assignment_snapshot_hash="assignment_hash",
+        issue_snapshot_hash="issue_hash",
+    )
+    notification = PublicationNotification(
+        id="notification_1",
+        organization_id="org_1",
+        publication_id="publication_1",
+        employee_id="emp_1",
+        notification_type="published",
+        channel="in_app",
+        status="pending_recorded",
+    )
+    session.add_all([publication, notification])
+    session.commit()
 
     response = client.post(
         "/operations/organizations/org_1/publication-notifications/dispatch",
@@ -343,6 +527,11 @@ def test_auth_required_viewer_cannot_dispatch_publication_notifications(monkeypa
 
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "ROLE_NOT_ALLOWED"
+    session.refresh(notification)
+    assert notification.status == "pending_recorded"
+    assert notification.delivery_attempts == 0
+    assert notification.delivered_at is None
+    assert notification.last_delivery_error is None
 
 
 def test_auth_required_restricts_employee_request_to_linked_employee(monkeypatch):
@@ -381,6 +570,93 @@ def test_auth_required_restricts_employee_request_to_linked_employee(monkeypatch
     assert own_response.json()["requested_by_user_id"] == "user_employee"
     assert other_response.status_code == 403
     assert other_response.json()["detail"]["code"] == "EMPLOYEE_LINK_REQUIRED"
+
+
+@pytest.mark.parametrize(
+    ("role", "user_id", "action"),
+    [
+        ("viewer", "user_viewer", "approve"),
+        ("member", "user_member", "reject"),
+        ("employee", "user_employee", "approve"),
+    ],
+)
+def test_auth_required_rejects_low_privilege_employee_request_review_without_persistence(
+    monkeypatch,
+    role: str,
+    user_id: str,
+    action: str,
+):
+    _enable_trusted_header_auth(monkeypatch)
+    client, session = _client_and_session(
+        seed_membership=True,
+        role=role,
+        user_id=user_id,
+        seed_reference_data=True,
+    )
+    employee_request = EmployeeRequest(
+        id="employee_request_1",
+        organization_id="org_1",
+        employee_id="emp_1",
+        requested_by_user_id=None,
+        type="unavailable",
+        status="pending",
+        starts_at=datetime(2026, 7, 1, tzinfo=timezone.utc),
+        ends_at=datetime(2026, 7, 2, tzinfo=timezone.utc),
+        note="개인 일정",
+    )
+    session.add(employee_request)
+    session.commit()
+    before_unavailability_count = session.query(Unavailability).count()
+    before_audit_count = session.query(AuditLog).count()
+
+    response = client.post(
+        f"/organizations/org_1/employee-requests/{employee_request.id}/{action}",
+        headers={"X-User-Id": user_id},
+        json={"reviewed_by_user_id": user_id, "reason": "저권한 검토 금지"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "ROLE_NOT_ALLOWED"
+    session.refresh(employee_request)
+    assert employee_request.status == "pending"
+    assert employee_request.manager_reason is None
+    assert employee_request.reviewed_by_user_id is None
+    assert employee_request.reviewed_at is None
+    assert employee_request.source_unavailability_id is None
+    assert session.query(Unavailability).count() == before_unavailability_count
+    assert session.query(AuditLog).count() == before_audit_count
+
+
+def test_auth_required_rejects_viewer_compliance_override_without_persistence(
+    monkeypatch,
+):
+    _enable_trusted_header_auth(monkeypatch)
+    client, session = _client_and_session(
+        seed_membership=True,
+        role="viewer",
+        user_id="user_viewer",
+        seed_schedule_run=True,
+    )
+    before_override_count = session.query(ComplianceWarningOverride).count()
+    before_audit_count = session.query(AuditLog).count()
+
+    response = client.post(
+        "/organizations/org_1/schedule-runs/run_1/compliance-warning-overrides",
+        headers={"X-User-Id": "user_viewer"},
+        json={
+            "warning_code": "WEEKLY_HOURS_OVER_52",
+            "employee_id": "emp_1",
+            "slot_id": None,
+            "week_key": "2026-W28",
+            "snapshot_hash": "snapshot",
+            "reason": "저권한 예외 승인 금지",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "ROLE_NOT_ALLOWED"
+    assert session.query(ComplianceWarningOverride).count() == before_override_count
+    assert session.query(AuditLog).count() == before_audit_count
 
 
 def test_auth_required_disables_global_metrics(monkeypatch):
@@ -440,12 +716,28 @@ def test_security_release_gate_rejects_weak_signed_actor_secret(monkeypatch):
     assert any("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET" in warning for warning in payload["warnings"])
 
 
+def test_security_release_gate_rejects_weak_employee_link_secret(monkeypatch):
+    monkeypatch.setenv("WORKSCHEDULEAI_AUTH_REQUIRED", "1")
+    monkeypatch.setenv("WORKSCHEDULEAI_SIGNED_ACTOR_SECRET", TEST_ACTOR_SECRET)
+    monkeypatch.setenv("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET", "short-secret")
+    monkeypatch.delenv("WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH", raising=False)
+    client = _client(seed_membership=True)
+
+    response = client.get("/operations/security/release-gate")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["public_saas_ready"] is False
+    assert any("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET" in warning for warning in payload["warnings"])
+
+
 def _client(
     seed_membership: bool = False,
     role: str = "scheduler",
     user_id: str = "user_scheduler",
     seed_employee_link: bool = False,
     seed_reference_data: bool = False,
+    seed_schedule_run: bool = False,
 ) -> TestClient:
     client, _session = _client_and_session(
         seed_membership=seed_membership,
@@ -453,6 +745,7 @@ def _client(
         user_id=user_id,
         seed_employee_link=seed_employee_link,
         seed_reference_data=seed_reference_data,
+        seed_schedule_run=seed_schedule_run,
     )
     return client
 
@@ -463,6 +756,7 @@ def _client_and_session(
     user_id: str = "user_scheduler",
     seed_employee_link: bool = False,
     seed_reference_data: bool = False,
+    seed_schedule_run: bool = False,
 ) -> tuple[TestClient, Session]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -501,6 +795,23 @@ def _client_and_session(
                     status="linked",
                 ),
             ]
+        )
+    if seed_schedule_run:
+        session.add(
+            ScheduleRun(
+                id="run_1",
+                organization_id="org_1",
+                period_start=date(2026, 7, 1),
+                period_end=date(2026, 7, 7),
+                template="one_shift_per_day",
+                deterministic_mode=True,
+                timeout_seconds=30,
+                status="succeeded",
+                solver_status="cp_sat_optimal",
+                solution_quality="optimal",
+                current_attempt_no=1,
+                recalculation_count=0,
+            )
         )
     session.commit()
     app = create_app()

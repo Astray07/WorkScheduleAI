@@ -57,30 +57,36 @@ def dispatch_pending_notifications(
             notification.delivered_at = utc_now()
             notification.last_delivery_error = None
             sent += 1
-        elif delivery_provider.can_deliver(notification.channel):
-            try:
-                delivery_provider.deliver(
-                    _delivery_from_notification(db_session, notification)
-                )
-            except Exception as exc:
-                notification.status = "failed"
-                notification.delivered_at = None
-                notification.last_delivery_error = (
-                    f"delivery_failed:{notification.channel}:{type(exc).__name__}"
-                )
-                failed += 1
-            else:
-                notification.status = "sent"
-                notification.delivered_at = utc_now()
-                notification.last_delivery_error = None
-                sent += 1
-        else:
+            continue
+        delivery = _delivery_from_notification(db_session, notification)
+        if delivery.channel == "email" and delivery.recipient is None:
+            notification.status = "suppressed"
+            notification.delivered_at = None
+            notification.last_delivery_error = "recipient_not_resolved:email"
+            suppressed += 1
+            continue
+        if not delivery_provider.can_deliver(notification.channel):
             notification.status = "suppressed"
             notification.delivered_at = None
             notification.last_delivery_error = (
                 f"provider_not_configured:{notification.channel}"
             )
             suppressed += 1
+            continue
+        try:
+            delivery_provider.deliver(delivery)
+        except Exception as exc:
+            notification.status = "failed"
+            notification.delivered_at = None
+            notification.last_delivery_error = (
+                f"delivery_failed:{notification.channel}:{type(exc).__name__}"
+            )
+            failed += 1
+        else:
+            notification.status = "sent"
+            notification.delivered_at = utc_now()
+            notification.last_delivery_error = None
+            sent += 1
     db_session.commit()
     return NotificationDispatchSummary(sent=sent, suppressed=suppressed, failed=failed)
 

@@ -392,6 +392,11 @@ class ShiftType(Base):
             "name",
             name="uq_shift_types_organization_name",
         ),
+        UniqueConstraint(
+            "organization_id",
+            "id",
+            name="uq_shift_types_organization_id",
+        ),
         CheckConstraint(
             "local_start_time <> local_end_time",
             name="ck_shift_types_time_not_equal",
@@ -430,6 +435,18 @@ class ShiftRequirement(Base):
             "shift_type_id",
             "role_id",
             name="uq_shift_requirements_shift_type_role",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shift_type_id"],
+            ["shift_types.organization_id", "shift_types.id"],
+            name="fk_shift_requirements_tenant_shift_type",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "role_id"],
+            ["roles.organization_id", "roles.id"],
+            name="fk_shift_requirements_tenant_role",
+            ondelete="CASCADE",
         ),
         CheckConstraint(
             "required_count >= 1",
@@ -530,6 +547,30 @@ class PairConstraint(Base):
             "type",
             name="uq_pair_constraints_normalized_pair_type",
         ),
+        ForeignKeyConstraint(
+            ["organization_id", "employee_a_id"],
+            ["employees.organization_id", "employees.id"],
+            name="fk_pair_constraints_tenant_employee_a",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "employee_b_id"],
+            ["employees.organization_id", "employees.id"],
+            name="fk_pair_constraints_tenant_employee_b",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "normalized_employee_a_id"],
+            ["employees.organization_id", "employees.id"],
+            name="fk_pair_constraints_tenant_normalized_employee_a",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "normalized_employee_b_id"],
+            ["employees.organization_id", "employees.id"],
+            name="fk_pair_constraints_tenant_normalized_employee_b",
+            ondelete="CASCADE",
+        ),
         CheckConstraint(
             "normalized_employee_a_id < normalized_employee_b_id",
             name="ck_pair_constraints_normalized_order",
@@ -617,6 +658,11 @@ class PairConstraint(Base):
 class ScheduleRun(Base):
     __tablename__ = "schedule_runs"
     __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "id",
+            name="uq_schedule_runs_organization_id",
+        ),
         UniqueConstraint(
             "organization_id",
             "idempotency_key",
@@ -739,6 +785,19 @@ class ScheduleInputSnapshot(Base):
 
 class ShiftSlot(Base):
     __tablename__ = "shift_slots"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "id",
+            name="uq_shift_slots_organization_id",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "schedule_run_id"],
+            ["schedule_runs.organization_id", "schedule_runs.id"],
+            name="fk_shift_slots_tenant_schedule_run",
+            ondelete="CASCADE",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     organization_id: Mapped[str] = mapped_column(
@@ -774,6 +833,26 @@ class ShiftSlot(Base):
 
 class ScheduleRequirement(Base):
     __tablename__ = "schedule_requirements"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "schedule_run_id"],
+            ["schedule_runs.organization_id", "schedule_runs.id"],
+            name="fk_schedule_requirements_tenant_schedule_run",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shift_slot_id"],
+            ["shift_slots.organization_id", "shift_slots.id"],
+            name="fk_schedule_requirements_tenant_shift_slot",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "role_id"],
+            ["roles.organization_id", "roles.id"],
+            name="fk_schedule_requirements_tenant_role",
+            ondelete="CASCADE",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     organization_id: Mapped[str] = mapped_column(
@@ -813,6 +892,30 @@ class ScheduleRequirement(Base):
 class Assignment(Base):
     __tablename__ = "assignments"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "schedule_run_id"],
+            ["schedule_runs.organization_id", "schedule_runs.id"],
+            name="fk_assignments_tenant_schedule_run",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shift_slot_id"],
+            ["shift_slots.organization_id", "shift_slots.id"],
+            name="fk_assignments_tenant_shift_slot",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "role_id"],
+            ["roles.organization_id", "roles.id"],
+            name="fk_assignments_tenant_role",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "employee_id"],
+            ["employees.organization_id", "employees.id"],
+            name="fk_assignments_tenant_employee",
+            ondelete="CASCADE",
+        ),
         UniqueConstraint(
             "schedule_run_id",
             "shift_slot_id",
@@ -874,6 +977,26 @@ class Assignment(Base):
 
 class ScheduleIssue(Base):
     __tablename__ = "schedule_issues"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "schedule_run_id"],
+            ["schedule_runs.organization_id", "schedule_runs.id"],
+            name="fk_schedule_issues_tenant_schedule_run",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shift_slot_id"],
+            ["shift_slots.organization_id", "shift_slots.id"],
+            name="fk_schedule_issues_tenant_shift_slot",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "role_id"],
+            ["roles.organization_id", "roles.id"],
+            name="fk_schedule_issues_tenant_role",
+            ondelete="CASCADE",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     organization_id: Mapped[str] = mapped_column(
@@ -916,6 +1039,20 @@ class ScheduleIssue(Base):
 
 class RelaxationProposal(Base):
     __tablename__ = "relaxation_proposals"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "schedule_run_id"],
+            ["schedule_runs.organization_id", "schedule_runs.id"],
+            name="fk_relaxation_proposals_tenant_schedule_run",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "affected_shift_slot_id"],
+            ["shift_slots.organization_id", "shift_slots.id"],
+            name="fk_relaxation_proposals_tenant_shift_slot",
+            ondelete="CASCADE",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     organization_id: Mapped[str] = mapped_column(
@@ -953,6 +1090,32 @@ class RelaxationProposal(Base):
 
 class SolverDiagnosticEvent(Base):
     __tablename__ = "solver_diagnostic_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "schedule_run_id"],
+            ["schedule_runs.organization_id", "schedule_runs.id"],
+            name="fk_solver_diagnostics_tenant_schedule_run",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "shift_slot_id"],
+            ["shift_slots.organization_id", "shift_slots.id"],
+            name="fk_solver_diagnostics_tenant_shift_slot",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "role_id"],
+            ["roles.organization_id", "roles.id"],
+            name="fk_solver_diagnostics_tenant_role",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "employee_id"],
+            ["employees.organization_id", "employees.id"],
+            name="fk_solver_diagnostics_tenant_employee",
+            ondelete="CASCADE",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     organization_id: Mapped[str] = mapped_column(
@@ -1104,6 +1267,11 @@ class SchedulePublication(Base):
     __tablename__ = "schedule_publications"
     __table_args__ = (
         UniqueConstraint(
+            "organization_id",
+            "id",
+            name="uq_schedule_publications_organization_id",
+        ),
+        UniqueConstraint(
             "schedule_run_id",
             name="uq_schedule_publications_schedule_run_id",
         ),
@@ -1157,6 +1325,18 @@ class SchedulePublication(Base):
 class PublicationAcknowledgement(Base):
     __tablename__ = "publication_acknowledgements"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "publication_id"],
+            ["schedule_publications.organization_id", "schedule_publications.id"],
+            name="fk_publication_acknowledgements_tenant_publication",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "employee_id"],
+            ["employees.organization_id", "employees.id"],
+            name="fk_publication_acknowledgements_tenant_employee",
+            ondelete="CASCADE",
+        ),
         UniqueConstraint(
             "organization_id",
             "publication_id",
@@ -1203,6 +1383,18 @@ class PublicationAcknowledgement(Base):
 class PublicationNotification(Base):
     __tablename__ = "publication_notifications"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "publication_id"],
+            ["schedule_publications.organization_id", "schedule_publications.id"],
+            name="fk_publication_notifications_tenant_publication",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "employee_id"],
+            ["employees.organization_id", "employees.id"],
+            name="fk_publication_notifications_tenant_employee",
+            ondelete="CASCADE",
+        ),
         CheckConstraint(
             "notification_type IN ('published', 'changed')",
             name="ck_publication_notifications_type",
@@ -1265,6 +1457,12 @@ class ComplianceWarningOverride(Base):
             "snapshot_hash",
             name="uq_compliance_warning_overrides_instance",
         ),
+        ForeignKeyConstraint(
+            ["organization_id", "schedule_run_id"],
+            ["schedule_runs.organization_id", "schedule_runs.id"],
+            name="fk_compliance_warning_overrides_tenant_schedule_run",
+            ondelete="CASCADE",
+        ),
     )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -1296,6 +1494,13 @@ class ComplianceWarningOverride(Base):
 
 class RagDocument(Base):
     __tablename__ = "rag_documents"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "id",
+            name="uq_rag_documents_organization_id",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     organization_id: Mapped[str] = mapped_column(
@@ -1323,6 +1528,12 @@ class RagDocumentChunk(Base):
             "document_id",
             "chunk_index",
             name="uq_rag_document_chunks_document_index",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "document_id"],
+            ["rag_documents.organization_id", "rag_documents.id"],
+            name="fk_rag_document_chunks_tenant_document",
+            ondelete="CASCADE",
         ),
     )
 

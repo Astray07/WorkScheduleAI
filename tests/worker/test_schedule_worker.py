@@ -145,6 +145,38 @@ def test_process_next_schedule_run_consumes_queue_and_executes_run(
     assert queue.dequeue(timeout_seconds=0) is None
 
 
+def test_process_next_schedule_run_sets_tenant_context_from_job(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    run = _queued_run()
+    queue = InMemoryScheduleRunQueue()
+    queue.enqueue(run.id, organization_id="org_1")
+    session.add(run)
+    session.commit()
+    tenant_contexts: list[str] = []
+
+    def record_tenant_context(db_session: Session, organization_id: str) -> None:
+        assert db_session is session
+        tenant_contexts.append(organization_id)
+
+    monkeypatch.setattr(
+        schedule_worker_module,
+        "set_tenant_context",
+        record_tenant_context,
+        raising=False,
+    )
+
+    processed = schedule_worker_module.process_next_schedule_run(
+        queue=queue,
+        db_session_factory=lambda: nullcontext(session),
+        dequeue_timeout_seconds=0,
+    )
+
+    assert processed is True
+    assert tenant_contexts == ["org_1"]
+
+
 def test_process_next_schedule_run_returns_false_when_queue_is_empty(
     session: Session,
 ):

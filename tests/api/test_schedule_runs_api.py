@@ -14,6 +14,7 @@ from sqlalchemy.pool import StaticPool
 from work_schedule_ai.api.app import create_app
 from work_schedule_ai.api.dependencies import get_db_session
 from work_schedule_ai.api.routes import schedule_runs as schedule_runs_module
+from work_schedule_ai.api.security import ActorContext
 from work_schedule_ai.compliance import (
     ComplianceWarning,
     compliance_warning_instance_key,
@@ -135,13 +136,17 @@ def test_create_schedule_run_enqueues_without_inline_solver_execution(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    enqueued_run_ids: list[str] = []
+    enqueued_jobs: list[tuple[str, str | None]] = []
 
     def fail_inline_execution(*args, **kwargs):
         raise AssertionError("ScheduleRun must not execute in the API process")
 
-    def record_enqueue(schedule_run_id: str) -> None:
-        enqueued_run_ids.append(schedule_run_id)
+    def record_enqueue(
+        schedule_run_id: str,
+        *,
+        organization_id: str | None = None,
+    ) -> None:
+        enqueued_jobs.append((schedule_run_id, organization_id))
 
     monkeypatch.setattr(
         schedule_runs_module,
@@ -164,7 +169,7 @@ def test_create_schedule_run_enqueues_without_inline_solver_execution(
     assert response.status_code == 202
     payload = response.json()
     assert payload["status"] == "queued"
-    assert enqueued_run_ids == [payload["id"]]
+    assert enqueued_jobs == [(payload["id"], "org_1")]
 
 
 def test_schedule_run_solver_request_includes_demand_staffing_targets(
@@ -230,9 +235,10 @@ def test_create_schedule_run_is_idempotent_with_same_key(
     assert second_response.json()["id"] == first_response.json()["id"]
     assert db_session.query(ScheduleRun).count() == 1
     assert db_session.query(ScheduleInputSnapshot).count() == 1
-    assert schedule_queue.dequeue(timeout_seconds=0).schedule_run_id == (
-        first_response.json()["id"]
-    )
+    job = schedule_queue.dequeue(timeout_seconds=0)
+    assert job is not None
+    assert job.schedule_run_id == first_response.json()["id"]
+    assert job.organization_id == "org_1"
     assert schedule_queue.dequeue(timeout_seconds=0) is None
 
 
@@ -649,7 +655,10 @@ def test_recalculate_enqueues_without_inline_solver_execution(
     assert payload["status"] == "queued"
     assert payload["progress"]["phase"] == "queued"
     assert payload["recalculation_count"] == 1
-    assert schedule_queue.dequeue(timeout_seconds=0).schedule_run_id == run_id
+    job = schedule_queue.dequeue(timeout_seconds=0)
+    assert job is not None
+    assert job.schedule_run_id == run_id
+    assert job.organization_id == "org_1"
     assert schedule_queue.dequeue(timeout_seconds=0) is None
 
 
@@ -1492,6 +1501,71 @@ def test_save_manual_edit_persists_assignment_and_audit_log(
     assert audit_metadata["warning_codes"] == ["UNAVAILABILITY_CONFLICT"]
 
 
+def test_save_manual_edit_rechecks_employee_tenant_scope_at_write_site(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    organization = _create_role_scoped_organization(client, name="Manual Tenant Guard Clinic")
+    organization_id = organization["organization_id"]
+    junior_role_id = organization["junior_role_id"]
+    db_session.add(Organization(id="org_other", name="Other Clinic", timezone="Asia/Seoul"))
+    db_session.flush()
+    db_session.add(
+        Employee(
+            id="emp_other",
+            organization_id="org_other",
+            employee_code="X001",
+            name="Cross Tenant Employee",
+        )
+    )
+    db_session.commit()
+    run_response = client.post(
+        f"/organizations/{organization_id}/schedule-runs",
+        json={"period_start": "2026-07-01", "period_end": "2026-07-01"},
+    )
+    run_id = run_response.json()["id"]
+    _process_next_schedule_run(client)
+    result = client.get(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/result"
+    ).json()
+    slot_id = result["slots"][0]["id"]
+
+    def validation_bypass(**_kwargs):
+        return schedule_runs_module.ManualEditValidationResponse(
+            valid=True,
+            blocking_errors=[],
+            warnings=[],
+        )
+
+    monkeypatch.setattr(
+        schedule_runs_module,
+        "_validate_manual_edit_request",
+        validation_bypass,
+    )
+    before_count = db_session.query(Assignment).filter_by(
+        organization_id=organization_id,
+        employee_id="emp_other",
+    ).count()
+
+    response = client.post(
+        f"/organizations/{organization_id}/schedule-runs/{run_id}/manual-edits",
+        json={
+            "slot_id": slot_id,
+            "role_id": junior_role_id,
+            "employee_id": "emp_other",
+            "locked_by_user": True,
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "EMPLOYEE_NOT_FOUND"
+    assert db_session.query(Assignment).filter_by(
+        organization_id=organization_id,
+        employee_id="emp_other",
+    ).count() == before_count
+
+
 def test_save_manual_edit_preserves_other_assignments_for_multi_count_requirement(
     client: TestClient,
 ):
@@ -1913,6 +1987,48 @@ def test_publish_schedule_run_creates_publication_and_marks_result_read_only(
     audit_metadata = json.loads(audit_rows[0]["metadata_json"])
     assert audit_metadata["schedule_run_id"] == run_id
     assert audit_metadata["assignment_snapshot_hash"] == payload["assignment_snapshot_hash"]
+
+
+def test_publish_schedule_run_records_authenticated_actor_in_audit_log(
+    client: TestClient,
+    db_session: Session,
+):
+    run_id, result_payload = _create_recalculated_result(client)
+    db_session.info["actor_context"] = ActorContext(
+        user_id="user_scheduler",
+        role="scheduler",
+        auth_required=True,
+    )
+
+    response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/publications",
+        json={
+            "expected_assignment_snapshot_hash": result_payload[
+                "assignment_snapshot_hash"
+            ],
+            "expected_issue_snapshot_hash": result_payload["issue_snapshot_hash"],
+        },
+    )
+
+    assert response.status_code == 201
+    audit_actor = db_session.execute(
+        text(
+            "select actor_user_id from audit_logs "
+            "where action = 'publication_created'"
+        )
+    ).scalar_one()
+    assert audit_actor == "user_scheduler"
+
+
+def test_schedule_run_without_active_shift_type_marks_assignments_as_fallback(
+    client: TestClient,
+):
+    _run_id, result_payload = _create_recalculated_result(client)
+
+    assert result_payload["assignments"]
+    assert {assignment["source"] for assignment in result_payload["assignments"]} == {
+        "fallback"
+    }
 
 
 def test_publish_schedule_run_rejects_overlapping_active_publication(

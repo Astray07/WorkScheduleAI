@@ -9,6 +9,7 @@ import json
 
 
 SCOPE = "employee_publication_link"
+EMPLOYEE_LINK_SECRET_MIN_LENGTH = 32
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,10 @@ def sign_employee_deep_link(
 ) -> str:
     if not secret:
         raise ValueError("secret is required")
+    if not is_employee_link_secret_strong(secret):
+        raise ValueError(
+            f"secret must be at least {EMPLOYEE_LINK_SECRET_MIN_LENGTH} characters"
+        )
     header = {"alg": "HS256", "typ": SCOPE, "v": 1}
     payload = {
         "scope": SCOPE,
@@ -66,6 +71,11 @@ def verify_employee_deep_link(
 ) -> EmployeeDeepLinkClaims:
     if not secret:
         raise EmployeeDeepLinkTokenError("SECRET_REQUIRED", "secret is required")
+    if not is_employee_link_secret_strong(secret):
+        raise EmployeeDeepLinkTokenError(
+            "SECRET_WEAK",
+            f"secret must be at least {EMPLOYEE_LINK_SECRET_MIN_LENGTH} characters",
+        )
     parts = token.split(".")
     if len(parts) != 3:
         raise EmployeeDeepLinkTokenError("MALFORMED_TOKEN", "token must have three parts")
@@ -114,6 +124,14 @@ def verify_employee_deep_link(
             else None
         ),
     )
+
+
+def is_employee_link_secret_strong(secret: str | None) -> bool:
+    return bool(secret and len(secret) >= EMPLOYEE_LINK_SECRET_MIN_LENGTH)
+
+
+def is_employee_link_secret_configured_but_weak(secret: str | None) -> bool:
+    return bool(secret and not is_employee_link_secret_strong(secret))
 
 
 def _sign(signing_input: str, secret: str) -> bytes:

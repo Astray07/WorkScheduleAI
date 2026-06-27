@@ -1,13 +1,19 @@
 from contextlib import nullcontext
 from datetime import date
 import importlib
+import sys
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.db.models import Base, Organization, ScheduleRun
-from work_schedule_ai.worker.queue import InMemoryScheduleRunQueue
+from work_schedule_ai.worker.queue import (
+    InMemoryScheduleRunQueue,
+    RedisScheduleRunQueue,
+    _job_from_payload,
+)
 
 
 @pytest.fixture
@@ -72,6 +78,58 @@ def test_run_queue_worker_returns_zero_when_no_job_is_available(
     )
 
     assert processed_count == 0
+
+
+def test_redis_schedule_run_queue_round_trips_json_payload_with_organization_id(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake_client = _FakeRedisClient()
+    monkeypatch.setitem(
+        sys.modules,
+        "redis",
+        SimpleNamespace(Redis=_FakeRedisFactory(fake_client)),
+    )
+    queue = RedisScheduleRunQueue("redis://localhost:6379/0", queue_name="queue")
+
+    queue.enqueue("run_1", organization_id="org_1")
+    job = queue.dequeue(timeout_seconds=0)
+
+    assert job is not None
+    assert job.schedule_run_id == "run_1"
+    assert job.organization_id == "org_1"
+
+
+def test_schedule_run_job_payload_parser_accepts_legacy_raw_run_id():
+    job = _job_from_payload("run_legacy")
+
+    assert job.schedule_run_id == "run_legacy"
+    assert job.organization_id is None
+
+
+class _FakeRedisClient:
+    def __init__(self) -> None:
+        self.items: list[tuple[str, str]] = []
+
+    def rpush(self, queue_name: str, payload: str) -> None:
+        self.items.append((queue_name, payload))
+
+    def blpop(self, queue_names: list[str], timeout: int):
+        del timeout
+        if not self.items:
+            return None
+        queue_name, payload = self.items.pop(0)
+        assert queue_name in queue_names
+        return queue_name, payload
+
+
+class _FakeRedisFactory:
+    def __init__(self, client: _FakeRedisClient) -> None:
+        self.client = client
+
+    def from_url(self, redis_url: str, decode_responses: bool) -> _FakeRedisClient:
+        assert redis_url == "redis://localhost:6379/0"
+        assert decode_responses is True
+        return self.client
 
 
 def _queued_run(status: str = "queued") -> ScheduleRun:

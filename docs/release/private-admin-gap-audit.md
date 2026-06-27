@@ -36,6 +36,7 @@
 - 근무표 기간은 1일부터 31일까지 지원됩니다.
 - 시나리오에서 생성된 근무 유형 동기화는 요일 적용 범위를 존중하며, 평일 야간만 있는 경우 주말 슬롯을 만들지 않습니다.
 - 채우지 못한 필요 인원은 solver 실패가 아니라 `ScheduleIssue`로 노출되는 soft penalty입니다.
+- 활성 근무 유형이 없는 P0/demo fallback 결과는 `source="fallback"`으로 표시해 OR-Tools solver 결과와 구분합니다.
 - 재계산은 승인된 override와 수동 잠금을 보존하며, `recalculation_count`는 최대 3회로 제한됩니다.
 - `current_attempt_no`는 워커의 기술적 재시도 상태로 남아 있으며, 관리자의 재계산 횟수와 분리되어 있습니다.
 
@@ -53,13 +54,16 @@
 - 장기 fairness 대시보드는 확정본 또는 실행 결과를 기준으로 기간 필터, 배정 수, 야간 수, 주말 수, 역할별 수, 평균 delta를 표시합니다.
 - 운영 확장 패널의 직원 요청 queue는 승인 대기 상태만 최대 5건 표시합니다.
 - 운영 지표와 readiness endpoint가 로컬 및 스테이징 점검용으로 존재합니다.
+- 운영 지표 중 schedule-run metrics는 조직 스코프 경로만 허용하며, 전역 metrics 경로는 tenant scope가 없어 차단됩니다.
 - PostgreSQL tenant context hook은 존재하지만, 공개 인증과 멤버십 강제는 아직 release gate입니다.
 - `WORKSCHEDULEAI_AUTH_REQUIRED=1`일 때 조직 스코프 API는 `WORKSCHEDULEAI_TRUSTED_UPSTREAM_AUTH=1` 없이는 `X-User-Id`를 받지 않도록 fail-closed 처리합니다.
 - `WORKSCHEDULEAI_SIGNED_ACTOR_SECRET`이 최소 길이 정책을 만족하면 조직 스코프 API는 `Authorization: Bearer <signed actor token>`을 검증해 actor를 추출할 수 있습니다.
 - `/auth/login`은 저장된 PBKDF2 비밀번호 해시와 조직 멤버십을 검증한 뒤 조직 스코프 signed actor token을 발급합니다. 운영 콘솔은 해당 token을 sessionStorage에만 보관하고 조직 API 호출의 `Authorization` header로 보냅니다.
 - 운영 콘솔은 저장된 세션을 복원할 때 `/auth/session`으로 token을 재검증하고, 만료되었거나 변조된 세션은 제거합니다.
-- release gate는 trusted upstream header mode, 약한 signed actor secret, 공개 조직 bootstrap 미잠금 상태를 공개 SaaS ready로 보지 않습니다.
-- cross-tenant DB hardening으로 `employee_roles`, `unavailabilities`, `employee_user_links`, `employee_requests`에 tenant composite FK를 추가했습니다. 전체 테이블 확장 순서는 `docs/release/cross-tenant-constraint-plan.md`에 문서화되어 있습니다.
+- `WORKSCHEDULEAI_AUTH_REQUIRED=1`에서는 공개 `POST /organizations` bootstrap을 차단합니다. authenticated owner onboarding은 아직 구현되지 않았으므로 공개 SaaS release gate로 남아 있습니다.
+- release gate는 trusted upstream header mode, 약한 signed actor secret, 약한 employee signed-link secret, authenticated owner onboarding 미구현 상태를 공개 SaaS ready로 보지 않습니다.
+- worker queue job은 `organization_id`를 함께 전달하고, worker는 실행 전 tenant context를 설정합니다. Redis queue payload 형식이 JSON으로 확장되었으므로 배포 시 worker를 먼저 갱신하거나 queue를 비운 상태로 producer를 배포해야 합니다.
+- cross-tenant DB hardening으로 `employee_roles`, `unavailabilities`, `employee_user_links`, `employee_requests`, `assignments`, `publication_acknowledgements`, `publication_notifications`, schedule-result rows, `shift_requirements`, `pair_constraints`, `compliance_warning_overrides.schedule_run_id`, `rag_document_chunks`에 tenant composite FK를 추가했습니다. 전체 테이블 확장 상태와 보류 사유는 `docs/release/cross-tenant-constraint-plan.md`에 문서화되어 있습니다.
 
 ### RAG와 근거 제시
 
@@ -123,7 +127,7 @@
 
 상태: 부분 구현.
 
-이유: 확정본 publication notification record, 직원 모바일 알림 표시, 관리자용 dispatch endpoint, delivery attempt/status tracking은 구현되어 있습니다. SMTP email은 `EmployeeUserLink`가 `linked`인 직원의 `User.email`을 우선 수신자로 사용하고, 수신자가 없으면 catchall `WORKSCHEDULEAI_NOTIFICATION_EMAIL_TO`를 사용할 수 있습니다. Slack webhook provider contract도 명시적 환경 변수가 설정된 경우 호출할 수 있습니다. provider 설정이 없으면 email/Slack은 발송하지 않고 suppressed 상태로 남깁니다.
+이유: 확정본 publication notification record, 직원 모바일 알림 표시, 관리자용 dispatch endpoint, delivery attempt/status tracking은 구현되어 있습니다. SMTP email은 `EmployeeUserLink`가 `linked`인 직원의 `User.email`을 수신자로 사용합니다. 직원별 수신자가 확인되지 않으면 dispatcher는 공유 catchall inbox로 보내지 않고 suppressed 상태로 남깁니다. Slack webhook provider contract도 명시적 환경 변수가 설정된 경우 호출할 수 있습니다. provider 설정이 없으면 email/Slack은 발송하지 않고 suppressed 상태로 남깁니다.
 
 리스크: 직원별 Slack destination 저장, provider별 운영 재시도 스케줄, 실패 모니터링과 알림 템플릿 고도화는 아직 필요합니다. 비공개 운영자 검증에는 허용 가능하지만, 자율적인 외부 알림 흐름으로 보장하면 안 됩니다.
 
@@ -161,7 +165,7 @@
 
 ## 남은 출시 리스크
 
-- 인증과 tenant 접근 제어는 공개 URL 또는 실제 외부 파일럿의 release gate입니다. signed actor token 추출과 최소 로그인/session UX는 추가되었지만, 관리자 회원가입, 비밀번호 초기 설정/재설정, 키 회전, 운영 배포 검증은 남아 있습니다.
+- 인증과 tenant 접근 제어는 공개 URL 또는 실제 외부 파일럿의 release gate입니다. signed actor token 추출, 최소 로그인/session UX, auth-required 조직 bootstrap 차단은 추가되었지만, authenticated owner onboarding, 관리자 회원가입, 비밀번호 초기 설정/재설정, 키 회전, 운영 배포 검증은 남아 있습니다.
 - 직원 모바일 화면은 signed link 기반 조회/확인과 알림 목록에 연결되어 있지만, 변경 알림 상세 UX와 외부 provider 발송은 남아 있습니다.
 - production-ready라고 부르기 전 Railway/API/worker/PostgreSQL/Redis 스테이징 검증이 필요합니다.
 - 100명, 31일 기준 강화 benchmark는 opt-in이며 기본 CI runtime gate가 아닙니다.
@@ -185,13 +189,9 @@
 
 직전 기능 완성 게이트에서 다음 검증을 통과한 상태입니다.
 
-- `python -m pytest -q`: 186 passed, 2 skipped
-- 전체 `frontend/src/*.test.mjs`
-- `npm run build`
-- `git diff --check`
-- `git rev-list --left-right --count "HEAD...@{u}"`
-
-이번 hardening에서는 trusted upstream auth gate와 대표 RBAC deny 테스트를 추가했으며, 공개 SaaS readiness는 여전히 false로 유지합니다.
+- 직전 hardening 게이트 기록: `python -m pytest -q` 313 passed, 2 skipped, `npm run build`, `git diff --check`, Alembic head/current `20260627_0025`.
+- 이번 public SaaS readiness hardening에서는 auth-required 조직 bootstrap 차단, publication audit actor 기록, fallback result source 분리, Redis queue JSON/legacy payload regression, employee request review/compliance override/notification dispatch deny no-persistence 테스트, schedule-result/reference/RAG/compliance composite FK migration `20260627_0026`/`20260627_0027`, PostgreSQL RLS child-table integration coverage 확장을 추가했습니다.
+- 공개 SaaS readiness는 여전히 false로 유지합니다.
 
 ## 관련 커밋
 

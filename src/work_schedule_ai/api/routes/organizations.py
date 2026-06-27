@@ -1,12 +1,12 @@
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session, set_tenant_context
-from work_schedule_ai.api.security import READ_ROLES, require_roles
+from work_schedule_ai.api.security import READ_ROLES, is_auth_required, require_roles
 from work_schedule_ai.db.models import Organization, Role
 
 
@@ -40,6 +40,18 @@ def create_organization(
     request: OrganizationCreateRequest,
     db_session: Session = Depends(get_db_session),
 ) -> OrganizationResponse:
+    if is_auth_required():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "ORGANIZATION_BOOTSTRAP_LOCKED",
+                "message": (
+                    "Public organization bootstrap requires authenticated "
+                    "owner onboarding."
+                ),
+                "field": "WORKSCHEDULEAI_AUTH_REQUIRED",
+            },
+        )
     organization = Organization(
         id=_new_id("org"),
         name=request.name,

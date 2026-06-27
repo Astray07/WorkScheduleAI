@@ -36,12 +36,14 @@
 - signed actor token 기반 `Authorization: Bearer` actor extraction
 - `/auth/login` 기반 signed session 발급과 운영 콘솔 Authorization header 연결
 - 저장된 운영 콘솔 세션의 `/auth/session` 재검증과 약한 signed actor secret release gate 차단
-- `employee_roles`, `unavailabilities`, `employee_user_links`, `employee_requests` cross-tenant composite FK hardening 및 확장 계획 문서
+- `WORKSCHEDULEAI_AUTH_REQUIRED=1`에서는 공개 `POST /organizations` bootstrap을 차단하고 authenticated owner onboarding을 release gate로 유지
+- `employee_roles`, `unavailabilities`, `employee_user_links`, `employee_requests`, `assignments`, `publication_acknowledgements`, `publication_notifications`, schedule-result rows, `shift_requirements`, `pair_constraints`, `compliance_warning_overrides.schedule_run_id`, `rag_document_chunks` cross-tenant composite FK hardening 및 확장 계획 문서
 - 직원 publication scoped signed link 발급과 `Authorization: Bearer` 기반 public 조회/확인 API
 - 직원 signed link context의 acknowledgement와 notification records
 - 직원 모바일 화면의 fragment-token 회수, public context 표시, public acknowledgement 연결
 - publication notification dispatch endpoint와 delivery attempt/status tracking
-- SMTP catchall email과 Slack webhook 기반 publication notification provider contract
+- publication email recipient가 연결된 직원 사용자 이메일로 확인되지 않으면 employee-specific email dispatch를 suppressed 처리
+- SMTP email과 Slack webhook 기반 publication notification provider contract
 - linked employee user email 기반 publication email recipient resolution
 - RAG 문서 ingest/list/delete API, 운영 패널 문서 관리 UI, citation 필드 계약
 - RAG API prompt injection drop, PII redaction, solver/policy non-mutation 평가 테스트
@@ -54,7 +56,7 @@
 - demand/cost preview의 budget warning/blocking policy status
 - Railway API/frontend 배포 자산과 demo seed
 - Railway worker service start command reference
-- 운영 metrics/readiness endpoint
+- 조직 스코프 운영 metrics와 readiness endpoint
 - 직원 100명/31일 저제약 synthetic 성능 회귀 baseline
 - GitHub Actions CI workflow
 
@@ -71,18 +73,19 @@ npm run build
 CI 게이트:
 
 - backend pytest 전체
-- PostgreSQL service 기반 RLS integration test
+- PostgreSQL service 기반 RLS integration test: tenant row isolation과 assignment, schedule-result, reference-data, compliance, RAG child-table RLS/composite-FK 거부를 포함합니다.
 - frontend `npm ci` + `npm run build`
 
-PostgreSQL RLS integration은 `TEST_POSTGRES_URL`이 설정된 환경에서 실행됩니다. 로컬 SQLite 환경에서는 skip됩니다.
+PostgreSQL RLS integration은 `TEST_POSTGRES_URL`이 설정된 환경에서 실행됩니다. 로컬 SQLite 환경에서는 skip되며, SQLite composite FK enforcement 테스트와 별개로 운영 DB 방어층을 확인합니다.
 
 Staging 게이트:
 
 - API service, worker service, PostgreSQL, Redis가 분리된 Railway 구성으로 떠 있어야 합니다.
 - worker service start command는 `python -m work_schedule_ai.worker.queue_worker`여야 합니다.
+- Redis schedule-run queue payload는 `organization_id`를 포함하는 JSON 형식입니다. 구형 worker는 신규 payload를 schedule_run_id로 오인할 수 있으므로 worker를 먼저 배포하거나 queue를 비운 뒤 API producer를 배포해야 합니다.
 - 실제 Redis queue를 통과하는 P0 happy path와 infeasible/relaxation path를 브라우저에서 1회 이상 관통해야 합니다.
 - 공개 URL 또는 실사용 파일럿이면 관리자 인증, signed/session actor extraction, 요청 조직 컨텍스트, tenant 접근 제어가 릴리즈 전 필수입니다.
-- 공개 SaaS ready 판정은 authenticated owner onboarding에 묶이지 않은 공개 조직 bootstrap과 약한 `WORKSCHEDULEAI_SIGNED_ACTOR_SECRET`을 허용하지 않습니다.
+- 공개 SaaS ready 판정은 authenticated owner onboarding 미구현, 약한 `WORKSCHEDULEAI_SIGNED_ACTOR_SECRET`, 약한 `WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET`, trusted upstream header actor mode를 허용하지 않습니다.
 - blocking 컴플라이언스 warning은 현재 warning instance(`warning_code` + 직원 + 슬롯/ISO 주차 + snapshot hash)와 override가 정확히 일치해야 확정 가능합니다.
 - 직원 모바일 public 접근은 signed publication link 조회/확인 API 또는 직원 인증을 통해서만 허용합니다. signed link token은 직원 URL query string에 두지 않고 fragment에서 회수해 API `Authorization` header로 전달해야 합니다.
 
