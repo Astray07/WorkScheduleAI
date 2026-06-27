@@ -39,6 +39,9 @@ CORE_M0_SCHEMAS = [
 
 
 def repository_root() -> Path:
+    cwd = Path.cwd()
+    if (cwd / "docs" / "contracts").exists():
+        return cwd
     return Path(__file__).resolve().parents[2]
 
 
@@ -77,4 +80,3 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise TypeError(f"Expected JSON object in {path}")
     return payload
-

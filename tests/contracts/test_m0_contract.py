@@ -1,12 +1,21 @@
 from work_schedule_ai.contracts import (
     CORE_M0_SCHEMAS,
     P0_REQUIRED_PATHS,
+    contracts_dir,
     fixture_names,
     load_fixture,
     load_openapi_contract,
     missing_core_schemas,
     missing_p0_paths,
 )
+
+
+def test_contracts_dir_prefers_runtime_working_directory(monkeypatch, tmp_path):
+    runtime_contracts_dir = tmp_path / "docs" / "contracts"
+    runtime_contracts_dir.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    assert contracts_dir() == runtime_contracts_dir
 
 
 def test_openapi_contract_contains_p0_paths():
@@ -67,4 +76,3 @@ def test_recalculated_fixture_keeps_counters_distinct():
         and assignment["warning_state"] == "approved_override"
         for assignment in payload["assignments"]
     )
-
