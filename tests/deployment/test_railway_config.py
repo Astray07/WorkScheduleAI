@@ -40,3 +40,9 @@ def test_api_dockerfile_avoids_pep517_build_isolation_downloads():
 
     assert "setuptools" in dockerfile
     assert 'python -m pip install --no-build-isolation ".[deploy]"' in dockerfile
+
+
+def test_api_dockerfile_includes_runtime_contract_assets():
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "COPY docs/contracts ./docs/contracts" in dockerfile

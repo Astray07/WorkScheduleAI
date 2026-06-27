@@ -8,6 +8,7 @@ WORKDIR /app
 
 COPY pyproject.toml alembic.ini ./
 COPY alembic ./alembic
+COPY docs/contracts ./docs/contracts
 COPY scripts ./scripts
 COPY src ./src
 
