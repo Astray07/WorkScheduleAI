@@ -10,6 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from work_schedule_ai.api import app as app_module
 from work_schedule_ai.api.app import create_app
 from work_schedule_ai.api.dependencies import get_db_session
 from work_schedule_ai.db.models import (
@@ -100,6 +101,28 @@ def test_readiness_reports_database_and_redis_status(client: TestClient):
         "status": "ok",
         "database": "ok",
         "redis": "not_configured",
+    }
+
+
+def test_readiness_fails_when_redis_ping_fails(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(app_module, "_redis_readiness_status", lambda: "error")
+    app = create_app()
+
+    def override_session() -> Generator[Session, None, None]:
+        yield db_session
+
+    app.dependency_overrides[get_db_session] = override_session
+    with TestClient(app) as test_client:
+        response = test_client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "status": "error",
+        "database": "ok",
+        "redis": "error",
     }
 
 

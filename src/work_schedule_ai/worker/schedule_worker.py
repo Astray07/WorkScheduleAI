@@ -102,17 +102,22 @@ def process_next_schedule_run(
         return False
     job = _normalized_job(job)
 
-    with db_session_factory() as db_session:
-        if job.organization_id is not None:
-            set_tenant_context(db_session, job.organization_id)
-        try:
-            execute_schedule_run(
-                db_session,
-                job.schedule_run_id,
-                executor=executor,
-            )
-        except LookupError as exc:
-            print(f"Skipping schedule run job: {exc}", flush=True)
+    try:
+        with db_session_factory() as db_session:
+            if job.organization_id is not None:
+                set_tenant_context(db_session, job.organization_id)
+            try:
+                execute_schedule_run(
+                    db_session,
+                    job.schedule_run_id,
+                    executor=executor,
+                )
+            except LookupError as exc:
+                print(f"Skipping schedule run job: {exc}", flush=True)
+    finally:
+        ack = getattr(queue, "ack", None)
+        if callable(ack):
+            ack(job)
     return True
 
 
@@ -134,6 +139,7 @@ def _normalized_job(job: ScheduleRunJob) -> ScheduleRunJob:
             if job.organization_id is not None
             else organization_id if isinstance(organization_id, str) else None
         ),
+        queue_payload=job.queue_payload,
     )
 
 

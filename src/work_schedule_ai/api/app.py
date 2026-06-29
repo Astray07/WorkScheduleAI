@@ -1,6 +1,6 @@
 import os
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -33,10 +33,12 @@ from work_schedule_ai.contracts import (
     missing_core_schemas,
     missing_p0_paths,
 )
+from work_schedule_ai.runtime_config import validate_runtime_config
 from work_schedule_ai.version import build_info
 
 
 def create_app() -> FastAPI:
+    validate_runtime_config(service="api")
     app = FastAPI(title="WorkScheduleAI")
     app.add_middleware(
         CORSMiddleware,
@@ -68,10 +70,20 @@ def create_app() -> FastAPI:
     @app.get("/health/ready")
     def readiness(db_session: Session = Depends(get_db_session)) -> dict[str, str]:
         db_session.execute(text("SELECT 1"))
+        redis_status = _redis_readiness_status()
+        if redis_status == "error":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "status": "error",
+                    "database": "ok",
+                    "redis": redis_status,
+                },
+            )
         return {
             "status": "ok",
             "database": "ok",
-            "redis": _redis_readiness_status(),
+            "redis": redis_status,
         }
 
     @app.get("/health/version")

@@ -7,10 +7,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from work_schedule_ai.db.url import normalize_database_url
 from work_schedule_ai.api.security import enforce_organization_access
+from work_schedule_ai.runtime_config import get_database_url
 
-DATABASE_URL = normalize_database_url(
-    os.environ.get("DATABASE_URL", "sqlite:///work_schedule_ai.sqlite3")
-)
+DATABASE_URL = normalize_database_url(get_database_url())
 
 engine = create_engine(DATABASE_URL, future=True)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)

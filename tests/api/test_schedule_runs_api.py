@@ -240,7 +240,49 @@ def test_create_schedule_run_is_idempotent_with_same_key(
     assert job is not None
     assert job.schedule_run_id == first_response.json()["id"]
     assert job.organization_id == "org_1"
+    replay_job = schedule_queue.dequeue(timeout_seconds=0)
+    assert replay_job is not None
+    assert replay_job.schedule_run_id == first_response.json()["id"]
+    assert replay_job.organization_id == "org_1"
     assert schedule_queue.dequeue(timeout_seconds=0) is None
+
+
+def test_create_schedule_run_reenqueues_after_idempotent_enqueue_failure(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    calls: list[str] = []
+
+    def flaky_enqueue(
+        schedule_run_id: str,
+        *,
+        organization_id: str | None = None,
+    ) -> None:
+        del organization_id
+        calls.append(schedule_run_id)
+        if len(calls) == 1:
+            raise RuntimeError("redis unavailable")
+
+    monkeypatch.setattr(schedule_runs_module, "enqueue_schedule_run", flaky_enqueue)
+    headers = {"Idempotency-Key": "schedule-run-key-redis-retry"}
+
+    with pytest.raises(RuntimeError, match="redis unavailable"):
+        client.post(
+            "/organizations/org_1/schedule-runs",
+            headers=headers,
+            json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
+        )
+
+    second_response = client.post(
+        "/organizations/org_1/schedule-runs",
+        headers=headers,
+        json={"period_start": "2026-07-01", "period_end": "2026-07-07"},
+    )
+
+    assert second_response.status_code == 202
+    assert calls == [second_response.json()["id"], second_response.json()["id"]]
+    assert db_session.query(ScheduleRun).count() == 1
 
 
 def test_create_schedule_run_rejects_same_idempotency_key_with_different_snapshot(
@@ -749,6 +791,34 @@ def test_recalculate_is_idempotent_with_same_key(
     assert first_response.json()["recalculation_count"] == 1
     assert second_response.json()["recalculation_count"] == 1
     assert db_session.query(ScheduleRecalculationRequest).count() == 1
+
+
+def test_recalculate_reenqueues_idempotent_queued_run(
+    client: TestClient,
+    schedule_queue: InMemoryScheduleRunQueue,
+):
+    run_id = _create_run_and_approve_mock_proposal(client)
+    headers = {"Idempotency-Key": "recalculate-key-requeue"}
+
+    first_response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/recalculate",
+        headers=headers,
+        json={"reason": "승인된 완화안을 반영합니다."},
+    )
+    second_response = client.post(
+        f"/organizations/org_1/schedule-runs/{run_id}/recalculate",
+        headers=headers,
+        json={"reason": "중복 호출입니다."},
+    )
+
+    assert first_response.status_code == 202
+    assert second_response.status_code == 202
+    first_job = schedule_queue.dequeue(timeout_seconds=0)
+    replay_job = schedule_queue.dequeue(timeout_seconds=0)
+    assert first_job is not None
+    assert replay_job is not None
+    assert first_job.schedule_run_id == run_id
+    assert replay_job.schedule_run_id == run_id
 
 
 def test_recalculate_rejects_fourth_recalculation(

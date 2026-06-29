@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import timedelta
 import json
 import os
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from scripts.seed_demo import DEMO_ORGANIZATION_ID
 from work_schedule_ai.api.dependencies import SessionLocal, set_tenant_context
-from work_schedule_ai.db.models import ScheduleRun
+from work_schedule_ai.db.models import ScheduleRun, utc_now
 from work_schedule_ai.worker.queue import enqueue_schedule_run
 
 
@@ -26,20 +27,38 @@ def requeue_queued_schedule_runs(db_session: Session) -> RequeueSummary:
         DEMO_ORGANIZATION_ID,
     )
     limit = int(os.environ.get("WORKSCHEDULEAI_REQUEUE_LIMIT", "20"))
+    stale_running_minutes = int(
+        os.environ.get("WORKSCHEDULEAI_REQUEUE_STALE_RUNNING_MINUTES", "30")
+    )
+    stale_running_before = utc_now() - timedelta(minutes=stale_running_minutes)
     set_tenant_context(db_session, organization_id)
     runs = list(
         db_session.execute(
             select(ScheduleRun)
             .where(
                 ScheduleRun.organization_id == organization_id,
-                ScheduleRun.status == "queued",
+                or_(
+                    ScheduleRun.status == "queued",
+                    (
+                        (ScheduleRun.status == "running")
+                        & (ScheduleRun.updated_at <= stale_running_before)
+                    ),
+                ),
             )
             .order_by(ScheduleRun.created_at.asc(), ScheduleRun.id.asc())
             .limit(limit)
         ).scalars()
     )
     for run in runs:
+        if run.status == "running":
+            run.status = "queued"
+            run.solver_status = None
+            run.solution_quality = "unknown"
+            run.started_at = None
+            run.finished_at = None
+            run.updated_at = utc_now()
         enqueue_schedule_run(run.id, organization_id=organization_id)
+    db_session.commit()
     return RequeueSummary(
         organization_id=organization_id,
         requeued_count=len(runs),

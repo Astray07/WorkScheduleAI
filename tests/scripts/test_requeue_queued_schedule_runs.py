@@ -1,5 +1,5 @@
 from collections.abc import Generator
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine
@@ -34,6 +34,33 @@ def test_requeue_queued_schedule_runs_enqueues_only_queued_runs(
     assert summary.requeued_count == 1
     assert summary.run_ids == ["run_queued"]
     assert enqueued == [("run_queued", "org_1")]
+
+
+def test_requeue_queued_schedule_runs_recovers_stale_running_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+):
+    enqueued: list[tuple[str, str | None]] = []
+    monkeypatch.setenv("WORKSCHEDULEAI_REQUEUE_ORGANIZATION_ID", "org_1")
+    monkeypatch.setenv("WORKSCHEDULEAI_REQUEUE_STALE_RUNNING_MINUTES", "15")
+    monkeypatch.setattr(
+        "scripts.requeue_queued_schedule_runs.enqueue_schedule_run",
+        lambda run_id, organization_id=None: enqueued.append((run_id, organization_id)),
+    )
+    stale_run = _run("run_stale", status="running")
+    stale_run.updated_at = datetime.now(timezone.utc) - timedelta(minutes=30)
+    fresh_run = _run("run_fresh", status="running")
+    fresh_run.updated_at = datetime.now(timezone.utc)
+    db_session.add_all([stale_run, fresh_run])
+    db_session.commit()
+
+    summary = requeue_queued_schedule_runs(db_session)
+
+    assert summary.requeued_count == 1
+    assert summary.run_ids == ["run_stale"]
+    assert enqueued == [("run_stale", "org_1")]
+    assert db_session.get(ScheduleRun, "run_stale").status == "queued"
+    assert db_session.get(ScheduleRun, "run_fresh").status == "running"
 
 
 @pytest.fixture

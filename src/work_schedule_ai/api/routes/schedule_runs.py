@@ -406,6 +406,7 @@ def create_schedule_run(
                         "field": "Idempotency-Key",
                     },
                 )
+            _reenqueue_queued_schedule_run(existing_run, organization_id=organization_id)
             return _schedule_run_response(existing_run, db_session)
 
     run_id = _new_id("run")
@@ -442,7 +443,7 @@ def create_schedule_run(
     db_session.add(snapshot)
     db_session.flush()
     db_session.commit()
-    enqueue_schedule_run(run.id, organization_id=organization_id)
+    _enqueue_schedule_run(run, organization_id=organization_id)
 
     return _schedule_run_response(run, db_session)
 
@@ -879,6 +880,7 @@ def recalculate_schedule_run(
             )
         ).scalar_one_or_none()
         if existing_request is not None:
+            _reenqueue_queued_schedule_run(run, organization_id=organization_id)
             return _schedule_run_response(run, db_session)
 
     if run.status in {"queued", "running"}:
@@ -935,7 +937,7 @@ def recalculate_schedule_run(
     )
     db_session.add(recalculation_request)
     db_session.commit()
-    enqueue_schedule_run(run.id, organization_id=organization_id)
+    _enqueue_schedule_run(run, organization_id=organization_id)
 
     return _schedule_run_response(run, db_session)
 
@@ -1223,6 +1225,24 @@ def _get_publication_for_run(
             SchedulePublication.schedule_run_id == run.id,
         )
     ).scalar_one_or_none()
+
+
+def _enqueue_schedule_run(
+    run: ScheduleRun,
+    *,
+    organization_id: str,
+) -> None:
+    enqueue_schedule_run(run.id, organization_id=organization_id)
+
+
+def _reenqueue_queued_schedule_run(
+    run: ScheduleRun,
+    *,
+    organization_id: str,
+) -> None:
+    if run.status != "queued":
+        return
+    _enqueue_schedule_run(run, organization_id=organization_id)
 
 
 def _schedule_publication_response(

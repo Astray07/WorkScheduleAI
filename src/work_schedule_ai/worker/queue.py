@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import os
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from typing import Protocol
+
+from work_schedule_ai.runtime_config import get_redis_url
 
 
 DEFAULT_QUEUE_NAME = "work-schedule-ai:schedule-runs"
@@ -14,6 +15,7 @@ DEFAULT_QUEUE_NAME = "work-schedule-ai:schedule-runs"
 class ScheduleRunJob:
     schedule_run_id: str
     organization_id: str | None = None
+    queue_payload: str | None = None
 
 
 class ScheduleRunQueue(Protocol):
@@ -58,6 +60,7 @@ class RedisScheduleRunQueue:
 
         self._client = Redis.from_url(redis_url, decode_responses=True)
         self._queue_name = queue_name
+        self._processing_queue_name = f"{queue_name}:processing"
 
     def enqueue(
         self,
@@ -78,11 +81,31 @@ class RedisScheduleRunQueue:
         )
 
     def dequeue(self, timeout_seconds: int = 5) -> ScheduleRunJob | None:
-        item = self._client.blpop([self._queue_name], timeout=timeout_seconds)
-        if item is None:
+        payload = self._client.brpoplpush(
+            self._queue_name,
+            self._processing_queue_name,
+            timeout=timeout_seconds,
+        )
+        if payload is None:
             return None
-        _, payload = item
-        return _job_from_payload(payload)
+        return replace(_job_from_payload(payload), queue_payload=payload)
+
+    def ack(self, job: ScheduleRunJob) -> None:
+        if job.queue_payload is None:
+            return
+        self._client.lrem(self._processing_queue_name, 1, job.queue_payload)
+
+    def recover_in_progress(self, limit: int = 100) -> int:
+        recovered_count = 0
+        for _ in range(limit):
+            payload = self._client.rpoplpush(
+                self._processing_queue_name,
+                self._queue_name,
+            )
+            if payload is None:
+                break
+            recovered_count += 1
+        return recovered_count
 
 
 _queue: ScheduleRunQueue | None = None
@@ -91,7 +114,7 @@ _queue: ScheduleRunQueue | None = None
 def get_schedule_run_queue() -> ScheduleRunQueue:
     global _queue
     if _queue is None:
-        redis_url = os.environ.get("REDIS_URL")
+        redis_url = get_redis_url()
         _queue = (
             RedisScheduleRunQueue(redis_url)
             if redis_url

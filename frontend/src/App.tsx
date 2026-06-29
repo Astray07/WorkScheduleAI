@@ -154,7 +154,7 @@ const AUTH_SESSION_STORAGE_KEY = "workscheduleai.authSession";
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "infeasible"]);
 const FAILED_RUN_STATUSES = new Set(["failed", "canceled"]);
 const RESULT_POLL_INTERVAL_MS = 1000;
-const RESULT_POLL_ATTEMPTS = 60;
+const RESULT_POLL_ATTEMPTS = 150;
 let activeAuthSession: AuthSession | null = loadStoredAuthSession();
 const initialScenarioWorkspaceDraft = loadScenarioWorkspaceDraft(browserLocalStorage());
 

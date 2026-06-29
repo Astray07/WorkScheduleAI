@@ -56,6 +56,11 @@ POLICY_INTEGER_RANGES: dict[str, tuple[int, int]] = {
     "weight_workload_imbalance": (0, 10000),
     "weight_pair_avoid_violation": (0, 10000),
 }
+MAX_XLSX_BASE64_BYTES = 7_000_000
+MAX_XLSX_BYTES = 5_000_000
+MAX_XLSX_ZIP_ENTRIES = 200
+MAX_XLSX_UNCOMPRESSED_BYTES = 10_000_000
+MAX_XLSX_ROWS = 5_000
 
 
 class ImportRequest(BaseModel):
@@ -242,6 +247,15 @@ def _parse_xlsx_rows(
                 "field": "content_base64",
             },
         )
+    if len(content_base64) > MAX_XLSX_BASE64_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={
+                "code": "XLSX_CONTENT_TOO_LARGE",
+                "message": "XLSX import file is too large.",
+                "field": "content_base64",
+            },
+        )
     try:
         workbook_bytes = base64.b64decode(content_base64, validate=True)
     except ValueError as exc:
@@ -253,9 +267,19 @@ def _parse_xlsx_rows(
                 "field": "content_base64",
             },
         ) from exc
+    if len(workbook_bytes) > MAX_XLSX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={
+                "code": "XLSX_CONTENT_TOO_LARGE",
+                "message": "XLSX import file is too large.",
+                "field": "content_base64",
+            },
+        )
 
     try:
         with zipfile.ZipFile(BytesIO(workbook_bytes)) as workbook:
+            _validate_xlsx_zip(workbook)
             worksheet_path = _xlsx_worksheet_path(workbook, sheet_name)
             shared_strings = _xlsx_shared_strings(workbook)
             table = _xlsx_worksheet_table(workbook, worksheet_path, shared_strings)
@@ -287,6 +311,23 @@ def _parse_xlsx_rows(
         )
         row_numbers.append(row_no)
     return rows, row_numbers, header_row_no
+
+
+def _validate_xlsx_zip(workbook: zipfile.ZipFile) -> None:
+    entries = workbook.infolist()
+    total_uncompressed_size = sum(entry.file_size for entry in entries)
+    if (
+        len(entries) > MAX_XLSX_ZIP_ENTRIES
+        or total_uncompressed_size > MAX_XLSX_UNCOMPRESSED_BYTES
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={
+                "code": "XLSX_ZIP_TOO_LARGE",
+                "message": "XLSX import file expands to too much data.",
+                "field": "content_base64",
+            },
+        )
 
 
 def _xlsx_worksheet_path(workbook: zipfile.ZipFile, sheet_name: str) -> str:
@@ -336,6 +377,15 @@ def _xlsx_worksheet_table(
     worksheet_xml = ET.fromstring(workbook.read(worksheet_path))
     rows: list[tuple[int, list[str]]] = []
     for row in worksheet_xml.findall(f".//{_xlsx_tag('row')}"):
+        if len(rows) >= MAX_XLSX_ROWS:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail={
+                    "code": "XLSX_ROW_LIMIT_EXCEEDED",
+                    "message": f"XLSX imports support up to {MAX_XLSX_ROWS} rows.",
+                    "field": "content_base64",
+                },
+            )
         row_number = _parse_int(row.attrib.get("r", "")) or len(rows) + 1
         values_by_index: dict[int, str] = {}
         for cell in row.findall(_xlsx_tag("c")):

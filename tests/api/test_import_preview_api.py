@@ -298,6 +298,38 @@ def test_preview_xlsx_employee_import_reports_sheet_row_column_errors(client: Te
     ]
 
 
+def test_preview_xlsx_employee_import_rejects_large_base64_payload(client: TestClient):
+    response = client.post(
+        "/organizations/org_1/imports/preview",
+        json={
+            "type": "employees",
+            "format": "xlsx",
+            "content_base64": "A" * 7_000_001,
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "XLSX_CONTENT_TOO_LARGE"
+
+
+def test_preview_xlsx_employee_import_rejects_zip_expansion_limit(client: TestClient):
+    workbook = BytesIO()
+    with zipfile.ZipFile(workbook, mode="w", compression=zipfile.ZIP_DEFLATED) as xlsx:
+        xlsx.writestr("xl/workbook.xml", "x" * 12_000_001)
+
+    response = client.post(
+        "/organizations/org_1/imports/preview",
+        json={
+            "type": "employees",
+            "format": "xlsx",
+            "content_base64": base64.b64encode(workbook.getvalue()).decode("ascii"),
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "XLSX_ZIP_TOO_LARGE"
+
+
 def test_preview_xlsx_employee_import_reports_actual_row_after_blank_rows(client: TestClient):
     workbook = _xlsx_base64(
         {

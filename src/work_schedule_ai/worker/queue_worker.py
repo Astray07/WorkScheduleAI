@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import SessionLocal
 from work_schedule_ai.db.models import ScheduleRun
+from work_schedule_ai.runtime_config import validate_runtime_config
 from work_schedule_ai.version import build_info
 from work_schedule_ai.worker.queue import ScheduleRunQueue, get_schedule_run_queue
 from work_schedule_ai.worker.schedule_worker import (
@@ -26,7 +27,16 @@ def run_queue_worker(
     max_jobs: int | None = None,
     dequeue_timeout_seconds: int = 5,
 ) -> int:
+    validate_runtime_config(service="worker")
     schedule_queue = queue or get_schedule_run_queue()
+    recover_in_progress = getattr(schedule_queue, "recover_in_progress", None)
+    if callable(recover_in_progress):
+        recovered_count = recover_in_progress()
+        if recovered_count:
+            print(
+                f"Recovered {recovered_count} in-progress schedule run job(s).",
+                flush=True,
+            )
     session_factory = db_session_factory or SessionLocal
     run_executor = executor or _default_schedule_run_executor
     processed_count = 0

@@ -42,7 +42,7 @@ python -m uvicorn work_schedule_ai.api.app:create_app --factory --host 0.0.0.0 -
 Healthcheck:
 
 ```text
-/health
+/health/ready
 ```
 
 Required variables:
@@ -123,6 +123,8 @@ python -m scripts.requeue_queued_schedule_runs
 
 The default organization is `org_demo_p0`. Override with
 `WORKSCHEDULEAI_REQUEUE_ORGANIZATION_ID` when needed.
+Set `WORKSCHEDULEAI_REQUEUE_STALE_RUNNING_MINUTES` if a worker died after marking
+a run `running`; the default stale threshold is 30 minutes.
 
 ## Database
 

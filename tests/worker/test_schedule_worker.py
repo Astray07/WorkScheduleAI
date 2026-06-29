@@ -146,6 +146,24 @@ def test_process_next_schedule_run_consumes_queue_and_executes_run(
     assert queue.dequeue(timeout_seconds=0) is None
 
 
+def test_process_next_schedule_run_acknowledges_queue_job_after_execution(
+    session: Session,
+):
+    run = _queued_run()
+    queue = _AckQueue(ScheduleRunJob(schedule_run_id=run.id, queue_payload="payload-1"))
+    session.add(run)
+    session.commit()
+
+    processed = schedule_worker_module.process_next_schedule_run(
+        queue=queue,
+        db_session_factory=lambda: nullcontext(session),
+        dequeue_timeout_seconds=0,
+    )
+
+    assert processed is True
+    assert queue.acked_payloads == ["payload-1"]
+
+
 def test_process_next_schedule_run_sets_tenant_context_from_job(
     session: Session,
     monkeypatch: pytest.MonkeyPatch,
@@ -258,6 +276,15 @@ class _SingleJobQueue:
         job = self.job
         self.job = None
         return job
+
+
+class _AckQueue(_SingleJobQueue):
+    def __init__(self, job: ScheduleRunJob) -> None:
+        super().__init__(job)
+        self.acked_payloads: list[str | None] = []
+
+    def ack(self, job: ScheduleRunJob) -> None:
+        self.acked_payloads.append(job.queue_payload)
 
 
 def _queued_run(status: str = "queued") -> ScheduleRun:

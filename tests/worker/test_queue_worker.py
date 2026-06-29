@@ -13,6 +13,8 @@ from work_schedule_ai.worker.queue import (
     InMemoryScheduleRunQueue,
     RedisScheduleRunQueue,
     _job_from_payload,
+    get_schedule_run_queue,
+    set_schedule_run_queue,
 )
 
 
@@ -97,6 +99,60 @@ def test_redis_schedule_run_queue_round_trips_json_payload_with_organization_id(
     assert job is not None
     assert job.schedule_run_id == "run_1"
     assert job.organization_id == "org_1"
+    assert fake_client.processing_items
+
+
+def test_redis_schedule_run_queue_ack_removes_processing_payload(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake_client = _FakeRedisClient()
+    monkeypatch.setitem(
+        sys.modules,
+        "redis",
+        SimpleNamespace(Redis=_FakeRedisFactory(fake_client)),
+    )
+    queue = RedisScheduleRunQueue("redis://localhost:6379/0", queue_name="queue")
+
+    queue.enqueue("run_1", organization_id="org_1")
+    job = queue.dequeue(timeout_seconds=0)
+    assert job is not None
+
+    queue.ack(job)
+
+    assert fake_client.processing_items == []
+
+
+def test_redis_schedule_run_queue_recovers_processing_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake_client = _FakeRedisClient()
+    monkeypatch.setitem(
+        sys.modules,
+        "redis",
+        SimpleNamespace(Redis=_FakeRedisFactory(fake_client)),
+    )
+    queue = RedisScheduleRunQueue("redis://localhost:6379/0", queue_name="queue")
+
+    queue.enqueue("run_1", organization_id="org_1")
+    job = queue.dequeue(timeout_seconds=0)
+    assert job is not None
+
+    assert queue.recover_in_progress() == 1
+    recovered = queue.dequeue(timeout_seconds=0)
+
+    assert recovered is not None
+    assert recovered.schedule_run_id == "run_1"
+
+
+def test_schedule_run_queue_requires_redis_in_production(monkeypatch: pytest.MonkeyPatch):
+    set_schedule_run_queue(None)
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("REDIS_URL", raising=False)
+
+    with pytest.raises(RuntimeError, match="REDIS_URL"):
+        get_schedule_run_queue()
+
+    set_schedule_run_queue(None)
 
 
 def test_schedule_run_job_payload_parser_accepts_legacy_raw_run_id():
@@ -109,17 +165,37 @@ def test_schedule_run_job_payload_parser_accepts_legacy_raw_run_id():
 class _FakeRedisClient:
     def __init__(self) -> None:
         self.items: list[tuple[str, str]] = []
+        self.processing_items: list[tuple[str, str]] = []
 
     def rpush(self, queue_name: str, payload: str) -> None:
         self.items.append((queue_name, payload))
 
-    def blpop(self, queue_names: list[str], timeout: int):
+    def brpoplpush(self, source: str, destination: str, timeout: int):
         del timeout
         if not self.items:
             return None
         queue_name, payload = self.items.pop(0)
-        assert queue_name in queue_names
-        return queue_name, payload
+        assert queue_name == source
+        self.processing_items.append((destination, payload))
+        return payload
+
+    def lrem(self, queue_name: str, count: int, payload: str) -> int:
+        assert count == 1
+        for index, (item_queue, item_payload) in enumerate(self.processing_items):
+            if item_queue == queue_name and item_payload == payload:
+                del self.processing_items[index]
+                return 1
+        return 0
+
+    def rpoplpush(self, source: str, destination: str):
+        for index in range(len(self.processing_items) - 1, -1, -1):
+            queue_name, payload = self.processing_items[index]
+            if queue_name != source:
+                continue
+            del self.processing_items[index]
+            self.items.append((destination, payload))
+            return payload
+        return None
 
 
 class _FakeRedisFactory:
