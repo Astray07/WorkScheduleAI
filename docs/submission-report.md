@@ -132,7 +132,7 @@ Google OR-Tools CP-SAT는 constraint programming과 SAT 기반 탐색을 결합�
 - frontend `npm run build`: passed
 - `git diff --check`: passed
 - queue FIFO/lease 관련 targeted test: passed
-- deployment docs/config tests: passed
+- deployment config and public-doc guard tests: passed
 - large schedule 기본 회귀: passed, hardening benchmark 일부는 opt-in 조건으로 skipped
 
 남은 검증 공백도 명시적으로 남겨야 합니다.
@@ -240,9 +240,8 @@ WorkScheduleAI는 제약 최적화와 RAG 근거 제시를 결합해 인사담�
 ## 참고 문서
 
 - `README.md`
-- `docs/deployment/railway.md`
-- `docs/release/first-release-checklist.md`
-- `docs/release/private-admin-gap-audit.md`
-- `docs/release/rag-vector-evaluation-plan.md`
-- `docs/release/cross-tenant-constraint-plan.md`
-- `work/tasks/2026-06-29-submission-packaging/`
+- `docs/README.md`
+- `docs/contracts/openapi.m0.json`
+- `docs/contracts/schedule-run-state-machine.md`
+- `docs/contracts/xlsx-import-contract.md`
+- `docs/contracts/fixtures/*.json`

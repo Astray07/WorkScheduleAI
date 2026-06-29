@@ -166,9 +166,13 @@ Frontend start command:
 npx vite preview --host 0.0.0.0 --port ${PORT:-4173}
 ```
 
-API healthcheck path는 `/health/ready`입니다. Railway의 최신 배포 상태는 각 서비스의 최신 deployment가 `Active`인지, API `/health/version`의 commit과 worker 로그 첫 줄의 `git_commit`이 같은지, 그리고 frontend가 올바른 API URL을 바라보는지로 확인합니다.
+API healthcheck path는 `/health/ready`입니다. Railway의 최신 배포 상태는 다음 항목으로 확인합니다.
 
-상세 절차는 `docs/deployment/railway.md`를 참고하세요.
+1. API, worker, frontend 최신 deployment가 모두 `Active`인지 확인합니다.
+2. API `/health/ready`가 성공하는지 확인합니다.
+3. API `/health/version`의 commit과 worker 로그 첫 줄의 `git_commit`이 같은지 확인합니다.
+4. Frontend가 `VITE_API_BASE_URL`로 배포된 API URL을 바라보는지 확인합니다.
+5. 데모 데이터 기준으로 ScheduleRun 생성, 완료 polling, 결과 조회, 확정 흐름을 한 번 실행합니다.
 
 ## 환경변수 목록
 
@@ -279,11 +283,13 @@ python -m pytest tests\solver\test_large_schedule_performance.py -q -rs
 ## 문서 구조
 
 - `docs/submission-report.md`: 제출용 보고서
-- `docs/deployment/railway.md`: Railway 상세 배포 설정
-- `docs/release/first-release-checklist.md`: 1차 릴리스 범위와 게이트
-- `docs/release/private-admin-gap-audit.md`: 비공개 관리자 검증 기준 gap audit
-- `docs/release/rag-vector-evaluation-plan.md`: RAG vector/evaluation 후속 계획
-- `docs/superpowers/specs/work-schedule-ai-product-plan.md`: 제품 기획 원문
+- `docs/README.md`: 공개 문서 범위 안내
+- `docs/contracts/openapi.m0.json`: API 계약 스냅샷
+- `docs/contracts/schedule-run-state-machine.md`: ScheduleRun 상태 전이
+- `docs/contracts/xlsx-import-contract.md`: CSV/TSV/XLSX 가져오기 계약
+- `docs/contracts/fixtures/*.json`: 결과 화면과 계약 테스트 fixture
+
+작업 기록, 릴리스 체크리스트, 배포 런북, 실험 기록은 공개 제출물로 추적하지 않습니다.
 
 ## 조사 레퍼런스 요약
 
