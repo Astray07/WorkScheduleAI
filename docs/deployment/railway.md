@@ -85,8 +85,12 @@ npm ci && npm run build
 Start:
 
 ```powershell
-npm run preview -- --host 0.0.0.0 --port ${PORT:-4173}
+npx vite preview --host 0.0.0.0 --port ${PORT:-4173}
 ```
+
+Do not use `npm run preview` for Railway. The local `package.json` preview
+script binds Vite to `127.0.0.1`, which can make the service unreachable from
+Railway's healthcheck proxy even when extra `--host` arguments are appended.
 
 Required variables:
 

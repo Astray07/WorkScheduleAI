@@ -96,7 +96,7 @@ Frontend service:
 - [ ] Root directory: `frontend`
 - [ ] Config: `frontend/railway.json`
 - [ ] Build: `npm install --include=dev && npm run build`
-- [ ] Start: `npm run preview -- --host 0.0.0.0 --port ${PORT:-4173}`
+- [ ] Start: `npx vite preview --host 0.0.0.0 --port ${PORT:-4173}`
 - [ ] `VITE_API_BASE_URL=https://<api-domain>` 설정
 
 Data services:

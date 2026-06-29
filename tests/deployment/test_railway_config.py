@@ -34,7 +34,7 @@ def test_railway_frontend_service_uses_frontend_commands():
     )
     assert (
         frontend_config["deploy"]["startCommand"]
-        == "sh -c 'npm run preview -- --host 0.0.0.0 --port ${PORT:-4173}'"
+        == "sh -c 'npx vite preview --host 0.0.0.0 --port ${PORT:-4173}'"
     )
     assert frontend_config["deploy"]["healthcheckPath"] == "/"
 

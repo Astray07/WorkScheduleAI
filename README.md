@@ -149,7 +149,7 @@ python -m work_schedule_ai.worker.queue_worker
 Frontend start command:
 
 ```powershell
-npm run preview -- --host 0.0.0.0 --port ${PORT:-4173}
+npx vite preview --host 0.0.0.0 --port ${PORT:-4173}
 ```
 
 API healthcheck path는 `/health/ready`입니다. Railway의 최신 배포 상태는 각 서비스의 최신 deployment가 `Active`인지, API `/health/version`의 commit과 worker 로그 첫 줄의 `git_commit`이 같은지, 그리고 frontend가 올바른 API URL을 바라보는지로 확인합니다.
