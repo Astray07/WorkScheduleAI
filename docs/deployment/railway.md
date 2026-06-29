@@ -151,6 +151,38 @@ Seeded data:
 
 The seed is idempotent and can be rerun after deploy.
 
+## Test Login User
+
+After setting `WORKSCHEDULEAI_SIGNED_ACTOR_SECRET` on the API service, create a
+temporary login user from the API service runtime:
+
+```powershell
+python -m scripts.seed_login_user
+```
+
+Default credentials target:
+
+- organization id: `org_demo_p0`
+- email: `demo.admin@example.com`
+- role: `admin`
+
+If `WORKSCHEDULEAI_SEED_LOGIN_PASSWORD` is not set, the command generates a
+temporary password and prints it once in the JSON output. To choose the password
+explicitly, set this variable before running the command:
+
+```powershell
+WORKSCHEDULEAI_SEED_LOGIN_PASSWORD=<temporary-password>
+python -m scripts.seed_login_user
+```
+
+Optional overrides:
+
+- `WORKSCHEDULEAI_SEED_LOGIN_ORGANIZATION_ID`
+- `WORKSCHEDULEAI_SEED_LOGIN_ORGANIZATION_NAME`
+- `WORKSCHEDULEAI_SEED_LOGIN_EMAIL`
+- `WORKSCHEDULEAI_SEED_LOGIN_NAME`
+- `WORKSCHEDULEAI_SEED_LOGIN_ROLE`
+
 ## Smoke Checks
 
 API:
