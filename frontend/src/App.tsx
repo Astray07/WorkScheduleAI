@@ -80,7 +80,6 @@ import {
 import { REFERENCE_TABS, referenceSummary, type ReferenceTabId } from "./referenceData";
 import { canRecalculate } from "./scheduleActions";
 import {
-  DEFAULT_SHIFT_COVERAGE,
   SHIFT_DAY_GROUP_OPTIONS,
   SHIFT_PRESETS,
   normalizeShiftCoverage,
@@ -89,6 +88,10 @@ import {
   shiftCoverageSummary,
   type ShiftCoverage,
 } from "./shiftProfile";
+import {
+  loadScenarioWorkspaceDraft,
+  saveScenarioWorkspaceDraft,
+} from "./scenarioPersistence";
 import {
   changedFairnessRows,
   changeTypeLabel,
@@ -153,6 +156,7 @@ const FAILED_RUN_STATUSES = new Set(["failed", "canceled"]);
 const RESULT_POLL_INTERVAL_MS = 1000;
 const RESULT_POLL_ATTEMPTS = 60;
 let activeAuthSession: AuthSession | null = loadStoredAuthSession();
+const initialScenarioWorkspaceDraft = loadScenarioWorkspaceDraft(browserLocalStorage());
 
 type Employee = {
   id: string;
@@ -502,15 +506,19 @@ type DemoState = {
 };
 
 export function App() {
-  const [scenario, setScenario] = useState<ScenarioConfig>(DEFAULT_SCENARIO_CONFIG);
-  const [shiftCoverage, setShiftCoverage] = useState<ShiftCoverage>(DEFAULT_SHIFT_COVERAGE);
-  const [employeeRows, setEmployeeRows] = useState(() =>
-    buildEmployeeTableRows(DEFAULT_SCENARIO_CONFIG.employeeCount),
+  const [scenario, setScenario] = useState<ScenarioConfig>(
+    () => initialScenarioWorkspaceDraft.scenario,
   );
-  const [vacationRows, setVacationRows] = useState(() =>
-    buildVacationTableRows(DEFAULT_SCENARIO_CONFIG),
+  const [shiftCoverage, setShiftCoverage] = useState<ShiftCoverage>(
+    () => initialScenarioWorkspaceDraft.shiftCoverage,
   );
-  const [pairRows, setPairRows] = useState(() => buildPairTableRows(DEFAULT_SCENARIO_CONFIG));
+  const [employeeRows, setEmployeeRows] = useState(
+    () => initialScenarioWorkspaceDraft.employeeRows,
+  );
+  const [vacationRows, setVacationRows] = useState(
+    () => initialScenarioWorkspaceDraft.vacationRows,
+  );
+  const [pairRows, setPairRows] = useState(() => initialScenarioWorkspaceDraft.pairRows);
   const [activeSetupTab, setActiveSetupTab] = useState<ReferenceTabId>("scenario");
   const [workspaceOrganization, setWorkspaceOrganization] = useState<OrganizationWorkspace | null>(null);
   const [managedEmployees, setManagedEmployees] = useState<ManagedEmployee[]>([]);
@@ -535,11 +543,9 @@ export function App() {
   const [longTermFairness, setLongTermFairness] = useState<LongTermFairnessSummary | null>(null);
   const [longTermFairnessSource, setLongTermFairnessSource] =
     useState<LongTermFairnessSource>("publications");
-  const [longTermPeriodStart, setLongTermPeriodStart] = useState(
-    DEFAULT_SCENARIO_CONFIG.startDate,
-  );
+  const [longTermPeriodStart, setLongTermPeriodStart] = useState(scenario.startDate);
   const [longTermPeriodEnd, setLongTermPeriodEnd] = useState(
-    periodEndFor(DEFAULT_SCENARIO_CONFIG.startDate, DEFAULT_SCENARIO_CONFIG.periodDays),
+    periodEndFor(scenario.startDate, scenario.periodDays),
   );
   const [runHistory, setRunHistory] = useState<ScheduleRunHistory["runs"]>([]);
   const [comparisonBaseRunId, setComparisonBaseRunId] = useState("");
@@ -567,14 +573,14 @@ export function App() {
     organizationId: "",
   });
   const [demandDriverDraft, setDemandDriverDraft] = useState<DemandDriverDraft>({
-    localDate: DEFAULT_SCENARIO_CONFIG.startDate,
+    localDate: scenario.startDate,
     segment: "day",
     demandCount: "120",
     requiredStaffCount: "4",
   });
   const [laborBudgetDraft, setLaborBudgetDraft] = useState<LaborBudgetDraft>({
-    periodStart: DEFAULT_SCENARIO_CONFIG.startDate,
-    periodEnd: periodEndFor(DEFAULT_SCENARIO_CONFIG.startDate, DEFAULT_SCENARIO_CONFIG.periodDays),
+    periodStart: scenario.startDate,
+    periodEnd: periodEndFor(scenario.startDate, scenario.periodDays),
     budgetAmountWon: "800000",
   });
   const [busy, setBusy] = useState<string | null>(null);
@@ -586,6 +592,16 @@ export function App() {
     () => normalizeShiftCoverage(shiftCoverage),
     [shiftCoverage],
   );
+
+  useEffect(() => {
+    saveScenarioWorkspaceDraft(browserLocalStorage(), {
+      scenario,
+      shiftCoverage: normalizedShiftCoverage,
+      employeeRows,
+      vacationRows,
+      pairRows,
+    });
+  }, [employeeRows, normalizedShiftCoverage, pairRows, scenario, vacationRows]);
   const scenarioSummary = useMemo(
     () =>
       `직원 ${employeeRows.length}명, 휴가 ${vacationRows.length}건, 상극 ${pairRows.length}건, ${normalizedScenario.periodDays}일 생성 · ${shiftCoverageSummary(normalizedShiftCoverage)}`,
@@ -4927,6 +4943,15 @@ function loadStoredAuthSession(): AuthSession | null {
       return null;
     }
     return parsed as AuthSession;
+  } catch {
+    return null;
+  }
+}
+
+function browserLocalStorage(): Storage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
   } catch {
     return null;
   }
