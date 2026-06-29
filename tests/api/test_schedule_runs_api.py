@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -32,6 +32,7 @@ from work_schedule_ai.db.models import (
     DemandDriver,
     ScheduleRecalculationRequest,
     ScheduleInputSnapshot,
+    SchedulePublication,
     RelaxationProposal,
     ScheduleRun,
     SolverDiagnosticEvent,
@@ -2059,6 +2060,52 @@ def test_publish_schedule_run_rejects_overlapping_active_publication(
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "PUBLICATION_PERIOD_OVERLAP"
+
+
+def test_publish_schedule_run_replaces_overlapping_publication_when_requested(
+    client: TestClient,
+    db_session: Session,
+):
+    first_run_id, first_result = _create_recalculated_result(client)
+    first_publish_response = client.post(
+        f"/organizations/org_1/schedule-runs/{first_run_id}/publications",
+        json={
+            "expected_assignment_snapshot_hash": first_result[
+                "assignment_snapshot_hash"
+            ],
+            "expected_issue_snapshot_hash": first_result["issue_snapshot_hash"],
+        },
+    )
+    assert first_publish_response.status_code == 201
+    first_publication_id = first_publish_response.json()["id"]
+
+    second_run_id, second_result = _create_recalculated_result(client)
+    response = client.post(
+        f"/organizations/org_1/schedule-runs/{second_run_id}/publications",
+        json={
+            "expected_assignment_snapshot_hash": second_result[
+                "assignment_snapshot_hash"
+            ],
+            "expected_issue_snapshot_hash": second_result["issue_snapshot_hash"],
+            "replace_overlapping_publication": True,
+        },
+    )
+
+    assert response.status_code == 201
+    second_publication_id = response.json()["id"]
+    publications = db_session.execute(
+        select(SchedulePublication).where(
+            SchedulePublication.organization_id == "org_1"
+        )
+    ).scalars().all()
+    statuses_by_id = {publication.id: publication.status for publication in publications}
+    assert statuses_by_id[first_publication_id] == "archived"
+    assert statuses_by_id[second_publication_id] == "published"
+    assert [
+        publication.id
+        for publication in publications
+        if publication.status == "published"
+    ] == [second_publication_id]
 
 
 def test_publish_schedule_run_rejects_stale_snapshot_hash(client: TestClient):

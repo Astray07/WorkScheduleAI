@@ -117,6 +117,7 @@ class RecalculateScheduleRunRequest(BaseModel):
 class PublishScheduleRunRequest(BaseModel):
     expected_assignment_snapshot_hash: str = Field(min_length=1)
     expected_issue_snapshot_hash: str = Field(min_length=1)
+    replace_overlapping_publication: bool = False
 
 
 class ManualEditValidationRequest(BaseModel):
@@ -1040,15 +1041,15 @@ def publish_schedule_run(
             },
         )
 
-    overlapping_publication = db_session.execute(
+    overlapping_publications = db_session.execute(
         select(SchedulePublication).where(
             SchedulePublication.organization_id == organization_id,
             SchedulePublication.status == "published",
             SchedulePublication.period_start < run.period_end,
             SchedulePublication.period_end > run.period_start,
         )
-    ).scalar_one_or_none()
-    if overlapping_publication is not None:
+    ).scalars().all()
+    if overlapping_publications and not request.replace_overlapping_publication:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -1059,6 +1060,11 @@ def publish_schedule_run(
         )
 
     now = utc_now()
+    archived_publication_ids: list[str] = []
+    for overlapping_publication in overlapping_publications:
+        overlapping_publication.status = "archived"
+        archived_publication_ids.append(overlapping_publication.id)
+
     publication = SchedulePublication(
         id=_new_id("publication"),
         organization_id=organization_id,
@@ -1098,7 +1104,9 @@ def publish_schedule_run(
                 organization_id=organization_id,
                 publication_id=publication.id,
                 employee_id=employee_id,
-                notification_type="published",
+                notification_type=(
+                    "changed" if archived_publication_ids else "published"
+                ),
                 channel="in_app",
                 status="pending_recorded",
                 created_at=now,
@@ -1117,6 +1125,7 @@ def publish_schedule_run(
                     "schedule_run_id": schedule_run_id,
                     "assignment_snapshot_hash": hashes.assignment_snapshot_hash,
                     "issue_snapshot_hash": hashes.issue_snapshot_hash,
+                    "archived_publication_ids": archived_publication_ids,
                 },
                 ensure_ascii=False,
                 sort_keys=True,

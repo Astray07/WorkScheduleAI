@@ -141,6 +141,7 @@ import {
   issueContextLabel,
   proposalContextLabel,
 } from "./scheduleReview";
+import { demoRagDocumentPayload } from "./ragDemo";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const AUTH_SESSION_STORAGE_KEY = "workscheduleai.authSession";
@@ -413,6 +414,8 @@ type ComplianceWarningResponse = {
 
 type RagEvidenceItem = {
   source_type: string;
+  document_id: string;
+  chunk_id: string;
   document_title: string;
   excerpt: string;
   checked_at: string;
@@ -955,6 +958,7 @@ export function App() {
         body: {
           expected_assignment_snapshot_hash: result.assignment_snapshot_hash,
           expected_issue_snapshot_hash: result.issue_snapshot_hash,
+          replace_overlapping_publication: true,
         },
       });
       const nextResult = await fetchResult(demo.organizationId, demo.runId);
@@ -1411,6 +1415,28 @@ export function App() {
         method: "DELETE",
       });
       await loadRagDocuments(organizationId);
+    } catch (caught) {
+      setError(messageFromError(caught));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function addDemoRagDocument() {
+    const organizationId = demo?.organizationId ?? workspaceOrganization?.id;
+    if (!organizationId) return;
+    setBusy("rag-document");
+    setError(null);
+    try {
+      const checkedAt = new Date().toISOString().slice(0, 10);
+      await api<RagDocumentItem>(`/organizations/${organizationId}/rag/documents`, {
+        method: "POST",
+        body: demoRagDocumentPayload(checkedAt),
+      });
+      await Promise.allSettled([
+        loadRagDocuments(organizationId),
+        loadRagEvidence(organizationId),
+      ]);
     } catch (caught) {
       setError(messageFromError(caught));
     } finally {
@@ -2225,6 +2251,7 @@ export function App() {
               onDemandDriverDraftChange={(patch) => {
                 setDemandDriverDraft((current) => ({ ...current, ...patch }));
               }}
+              onAddDemoRagDocument={addDemoRagDocument}
               onDeleteRagDocument={deleteRagDocument}
               onLaborBudgetDraftChange={(patch) => {
                 setLaborBudgetDraft((current) => ({ ...current, ...patch }));
@@ -2405,6 +2432,7 @@ function RoadmapOpsPanel({
   onCreateDemandDriver,
   onCreateLaborBudget,
   onDemandDriverDraftChange,
+  onAddDemoRagDocument,
   onDeleteRagDocument,
   onLaborBudgetDraftChange,
   onOverrideComplianceWarning,
@@ -2428,6 +2456,7 @@ function RoadmapOpsPanel({
   onCreateDemandDriver: () => void;
   onCreateLaborBudget: () => void;
   onDemandDriverDraftChange: (patch: Partial<DemandDriverDraft>) => void;
+  onAddDemoRagDocument: () => void;
   onDeleteRagDocument: (documentId: string) => void;
   onLaborBudgetDraftChange: (patch: Partial<LaborBudgetDraft>) => void;
   onOverrideComplianceWarning: (warning: ComplianceWarningItem) => void;
@@ -2541,7 +2570,16 @@ function RoadmapOpsPanel({
       <div className="roadmap-section">
         <div className="roadmap-section-head">
           <strong>RAG 근거</strong>
-          <button onClick={onRefreshRag} type="button">근거 새로고침</button>
+          <div className="roadmap-actions">
+            <button
+              disabled={busy === "rag-document"}
+              onClick={onAddDemoRagDocument}
+              type="button"
+            >
+              샘플 추가
+            </button>
+            <button onClick={onRefreshRag} type="button">근거 새로고침</button>
+          </div>
         </div>
         <div className="roadmap-list">
           <div className="roadmap-row">
@@ -2552,7 +2590,7 @@ function RoadmapOpsPanel({
             <em>{ragGrounding?.evidence.length ?? 0}개 조각</em>
           </div>
           {ragGrounding?.evidence.slice(0, 3).map((evidence) => (
-            <div className="roadmap-row evidence-row" key={`${evidence.document_title}-${evidence.checked_at}`}>
+            <div className="roadmap-row evidence-row" key={`${evidence.document_id}-${evidence.chunk_id}`}>
               <div>
                 <strong>{evidence.document_title}</strong>
                 <span>

@@ -8,6 +8,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   ORGANIZATION_ACCESS_DENIED: "이 조직에 접근할 권한이 없습니다.",
   SIGNED_ACTOR_SECRET_REQUIRED: "로그인 기능 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.",
   SIGNED_ACTOR_SECRET_WEAK: "로그인 기능 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.",
+  PUBLICATION_PERIOD_OVERLAP:
+    "같은 기간에 이미 확정된 근무표가 있습니다. 현재 근무표로 다시 확정하려면 기존 확정본을 보관 처리해야 합니다.",
 };
 
 export function apiErrorMessage(status: number, responseText: string): string {

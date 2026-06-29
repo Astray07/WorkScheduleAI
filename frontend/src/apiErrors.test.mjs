@@ -67,6 +67,18 @@ try {
     apiErrorMessage(503, JSON.stringify({ detail: "database unavailable" })),
     "서버에서 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.",
   );
+  assert.equal(
+    apiErrorMessage(
+      409,
+      JSON.stringify({
+        detail: {
+          code: "PUBLICATION_PERIOD_OVERLAP",
+          message: "Published SchedulePublication period overlaps.",
+        },
+      }),
+    ),
+    "같은 기간에 이미 확정된 근무표가 있습니다. 현재 근무표로 다시 확정하려면 기존 확정본을 보관 처리해야 합니다.",
+  );
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }

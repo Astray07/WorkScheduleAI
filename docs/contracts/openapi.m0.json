@@ -1660,6 +1660,10 @@
           },
           "expected_issue_snapshot_hash": {
             "type": "string"
+          },
+          "replace_overlapping_publication": {
+            "type": "boolean",
+            "default": false
           }
         }
       },
@@ -1765,4 +1769,3 @@
     }
   }
 }
-
