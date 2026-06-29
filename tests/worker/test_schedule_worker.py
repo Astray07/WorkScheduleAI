@@ -164,6 +164,30 @@ def test_process_next_schedule_run_acknowledges_queue_job_after_execution(
     assert queue.acked_payloads == ["payload-1"]
 
 
+def test_process_next_schedule_run_logs_ack_failure_without_crashing(
+    session: Session,
+    capsys: pytest.CaptureFixture[str],
+):
+    run = _queued_run()
+    queue = _FailingAckQueue(
+        ScheduleRunJob(schedule_run_id=run.id, queue_payload="payload-1")
+    )
+    session.add(run)
+    session.commit()
+
+    processed = schedule_worker_module.process_next_schedule_run(
+        queue=queue,
+        db_session_factory=lambda: nullcontext(session),
+        dequeue_timeout_seconds=0,
+    )
+
+    assert processed is True
+    captured = capsys.readouterr().out
+    assert "schedule_queue_ack_failed" in captured
+    assert "run_1" in captured
+    assert "payload-1" in captured
+
+
 def test_process_next_schedule_run_does_not_ack_when_session_factory_fails():
     queue = _AckQueue(ScheduleRunJob(schedule_run_id="run_1", queue_payload="payload-1"))
 
@@ -349,6 +373,12 @@ class _AckQueue(_SingleJobQueue):
 
     def ack(self, job: ScheduleRunJob) -> None:
         self.acked_payloads.append(job.queue_payload)
+
+
+class _FailingAckQueue(_SingleJobQueue):
+    def ack(self, job: ScheduleRunJob) -> None:
+        del job
+        raise RuntimeError("redis ack unavailable")
 
 
 def _queued_run(status: str = "queued") -> ScheduleRun:

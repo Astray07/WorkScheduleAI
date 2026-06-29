@@ -60,6 +60,16 @@ Optional variables:
 - `LLM_PROVIDER`: future provider selector
 - `LLM_API_KEY`: future provider key; not required for fallback mode
 
+API service variable checklist:
+
+- `APP_ENV=production`
+- `DATABASE_URL=<Railway PostgreSQL internal URL>`
+- `REDIS_URL=<Railway Redis internal URL>`
+- `CORS_ALLOW_ORIGINS=https://<frontend-domain>`
+- `WORKSCHEDULEAI_AUTH_REQUIRED=1`
+- `WORKSCHEDULEAI_SIGNED_ACTOR_SECRET=<32+ character random string>`
+- `WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET=<32+ character random string>`
+
 ### Frontend service
 
 Root directory: `frontend`
@@ -87,6 +97,10 @@ missing, the app renders a deployment configuration error instead of sending
 browser requests to `127.0.0.1`.
 
 After the frontend domain is issued, set the same origin in the API service `CORS_ALLOW_ORIGINS`.
+
+Frontend service variable checklist:
+
+- `VITE_API_BASE_URL=https://<api-domain>`
 
 ### Worker service
 
@@ -116,6 +130,21 @@ Queue processing jobs use Redis lease metadata so startup recovery only requeues
 expired processing jobs. The default lease is 900 seconds and can be overridden
 with `WORKSCHEDULEAI_QUEUE_LEASE_SECONDS`; keep it longer than the maximum solver
 runtime when running more than one worker instance.
+
+Multi-worker rule:
+
+- Keep `WORKSCHEDULEAI_QUEUE_LEASE_SECONDS` greater than the maximum solver timeout.
+- The current maximum solver timeout is 120 seconds; the default queue lease is 900 seconds.
+- If multiple worker replicas are enabled, do not lower the lease below the longest expected solver run plus operational margin.
+
+Worker service variable checklist:
+
+- `APP_ENV=production`
+- `DATABASE_URL=<same PostgreSQL internal URL as API>`
+- `REDIS_URL=<same Redis internal URL as API>`
+- `WORKSCHEDULEAI_AUTH_REQUIRED=1`
+- `WORKSCHEDULEAI_SIGNED_ACTOR_SECRET=<same value as API>`
+- Optional: `WORKSCHEDULEAI_QUEUE_LEASE_SECONDS=900`
 
 The API service creates `ScheduleRun` rows and enqueues run ids into Redis. The worker service consumes those ids, opens its own database session, runs the OR-Tools artifact executor, and transitions the run from `queued` to a terminal state.
 
@@ -157,6 +186,17 @@ $env:DATABASE_URL='sqlite:///work/tasks/2026-06-24-m6-railway-release-assets/rai
 python -m alembic upgrade head
 python -m scripts.seed_demo
 ```
+
+PostgreSQL RLS release signoff:
+
+```powershell
+$env:TEST_POSTGRES_URL='postgresql+psycopg://<user>:<password>@<host>:<port>/<database>'
+python -m pytest tests\db\test_postgresql_rls_integration.py -q -rs
+```
+
+Run this once against a real PostgreSQL environment before release signoff. The
+local full test suite skips this integration test when `TEST_POSTGRES_URL` is
+not configured.
 
 ## Demo Seed
 
@@ -215,7 +255,7 @@ Optional overrides:
 API:
 
 ```powershell
-curl https://<api-domain>/health
+curl https://<api-domain>/health/ready
 curl https://<api-domain>/contracts/m0/summary
 ```
 

@@ -16,6 +16,10 @@ from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api.schedule_run_queueing import (
+    enqueue_schedule_run_for_run,
+    reenqueue_queued_schedule_run,
+)
 from work_schedule_ai.api.security import ADMIN_ROLES, READ_ROLES, require_roles
 from work_schedule_ai.api.routes.policies import DEFAULT_POLICY
 from work_schedule_ai.compliance import (
@@ -66,7 +70,6 @@ from work_schedule_ai.solver.ortools_solver import solve_schedule
 from work_schedule_ai.worker.schedule_worker import (
     cancel_schedule_run as worker_cancel_schedule_run,
 )
-from work_schedule_ai.worker.queue import enqueue_schedule_run
 
 
 router = APIRouter(prefix="/organizations", tags=["schedule-runs"])
@@ -406,7 +409,7 @@ def create_schedule_run(
                         "field": "Idempotency-Key",
                     },
                 )
-            _reenqueue_queued_schedule_run(existing_run, organization_id=organization_id)
+            reenqueue_queued_schedule_run(existing_run, organization_id=organization_id)
             return _schedule_run_response(existing_run, db_session)
 
     run_id = _new_id("run")
@@ -443,7 +446,7 @@ def create_schedule_run(
     db_session.add(snapshot)
     db_session.flush()
     db_session.commit()
-    _enqueue_schedule_run(run, organization_id=organization_id)
+    enqueue_schedule_run_for_run(run, organization_id=organization_id)
 
     return _schedule_run_response(run, db_session)
 
@@ -880,7 +883,7 @@ def recalculate_schedule_run(
             )
         ).scalar_one_or_none()
         if existing_request is not None:
-            _reenqueue_queued_schedule_run(run, organization_id=organization_id)
+            reenqueue_queued_schedule_run(run, organization_id=organization_id)
             return _schedule_run_response(run, db_session)
 
     if run.status in {"queued", "running"}:
@@ -937,7 +940,7 @@ def recalculate_schedule_run(
     )
     db_session.add(recalculation_request)
     db_session.commit()
-    _enqueue_schedule_run(run, organization_id=organization_id)
+    enqueue_schedule_run_for_run(run, organization_id=organization_id)
 
     return _schedule_run_response(run, db_session)
 
@@ -1225,24 +1228,6 @@ def _get_publication_for_run(
             SchedulePublication.schedule_run_id == run.id,
         )
     ).scalar_one_or_none()
-
-
-def _enqueue_schedule_run(
-    run: ScheduleRun,
-    *,
-    organization_id: str,
-) -> None:
-    enqueue_schedule_run(run.id, organization_id=organization_id)
-
-
-def _reenqueue_queued_schedule_run(
-    run: ScheduleRun,
-    *,
-    organization_id: str,
-) -> None:
-    if run.status != "queued":
-        return
-    _enqueue_schedule_run(run, organization_id=organization_id)
 
 
 def _schedule_publication_response(

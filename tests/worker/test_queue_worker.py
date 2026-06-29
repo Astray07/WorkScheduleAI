@@ -82,6 +82,31 @@ def test_run_queue_worker_returns_zero_when_no_job_is_available(
     assert processed_count == 0
 
 
+def test_run_queue_worker_logs_recovered_processing_count(
+    session: Session,
+    capsys: pytest.CaptureFixture[str],
+):
+    try:
+        queue_worker_module = importlib.import_module(
+            "work_schedule_ai.worker.queue_worker"
+        )
+    except ModuleNotFoundError as exc:
+        pytest.fail(f"queue worker module missing: {exc}")
+    queue = _RecoveringQueue(recovered_count=2)
+
+    processed_count = queue_worker_module.run_queue_worker(
+        queue=queue,
+        db_session_factory=lambda: nullcontext(session),
+        max_jobs=1,
+        dequeue_timeout_seconds=0,
+    )
+
+    assert processed_count == 0
+    captured = capsys.readouterr().out
+    assert "schedule_queue_recovered" in captured
+    assert '"recovered_count": 2' in captured
+
+
 def test_redis_schedule_run_queue_round_trips_json_payload_with_organization_id(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -247,6 +272,15 @@ class _FakeRedisFactory:
         assert redis_url == "redis://localhost:6379/0"
         assert decode_responses is True
         return self.client
+
+
+class _RecoveringQueue(InMemoryScheduleRunQueue):
+    def __init__(self, recovered_count: int) -> None:
+        super().__init__()
+        self.recovered_count = recovered_count
+
+    def recover_in_progress(self) -> int:
+        return self.recovered_count
 
 
 def _queued_run(status: str = "queued") -> ScheduleRun:

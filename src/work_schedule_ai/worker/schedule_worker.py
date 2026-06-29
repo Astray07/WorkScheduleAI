@@ -119,7 +119,16 @@ def process_next_schedule_run(
     if should_ack:
         ack = getattr(queue, "ack", None)
         if callable(ack):
-            ack(job)
+            try:
+                ack(job)
+            except Exception as exc:
+                _log_queue_event(
+                    "schedule_queue_ack_failed",
+                    schedule_run_id=job.schedule_run_id,
+                    organization_id=job.organization_id,
+                    queue_payload=job.queue_payload,
+                    error=str(exc),
+                )
     return True
 
 
@@ -153,3 +162,8 @@ def _get_schedule_run(
     if run is None:
         raise LookupError(f"ScheduleRun not found: {schedule_run_id}")
     return run
+
+
+def _log_queue_event(event: str, **fields: object) -> None:
+    payload = {"event": event, **fields}
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)

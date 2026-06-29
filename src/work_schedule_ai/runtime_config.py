@@ -6,6 +6,7 @@ from collections.abc import Mapping
 
 DEFAULT_SQLITE_DATABASE_URL = "sqlite:///work_schedule_ai.sqlite3"
 SIGNED_SECRET_MIN_LENGTH = 32
+MAX_SOLVER_TIMEOUT_SECONDS = 120
 
 
 class RuntimeConfigError(RuntimeError):
@@ -76,6 +77,19 @@ def validate_runtime_config(
                 "WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET must be at least "
                 f"{SIGNED_SECRET_MIN_LENGTH} characters."
             )
+
+    queue_lease_seconds = env.get("WORKSCHEDULEAI_QUEUE_LEASE_SECONDS")
+    if queue_lease_seconds:
+        try:
+            parsed_queue_lease_seconds = int(queue_lease_seconds)
+        except ValueError:
+            problems.append("WORKSCHEDULEAI_QUEUE_LEASE_SECONDS must be an integer.")
+        else:
+            if parsed_queue_lease_seconds < MAX_SOLVER_TIMEOUT_SECONDS:
+                problems.append(
+                    "WORKSCHEDULEAI_QUEUE_LEASE_SECONDS must be at least "
+                    f"{MAX_SOLVER_TIMEOUT_SECONDS} seconds."
+                )
 
     if problems:
         joined = " ".join(problems)

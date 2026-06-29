@@ -34,7 +34,13 @@ def run_queue_worker(
         recovered_count = recover_in_progress()
         if recovered_count:
             print(
-                f"Recovered {recovered_count} in-progress schedule run job(s).",
+                json.dumps(
+                    {
+                        "event": "schedule_queue_recovered",
+                        "recovered_count": recovered_count,
+                    },
+                    sort_keys=True,
+                ),
                 flush=True,
             )
     session_factory = db_session_factory or SessionLocal

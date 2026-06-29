@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from work_schedule_ai.api.app import create_app
 from work_schedule_ai.api.dependencies import get_db_session
+from work_schedule_ai.api import schedule_run_queueing
 from work_schedule_ai.api.routes import schedule_runs as schedule_runs_module
 from work_schedule_ai.api.security import ActorContext
 from work_schedule_ai.compliance import (
@@ -156,7 +157,7 @@ def test_create_schedule_run_enqueues_without_inline_solver_execution(
         raising=False,
     )
     monkeypatch.setattr(
-        schedule_runs_module,
+        schedule_run_queueing,
         "enqueue_schedule_run",
         record_enqueue,
         raising=False,
@@ -264,7 +265,7 @@ def test_create_schedule_run_reenqueues_after_idempotent_enqueue_failure(
         if len(calls) == 1:
             raise RuntimeError("redis unavailable")
 
-    monkeypatch.setattr(schedule_runs_module, "enqueue_schedule_run", flaky_enqueue)
+    monkeypatch.setattr(schedule_run_queueing, "enqueue_schedule_run", flaky_enqueue)
     headers = {"Idempotency-Key": "schedule-run-key-redis-retry"}
 
     with pytest.raises(RuntimeError, match="redis unavailable"):

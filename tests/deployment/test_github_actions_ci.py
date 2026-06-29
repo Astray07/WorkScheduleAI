@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -27,3 +28,17 @@ def test_backend_ci_verifies_postgres_connection_before_pytest():
     assert "Verify PostgreSQL connection" in workflow
     assert "with engine.connect() as connection" in workflow
     assert 'connection.execute(text("SELECT 1"))' in workflow
+
+
+def test_frontend_package_exposes_module_test_script():
+    package = json.loads(Path("frontend/package.json").read_text(encoding="utf-8"))
+
+    assert package["scripts"]["test"] == "node --test \"src/*.test.mjs\""
+
+
+def test_frontend_ci_runs_module_tests_before_build():
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "Run frontend tests" in workflow
+    assert "run: npm test" in workflow
+    assert workflow.index("run: npm test") < workflow.index("run: npm run build")
