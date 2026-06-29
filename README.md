@@ -21,6 +21,20 @@ WorkScheduleAI는 인사담당자가 직원, 역할, 휴가, 직원 간 조합 �
 
 이 프로젝트는 이런 조건을 구조화된 데이터와 제약 최적화로 반영하고, RAG 기반 근거와 사람이 읽기 쉬운 설명을 붙여 인사담당자의 검토 시간을 줄이는 것을 목표로 합니다.
 
+## 비용 대비 가치
+
+이 프로젝트의 설득 포인트는 "토큰을 써서 근무표를 만든다"가 아닙니다. 근무표 계산은 OR-Tools CP-SAT가 수행하므로 기본 생성 경로는 LLM 토큰에 의존하지 않습니다. LLM/RAG는 인사담당자가 충돌 사유, 예외 후보, 사내 규정 근거를 이해해야 하는 구간에만 제한적으로 쓰는 보조 계층입니다.
+
+인사담당자와 회사 대표 입장에서 더 큰 비용은 토큰 자체보다 근무표 작성과 수정에 들어가는 사람의 시간, 휴가 반영 누락, 상극 조합 누락, 불공정 배정 논란, 예외 판단 기록 부재입니다. WorkScheduleAI는 이 비용을 줄이기 위해 다음 가치를 제공합니다.
+
+- 반복적인 Excel 작성과 재검토 시간을 줄입니다.
+- 휴가, 역할, 상극, 근무 규정을 한 번에 반영해 누락 위험을 낮춥니다.
+- 미배정과 예외 후보를 숨기지 않고 검토 항목으로 남깁니다.
+- RAG 근거로 인사담당자가 "왜 이 판단이 나왔는지"를 설명하기 쉽게 만듭니다.
+- 확정본, 수동 수정, 예외 승인, audit log를 남겨 운영 책임 소재를 분명히 합니다.
+
+토큰 비용은 전체 근무표 생성 비용이 아니라 검토와 설명 시간을 줄이는 제한적 비용으로 보는 것이 맞습니다. 후속 운영 단계에서는 조직별 LLM 호출 수, token usage, estimated cost, 월간 사용 한도, cache 적용 여부를 기록해 비용 통제까지 붙이는 것이 좋습니다.
+
 ## 핵심 기능
 
 - 조직, 직원, 역할, 역할 적격성 관리
@@ -246,6 +260,7 @@ python -m pytest tests\solver\test_large_schedule_performance.py -q -rs
 - 실제 운영 PostgreSQL RLS signoff와 Railway API/worker/Redis staging smoke는 제출 전 별도 실행이 필요합니다.
 - 법률 준수 자동 보증, 급여 계산, 근태 시스템 연동은 범위 밖입니다.
 - RAG는 규정 근거를 제시하지만 solver 정책이나 warning rule을 자동 변경하지 않습니다.
+- LLM usage와 token cost 대시보드는 아직 후속 개선 범위입니다.
 - hybrid/vector retrieval은 flag 뒤에 있으며 pgvector index와 server-side embedding backfill은 후속입니다.
 - 100명/31일 고제약 운영 데이터 성능은 기본 CI gate가 아니라 opt-in benchmark와 후속 hardening 대상입니다.
 
@@ -254,6 +269,7 @@ python -m pytest tests\solver\test_large_schedule_performance.py -q -rs
 - 공개 파일럿 전 관리자 온보딩과 멤버십 권한 matrix 고도화
 - Railway staging에서 API, worker, PostgreSQL, Redis, frontend end-to-end smoke 자동화
 - pgvector 기반 RAG 검색과 장기 citation 평가셋 CI 편입
+- 조직별 LLM 호출 수, token usage, estimated cost, 월간 한도, cache hit rate 추적
 - 직원 self-service 휴가/일정 요청
 - 알림 provider 재시도, 모니터링, 직원별 Slack destination 관리
 - 확정본 장기 fairness aggregate table 또는 materialized summary
