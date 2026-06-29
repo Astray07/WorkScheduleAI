@@ -51,6 +51,9 @@ Required variables:
 - `REDIS_URL`: Railway Redis internal connection URL used to enqueue ScheduleRun jobs
 - `CORS_ALLOW_ORIGINS`: deployed frontend origin, comma-separated for multiple origins
 - `APP_ENV`: `production`
+- `WORKSCHEDULEAI_AUTH_REQUIRED`: `1`
+- `WORKSCHEDULEAI_SIGNED_ACTOR_SECRET`: 32+ character random string
+- `WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET`: 32+ character random string for employee publication links
 
 Optional variables:
 
@@ -79,6 +82,10 @@ Required variables:
 
 - `VITE_API_BASE_URL`: public API service URL
 
+Production frontend bundles do not fall back to localhost. If this variable is
+missing, the app renders a deployment configuration error instead of sending
+browser requests to `127.0.0.1`.
+
 After the frontend domain is issued, set the same origin in the API service `CORS_ALLOW_ORIGINS`.
 
 ### Worker service
@@ -102,6 +109,13 @@ Required variables:
 - `DATABASE_URL`
 - `REDIS_URL`
 - `APP_ENV`
+- `WORKSCHEDULEAI_AUTH_REQUIRED`
+- `WORKSCHEDULEAI_SIGNED_ACTOR_SECRET`
+
+Queue processing jobs use Redis lease metadata so startup recovery only requeues
+expired processing jobs. The default lease is 900 seconds and can be overridden
+with `WORKSCHEDULEAI_QUEUE_LEASE_SECONDS`; keep it longer than the maximum solver
+runtime when running more than one worker instance.
 
 The API service creates `ScheduleRun` rows and enqueues run ids into Redis. The worker service consumes those ids, opens its own database session, runs the OR-Tools artifact executor, and transitions the run from `queued` to a terminal state.
 

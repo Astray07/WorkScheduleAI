@@ -12,6 +12,7 @@ def test_validate_runtime_config_rejects_missing_production_dependencies():
     assert "REDIS_URL" in message
     assert "WORKSCHEDULEAI_AUTH_REQUIRED" in message
     assert "WORKSCHEDULEAI_SIGNED_ACTOR_SECRET" in message
+    assert "WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET" in message
 
 
 def test_validate_runtime_config_rejects_sqlite_database_in_production():
@@ -23,6 +24,7 @@ def test_validate_runtime_config_rejects_sqlite_database_in_production():
                 "REDIS_URL": "redis://localhost:6379/0",
                 "WORKSCHEDULEAI_AUTH_REQUIRED": "1",
                 "WORKSCHEDULEAI_SIGNED_ACTOR_SECRET": "x" * 32,
+                "WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET": "y" * 32,
             },
             service="worker",
         )
@@ -32,3 +34,20 @@ def test_validate_runtime_config_rejects_sqlite_database_in_production():
 
 def test_validate_runtime_config_allows_development_defaults():
     validate_runtime_config({}, service="api")
+
+
+def test_validate_runtime_config_rejects_weak_employee_link_secret():
+    with pytest.raises(RuntimeConfigError) as exc_info:
+        validate_runtime_config(
+            {
+                "APP_ENV": "production",
+                "DATABASE_URL": "postgresql://db/internal",
+                "REDIS_URL": "redis://localhost:6379/0",
+                "WORKSCHEDULEAI_AUTH_REQUIRED": "1",
+                "WORKSCHEDULEAI_SIGNED_ACTOR_SECRET": "x" * 32,
+                "WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET": "short",
+            },
+            service="api",
+        )
+
+    assert "WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET" in str(exc_info.value)

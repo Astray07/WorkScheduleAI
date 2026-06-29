@@ -67,6 +67,16 @@ def validate_runtime_config(
             f"{SIGNED_SECRET_MIN_LENGTH} characters."
         )
 
+    employee_link_secret = env.get("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET")
+    if service == "api":
+        if not employee_link_secret:
+            problems.append("WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET is required.")
+        elif len(employee_link_secret) < SIGNED_SECRET_MIN_LENGTH:
+            problems.append(
+                "WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET must be at least "
+                f"{SIGNED_SECRET_MIN_LENGTH} characters."
+            )
+
     if problems:
         joined = " ".join(problems)
         raise RuntimeConfigError(f"Invalid {service} runtime configuration: {joined}")

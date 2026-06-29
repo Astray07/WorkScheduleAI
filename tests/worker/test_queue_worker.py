@@ -125,23 +125,55 @@ def test_redis_schedule_run_queue_ack_removes_processing_payload(
 def test_redis_schedule_run_queue_recovers_processing_payloads(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    now = 1_000.0
     fake_client = _FakeRedisClient()
     monkeypatch.setitem(
         sys.modules,
         "redis",
         SimpleNamespace(Redis=_FakeRedisFactory(fake_client)),
     )
-    queue = RedisScheduleRunQueue("redis://localhost:6379/0", queue_name="queue")
+    queue = RedisScheduleRunQueue(
+        "redis://localhost:6379/0",
+        queue_name="queue",
+        processing_lease_seconds=60,
+        clock=lambda: now,
+    )
 
     queue.enqueue("run_1", organization_id="org_1")
     job = queue.dequeue(timeout_seconds=0)
     assert job is not None
 
+    now = 1_061.0
     assert queue.recover_in_progress() == 1
     recovered = queue.dequeue(timeout_seconds=0)
 
     assert recovered is not None
     assert recovered.schedule_run_id == "run_1"
+
+
+def test_redis_schedule_run_queue_keeps_active_processing_leases(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake_client = _FakeRedisClient()
+    monkeypatch.setitem(
+        sys.modules,
+        "redis",
+        SimpleNamespace(Redis=_FakeRedisFactory(fake_client)),
+    )
+    queue = RedisScheduleRunQueue(
+        "redis://localhost:6379/0",
+        queue_name="queue",
+        processing_lease_seconds=60,
+        clock=lambda: 1_000.0,
+    )
+
+    queue.enqueue("run_1", organization_id="org_1")
+    job = queue.dequeue(timeout_seconds=0)
+    assert job is not None
+
+    assert queue.recover_in_progress() == 0
+    assert fake_client.items == []
+    assert fake_client.processing_items
 
 
 def test_schedule_run_queue_requires_redis_in_production(monkeypatch: pytest.MonkeyPatch):
@@ -166,6 +198,7 @@ class _FakeRedisClient:
     def __init__(self) -> None:
         self.items: list[tuple[str, str]] = []
         self.processing_items: list[tuple[str, str]] = []
+        self.hashes: dict[str, dict[str, str]] = {}
 
     def rpush(self, queue_name: str, payload: str) -> None:
         self.items.append((queue_name, payload))
@@ -187,15 +220,23 @@ class _FakeRedisClient:
                 return 1
         return 0
 
-    def rpoplpush(self, source: str, destination: str):
-        for index in range(len(self.processing_items) - 1, -1, -1):
-            queue_name, payload = self.processing_items[index]
-            if queue_name != source:
-                continue
-            del self.processing_items[index]
-            self.items.append((destination, payload))
-            return payload
-        return None
+    def lrange(self, queue_name: str, start: int, end: int) -> list[str]:
+        assert start == 0
+        assert end == -1
+        return [
+            payload
+            for item_queue, payload in self.processing_items
+            if item_queue == queue_name
+        ]
+
+    def hset(self, hash_name: str, key: str, value: str) -> None:
+        self.hashes.setdefault(hash_name, {})[key] = value
+
+    def hget(self, hash_name: str, key: str) -> str | None:
+        return self.hashes.get(hash_name, {}).get(key)
+
+    def hdel(self, hash_name: str, key: str) -> None:
+        self.hashes.get(hash_name, {}).pop(key, None)
 
 
 class _FakeRedisFactory:

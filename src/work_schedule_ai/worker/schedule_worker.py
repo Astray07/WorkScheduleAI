@@ -101,20 +101,22 @@ def process_next_schedule_run(
     if job is None:
         return False
     job = _normalized_job(job)
+    should_ack = False
 
-    try:
-        with db_session_factory() as db_session:
-            if job.organization_id is not None:
-                set_tenant_context(db_session, job.organization_id)
-            try:
-                execute_schedule_run(
-                    db_session,
-                    job.schedule_run_id,
-                    executor=executor,
-                )
-            except LookupError as exc:
-                print(f"Skipping schedule run job: {exc}", flush=True)
-    finally:
+    with db_session_factory() as db_session:
+        if job.organization_id is not None:
+            set_tenant_context(db_session, job.organization_id)
+        try:
+            execute_schedule_run(
+                db_session,
+                job.schedule_run_id,
+                executor=executor,
+            )
+            should_ack = True
+        except LookupError as exc:
+            print(f"Skipping schedule run job: {exc}", flush=True)
+            should_ack = True
+    if should_ack:
         ack = getattr(queue, "ack", None)
         if callable(ack):
             ack(job)

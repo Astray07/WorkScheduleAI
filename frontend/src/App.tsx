@@ -148,8 +148,10 @@ import {
   proposalContextLabel,
 } from "./scheduleReview";
 import { demoRagDocumentPayload } from "./ragDemo";
+import { resolveRuntimeConfig } from "./runtimeConfig";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const RUNTIME_CONFIG = resolveRuntimeConfig(import.meta.env);
+const API_BASE = RUNTIME_CONFIG.apiBase;
 const AUTH_SESSION_STORAGE_KEY = "workscheduleai.authSession";
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "infeasible"]);
 const FAILED_RUN_STATUSES = new Set(["failed", "canceled"]);
@@ -506,6 +508,13 @@ type DemoState = {
 };
 
 export function App() {
+  if (RUNTIME_CONFIG.configurationError) {
+    return <RuntimeConfigurationError message={RUNTIME_CONFIG.configurationError} />;
+  }
+  return <ConfiguredApp />;
+}
+
+function ConfiguredApp() {
   const [scenario, setScenario] = useState<ScenarioConfig>(
     () => initialScenarioWorkspaceDraft.scenario,
   );
@@ -2388,6 +2397,16 @@ function ScheduleGrid({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function RuntimeConfigurationError({ message }: { message: string }) {
+  return (
+    <main className="app-shell">
+      <section className="workspace">
+        <div className="error-banner">{message}</div>
+      </section>
+    </main>
   );
 }
 

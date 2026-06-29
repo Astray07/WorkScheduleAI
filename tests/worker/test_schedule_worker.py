@@ -164,6 +164,70 @@ def test_process_next_schedule_run_acknowledges_queue_job_after_execution(
     assert queue.acked_payloads == ["payload-1"]
 
 
+def test_process_next_schedule_run_does_not_ack_when_session_factory_fails():
+    queue = _AckQueue(ScheduleRunJob(schedule_run_id="run_1", queue_payload="payload-1"))
+
+    def failing_session_factory():
+        raise RuntimeError("database unavailable")
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        schedule_worker_module.process_next_schedule_run(
+            queue=queue,
+            db_session_factory=failing_session_factory,
+            dequeue_timeout_seconds=0,
+        )
+
+    assert queue.acked_payloads == []
+
+
+def test_process_next_schedule_run_does_not_ack_when_tenant_context_fails(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    run = _queued_run()
+    queue = _AckQueue(
+        ScheduleRunJob(
+            schedule_run_id=run.id,
+            organization_id="org_1",
+            queue_payload="payload-1",
+        )
+    )
+    session.add(run)
+    session.commit()
+
+    def fail_tenant_context(db_session: Session, organization_id: str) -> None:
+        del db_session, organization_id
+        raise RuntimeError("tenant context unavailable")
+
+    monkeypatch.setattr(schedule_worker_module, "set_tenant_context", fail_tenant_context)
+
+    with pytest.raises(RuntimeError, match="tenant context unavailable"):
+        schedule_worker_module.process_next_schedule_run(
+            queue=queue,
+            db_session_factory=lambda: nullcontext(session),
+            dequeue_timeout_seconds=0,
+        )
+
+    assert queue.acked_payloads == []
+
+
+def test_process_next_schedule_run_acknowledges_missing_run_as_terminal(
+    session: Session,
+):
+    queue = _AckQueue(
+        ScheduleRunJob(schedule_run_id="run_missing", queue_payload="payload-1")
+    )
+
+    processed = schedule_worker_module.process_next_schedule_run(
+        queue=queue,
+        db_session_factory=lambda: nullcontext(session),
+        dequeue_timeout_seconds=0,
+    )
+
+    assert processed is True
+    assert queue.acked_payloads == ["payload-1"]
+
+
 def test_process_next_schedule_run_sets_tenant_context_from_job(
     session: Session,
     monkeypatch: pytest.MonkeyPatch,
