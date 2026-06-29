@@ -132,6 +132,10 @@ import {
   type SessionIdentity,
 } from "./authSession";
 import { apiErrorMessage } from "./apiErrors";
+import {
+  workspaceFromSession,
+  type OrganizationWorkspace,
+} from "./workspace";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const AUTH_SESSION_STORAGE_KEY = "workscheduleai.authSession";
@@ -464,11 +468,6 @@ type ManualEditValidation = {
   valid: boolean;
   blocking_errors: FieldError[];
   warnings: FieldError[];
-};
-
-type OrganizationWorkspace = {
-  id: string;
-  default_roles: Role[];
 };
 
 type ReferenceDataSnapshot = {
@@ -812,7 +811,9 @@ export function App() {
           organization_id: loginDraft.organizationId,
         },
       });
+      activeAuthSession = session;
       setAuthSession(session);
+      await loadWorkspaceFromSession(session);
       setLoginDraft((current) => ({ ...current, password: "" }));
     } catch (caught) {
       setError(messageFromError(caught));
@@ -822,7 +823,9 @@ export function App() {
   }
 
   function logoutSession() {
+    activeAuthSession = null;
     setAuthSession(null);
+    setWorkspaceOrganization(null);
   }
 
   function replaceEmployeeRows(nextRows: EmployeeTableRow[]) {
@@ -1006,6 +1009,8 @@ export function App() {
 
   async function ensureWorkspaceOrganization() {
     if (workspaceOrganization) return workspaceOrganization;
+    const session = authSession ?? activeAuthSession;
+    if (session) return loadWorkspaceFromSession(session);
     const activeScenario = normalizeScenarioConfig(scenario);
     const organization = await api<OrganizationWorkspace>("/organizations", {
       method: "POST",
@@ -1014,6 +1019,16 @@ export function App() {
         timezone: "Asia/Seoul",
       },
     });
+    setWorkspaceOrganization(organization);
+    await refreshReferenceData(organization.id);
+    return organization;
+  }
+
+  async function loadWorkspaceFromSession(session: AuthSession): Promise<OrganizationWorkspace> {
+    const roles = await api<Role[]>(`/organizations/${session.organization_id}/roles`, {
+      headers: authHeaders(session),
+    });
+    const organization = workspaceFromSession(session, roles);
     setWorkspaceOrganization(organization);
     await refreshReferenceData(organization.id);
     return organization;
@@ -1032,14 +1047,15 @@ export function App() {
     activeShiftCoverage: ShiftCoverage;
     activeVacations: ReturnType<typeof vacationRowsToDrafts>;
   }): Promise<{ organization: OrganizationWorkspace; employees: Employee[] }> {
+    const session = authSession ?? activeAuthSession;
     const organization = workspaceOrganization
-      ?? await api<OrganizationWorkspace>("/organizations", {
+      ?? (session ? await loadWorkspaceFromSession(session) : await api<OrganizationWorkspace>("/organizations", {
         method: "POST",
         body: {
           name: activeScenario.organizationName,
           timezone: "Asia/Seoul",
         },
-      });
+      }));
     setWorkspaceOrganization(organization);
 
     let referenceData = await fetchReferenceData(organization.id);
