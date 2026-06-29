@@ -127,6 +127,29 @@ def test_redis_schedule_run_queue_round_trips_json_payload_with_organization_id(
     assert fake_client.processing_items
 
 
+def test_redis_schedule_run_queue_preserves_fifo_order_for_multiple_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    fake_client = _FakeRedisClient()
+    monkeypatch.setitem(
+        sys.modules,
+        "redis",
+        SimpleNamespace(Redis=_FakeRedisFactory(fake_client)),
+    )
+    queue = RedisScheduleRunQueue("redis://localhost:6379/0", queue_name="queue")
+
+    queue.enqueue("run_old", organization_id="org_1")
+    queue.enqueue("run_new", organization_id="org_1")
+
+    first_job = queue.dequeue(timeout_seconds=0)
+    second_job = queue.dequeue(timeout_seconds=0)
+
+    assert first_job is not None
+    assert second_job is not None
+    assert first_job.schedule_run_id == "run_old"
+    assert second_job.schedule_run_id == "run_new"
+
+
 def test_redis_schedule_run_queue_ack_removes_processing_payload(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -228,13 +251,16 @@ class _FakeRedisClient:
     def rpush(self, queue_name: str, payload: str) -> None:
         self.items.append((queue_name, payload))
 
+    def lpush(self, queue_name: str, payload: str) -> None:
+        self.items.insert(0, (queue_name, payload))
+
     def brpoplpush(self, source: str, destination: str, timeout: int):
         del timeout
         if not self.items:
             return None
-        queue_name, payload = self.items.pop(0)
+        queue_name, payload = self.items.pop()
         assert queue_name == source
-        self.processing_items.append((destination, payload))
+        self.processing_items.insert(0, (destination, payload))
         return payload
 
     def lrem(self, queue_name: str, count: int, payload: str) -> int:

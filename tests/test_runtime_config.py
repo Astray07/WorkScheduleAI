@@ -70,3 +70,21 @@ def test_validate_runtime_config_rejects_short_queue_lease_seconds():
 
     assert "WORKSCHEDULEAI_QUEUE_LEASE_SECONDS" in str(exc_info.value)
     assert "120" in str(exc_info.value)
+
+
+def test_validate_runtime_config_rejects_queue_lease_equal_to_solver_timeout():
+    with pytest.raises(RuntimeConfigError) as exc_info:
+        validate_runtime_config(
+            {
+                "APP_ENV": "production",
+                "DATABASE_URL": "postgresql://db/internal",
+                "REDIS_URL": "redis://localhost:6379/0",
+                "WORKSCHEDULEAI_AUTH_REQUIRED": "1",
+                "WORKSCHEDULEAI_SIGNED_ACTOR_SECRET": "x" * 32,
+                "WORKSCHEDULEAI_EMPLOYEE_LINK_SECRET": "y" * 32,
+                "WORKSCHEDULEAI_QUEUE_LEASE_SECONDS": "120",
+            },
+            service="worker",
+        )
+
+    assert "greater than 120" in str(exc_info.value)

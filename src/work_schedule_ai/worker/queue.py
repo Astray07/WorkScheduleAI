@@ -93,7 +93,7 @@ class RedisScheduleRunQueue:
         *,
         organization_id: str | None = None,
     ) -> None:
-        self._client.rpush(
+        self._client.lpush(
             self._queue_name,
             json.dumps(
                 {

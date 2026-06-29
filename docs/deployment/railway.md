@@ -134,7 +134,7 @@ runtime when running more than one worker instance.
 Multi-worker rule:
 
 - Keep `WORKSCHEDULEAI_QUEUE_LEASE_SECONDS` greater than the maximum solver timeout.
-- The current maximum solver timeout is 120 seconds; the default queue lease is 900 seconds.
+- The current maximum solver timeout is 120 seconds; 120 is rejected as too tight, and the default queue lease is 900 seconds.
 - If multiple worker replicas are enabled, do not lower the lease below the longest expected solver run plus operational margin.
 
 Worker service variable checklist:

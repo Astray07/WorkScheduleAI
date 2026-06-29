@@ -85,9 +85,9 @@ def validate_runtime_config(
         except ValueError:
             problems.append("WORKSCHEDULEAI_QUEUE_LEASE_SECONDS must be an integer.")
         else:
-            if parsed_queue_lease_seconds < MAX_SOLVER_TIMEOUT_SECONDS:
+            if parsed_queue_lease_seconds <= MAX_SOLVER_TIMEOUT_SECONDS:
                 problems.append(
-                    "WORKSCHEDULEAI_QUEUE_LEASE_SECONDS must be at least "
+                    "WORKSCHEDULEAI_QUEUE_LEASE_SECONDS must be greater than "
                     f"{MAX_SOLVER_TIMEOUT_SECONDS} seconds."
                 )
 
