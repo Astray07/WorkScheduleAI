@@ -3454,7 +3454,7 @@ def _build_schedule_workbook(
     publication: SchedulePublication,
     artifacts: _MockArtifacts,
 ) -> bytes:
-    rows = _schedule_export_rows(publication, artifacts)
+    rows = _schedule_export_rows(artifacts)
     sheet_xml = _worksheet_xml(rows)
     workbook = BytesIO()
     with zipfile.ZipFile(workbook, mode="w", compression=zipfile.ZIP_DEFLATED) as xlsx:
@@ -3466,10 +3466,7 @@ def _build_schedule_workbook(
     return workbook.getvalue()
 
 
-def _schedule_export_rows(
-    publication: SchedulePublication,
-    artifacts: _MockArtifacts,
-) -> list[list[str]]:
+def _schedule_export_rows(artifacts: _MockArtifacts) -> list[list[str]]:
     slots_by_id = {slot.id: slot for slot in artifacts.slots}
     role_names_by_requirement = {
         (requirement.slot_id, requirement.role_id): requirement.role_name
@@ -3477,13 +3474,12 @@ def _schedule_export_rows(
     }
     rows = [
         [
-            "publication_id",
-            "local_date",
-            "slot_label",
-            "role_name",
-            "employee_name",
-            "source",
-            "warning_state",
+            "일자",
+            "근무",
+            "역할",
+            "직원명",
+            "배정 방식",
+            "주의 사항",
         ]
     ]
     for assignment in artifacts.assignments:
@@ -3491,16 +3487,34 @@ def _schedule_export_rows(
         role_name = role_names_by_requirement[(assignment.slot_id, assignment.role_id)]
         rows.append(
             [
-                publication.id,
                 slot.local_date.isoformat(),
                 slot.label,
                 role_name,
                 assignment.employee_name,
-                assignment.source,
-                assignment.warning_state,
+                _assignment_source_export_label(assignment.source),
+                _warning_state_export_label(assignment.warning_state),
             ]
         )
     return rows
+
+
+def _assignment_source_export_label(source: str) -> str:
+    labels = {
+        "solver": "자동 배정",
+        "manual": "수동 수정",
+        "override": "예외 승인",
+        "fallback": "기본 배정",
+    }
+    return labels.get(source, source)
+
+
+def _warning_state_export_label(warning_state: str) -> str:
+    labels = {
+        "none": "없음",
+        "manual_warning": "검토 필요",
+        "approved_override": "예외 승인됨",
+    }
+    return labels.get(warning_state, warning_state)
 
 
 def _worksheet_xml(rows: list[list[str]]) -> str:
@@ -3517,6 +3531,15 @@ def _worksheet_xml(rows: list[list[str]]) -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
+        '<cols>'
+        '<col min="1" max="1" width="14" customWidth="1"/>'
+        '<col min="2" max="2" width="18" customWidth="1"/>'
+        '<col min="3" max="3" width="12" customWidth="1"/>'
+        '<col min="4" max="4" width="14" customWidth="1"/>'
+        '<col min="5" max="5" width="14" customWidth="1"/>'
+        '<col min="6" max="6" width="16" customWidth="1"/>'
+        "</cols>"
         f'<sheetData>{"".join(row_xml)}</sheetData>'
         "</worksheet>"
     )
@@ -3556,7 +3579,7 @@ def _workbook_xml() -> str:
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
         'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        '<sheets><sheet name="Schedule" sheetId="1" r:id="rId1"/></sheets>'
+        '<sheets><sheet name="근무표" sheetId="1" r:id="rId1"/></sheets>'
         "</workbook>"
     )
 

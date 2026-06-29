@@ -2320,8 +2320,18 @@ def test_download_schedule_publication_excel_returns_workbook(client: TestClient
         assert "[Content_Types].xml" in workbook.namelist()
         assert "xl/workbook.xml" in workbook.namelist()
         sheet_xml = workbook.read("xl/worksheets/sheet1.xml").decode("utf-8")
-    assert "local_date" in sheet_xml
-    assert "role_name" in sheet_xml
+    assert "local_date" not in sheet_xml
+    assert "role_name" not in sheet_xml
+    assert "publication_id" not in sheet_xml
+    assert "warning_state" not in sheet_xml
+    assert "일자" in sheet_xml
+    assert "근무" in sheet_xml
+    assert "역할" in sheet_xml
+    assert "직원명" in sheet_xml
+    assert "배정 방식" in sheet_xml
+    assert "주의 사항" in sheet_xml
+    assert "기본 배정" in sheet_xml
+    assert "없음" in sheet_xml
     assert "Kim" in sheet_xml
 
 

@@ -45,6 +45,13 @@ try {
   assert.equal(roadmap.acknowledgementStatusLabel("acknowledged"), "확인 완료");
   assert.equal(roadmap.complianceSeverityLabel("blocking"), "발행 차단");
   assert.equal(roadmap.ragConfidenceLabel("insufficient"), "근거 부족");
+  assert.equal(roadmap.ragGroundingStatusLabel("grounded"), "근거 확인됨");
+  assert.equal(roadmap.ragGroundingStatusLabel("insufficient_evidence"), "근거 부족");
+  assert.equal(roadmap.ragSourceTypeLabel("organization_policy"), "사내 운영 규정");
+  assert.equal(roadmap.ragSourceTypeLabel("compliance_guide"), "법규/컴플라이언스 가이드");
+  assert.equal(roadmap.ragEvidenceConfidenceLabel(0.75), "관련도 높음");
+  assert.equal(roadmap.ragEvidenceConfidenceLabel(0.58), "관련도 보통");
+  assert.equal(roadmap.ragEvidenceConfidenceLabel(0.4), "관련도 낮음");
   assert.equal(roadmap.budgetStatusLabel("within_budget"), "예산 내");
   assert.equal(roadmap.budgetStatusLabel("over_budget"), "예산 초과");
   assert.equal(roadmap.employeeLinkTokenFromFragment("#token=abc%20123"), "abc 123");

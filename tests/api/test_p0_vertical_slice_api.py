@@ -198,8 +198,10 @@ def test_p0_vertical_slice_recalculates_publishes_and_downloads_excel(
     with zipfile.ZipFile(BytesIO(excel_response.content)) as workbook:
         assert "xl/worksheets/sheet1.xml" in workbook.namelist()
         sheet_xml = workbook.read("xl/worksheets/sheet1.xml").decode("utf-8")
-    assert "publication_id" in sheet_xml
-    assert "local_date" in sheet_xml
+    assert "publication_id" not in sheet_xml
+    assert "local_date" not in sheet_xml
+    assert "일자" in sheet_xml
+    assert "근무" in sheet_xml
     assert "Lee" in sheet_xml
 
 

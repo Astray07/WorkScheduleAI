@@ -35,6 +35,32 @@ export function ragConfidenceLabel(confidence: string) {
   return labels[confidence] ?? confidence;
 }
 
+export function ragGroundingStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    grounded: "근거 확인됨",
+    insufficient_evidence: "근거 부족",
+  };
+  return labels[status] ?? status;
+}
+
+export function ragSourceTypeLabel(sourceType: string) {
+  const labels: Record<string, string> = {
+    organization_policy: "사내 운영 규정",
+    internal_rule: "내부 기준",
+    compliance_guide: "법규/컴플라이언스 가이드",
+    approval_history: "과거 승인 이력",
+    audit_log: "감사 기록",
+    product_document: "제품 문서",
+  };
+  return labels[sourceType] ?? sourceType;
+}
+
+export function ragEvidenceConfidenceLabel(confidence: number) {
+  if (confidence >= 0.7) return "관련도 높음";
+  if (confidence >= 0.55) return "관련도 보통";
+  return "관련도 낮음";
+}
+
 export function budgetStatusLabel(status: string) {
   const labels: Record<string, string> = {
     within_budget: "예산 내",

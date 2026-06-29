@@ -120,7 +120,10 @@ import {
   isSignedEmployeePublicationUrl,
   pendingEmployeeRequestQueue,
   ragConfidenceLabel,
+  ragEvidenceConfidenceLabel,
   ragDocumentRows,
+  ragGroundingStatusLabel,
+  ragSourceTypeLabel,
   type EmployeeScheduleCard,
   type PublicEmployeeScheduleCard,
 } from "./roadmap";
@@ -2569,14 +2572,14 @@ function RoadmapOpsPanel({
 
       <div className="roadmap-section">
         <div className="roadmap-section-head">
-          <strong>RAG 근거</strong>
+          <strong>판단 근거</strong>
           <div className="roadmap-actions">
             <button
               disabled={busy === "rag-document"}
               onClick={onAddDemoRagDocument}
               type="button"
             >
-              샘플 추가
+              샘플 근거 추가
             </button>
             <button onClick={onRefreshRag} type="button">근거 새로고침</button>
           </div>
@@ -2585,21 +2588,27 @@ function RoadmapOpsPanel({
           <div className="roadmap-row">
             <div>
               <strong>{ragGrounding ? ragConfidenceLabel(ragGrounding.confidence) : "대기"}</strong>
-              <span>{ragGrounding?.status ?? "검색 전"}</span>
+              <span>
+                {ragGrounding
+                  ? ragGroundingStatusLabel(ragGrounding.status)
+                  : "근거를 아직 확인하지 않았습니다."}
+              </span>
             </div>
-            <em>{ragGrounding?.evidence.length ?? 0}개 조각</em>
+            <em>근거 {ragGrounding?.evidence.length ?? 0}개</em>
           </div>
           {ragGrounding?.evidence.slice(0, 3).map((evidence) => (
             <div className="roadmap-row evidence-row" key={`${evidence.document_id}-${evidence.chunk_id}`}>
               <div>
                 <strong>{evidence.document_title}</strong>
                 <span>
-                  {evidence.source_type} · confidence {Math.round(evidence.confidence * 100)}%
+                  {ragSourceTypeLabel(evidence.source_type)}
+                  {" · "}
+                  {ragEvidenceConfidenceLabel(evidence.confidence)}
                   {" · "}
                   {evidence.excerpt}
                 </span>
               </div>
-              <em>{dateInputValue(evidence.checked_at)}</em>
+              <em>확인일 {dateInputValue(evidence.checked_at)}</em>
             </div>
           ))}
           {ragGrounding?.safety_notes.length ? (
