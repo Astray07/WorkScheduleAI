@@ -168,7 +168,7 @@ npx vite preview --host 0.0.0.0 --port ${PORT:-4173}
 
 API healthcheck path는 `/health/ready`입니다. Railway의 최신 배포 상태는 각 서비스의 최신 deployment가 `Active`인지, API `/health/version`의 commit과 worker 로그 첫 줄의 `git_commit`이 같은지, 그리고 frontend가 올바른 API URL을 바라보는지로 확인합니다.
 
-상세 절차는 `docs/deployment/railway.md`와 `docs/release/demo-deployment-checklist.md`를 참고하세요.
+상세 절차는 `docs/deployment/railway.md`를 참고하세요.
 
 ## 환경변수 목록
 
@@ -279,7 +279,6 @@ python -m pytest tests\solver\test_large_schedule_performance.py -q -rs
 ## 문서 구조
 
 - `docs/submission-report.md`: 제출용 보고서
-- `docs/release/demo-deployment-checklist.md`: 시연/배포 체크리스트
 - `docs/deployment/railway.md`: Railway 상세 배포 설정
 - `docs/release/first-release-checklist.md`: 1차 릴리스 범위와 게이트
 - `docs/release/private-admin-gap-audit.md`: 비공개 관리자 검증 기준 gap audit
