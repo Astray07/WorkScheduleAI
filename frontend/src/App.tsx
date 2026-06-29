@@ -134,8 +134,13 @@ import {
 import { apiErrorMessage } from "./apiErrors";
 import {
   workspaceFromSession,
+  shouldSyncScenarioEmployees,
   type OrganizationWorkspace,
 } from "./workspace";
+import {
+  issueContextLabel,
+  proposalContextLabel,
+} from "./scheduleReview";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 const AUTH_SESSION_STORAGE_KEY = "workscheduleai.authSession";
@@ -242,9 +247,15 @@ type Issue = {
 
 type Proposal = {
   id: string;
+  affected_slot_id: string | null;
   type: string;
   severity: string;
   display_summary: string;
+  impact_preview: {
+    resolved_issue_ids: string[];
+    new_warning_count: number;
+    unavailable_reasons: string[];
+  };
   status: string;
 };
 
@@ -1059,7 +1070,7 @@ export function App() {
     setWorkspaceOrganization(organization);
 
     let referenceData = await fetchReferenceData(organization.id);
-    if (referenceData.employees.filter((employee) => employee.active).length < MIN_EMPLOYEE_COUNT) {
+    if (shouldSyncScenarioEmployees(activeEmployees, referenceData.employees)) {
       await api(`/organizations/${organization.id}/employees/bulk-paste`, {
         method: "POST",
         body: {
@@ -2145,8 +2156,17 @@ export function App() {
 
           <section className="review-panel">
             <SectionTitle title="이슈/완화안" />
-            <IssueList issues={result?.issues ?? []} />
-            <ProposalList proposals={result?.proposals ?? []} />
+            <IssueList
+              issues={result?.issues ?? []}
+              requirements={result?.requirements ?? []}
+              slots={result?.slots ?? []}
+            />
+            <ProposalList
+              issues={result?.issues ?? []}
+              proposals={result?.proposals ?? []}
+              requirements={result?.requirements ?? []}
+              slots={result?.slots ?? []}
+            />
             <FairnessPanel summary={fairness} />
             <LongTermFairnessPanel
               busy={busy}
@@ -3864,34 +3884,64 @@ function ImportManager({
   );
 }
 
-function IssueList({ issues }: { issues: Issue[] }) {
+function IssueList({
+  issues,
+  requirements,
+  slots,
+}: {
+  issues: Issue[];
+  requirements: Requirement[];
+  slots: Slot[];
+}) {
   if (!issues.length) {
     return <div className="success-box">열린 ScheduleIssue가 없습니다.</div>;
   }
   return (
-    <div className="item-list">
+    <div className="item-list compact-review-list">
       {issues.map((issue) => (
         <div className="issue-item" key={issue.id}>
-          <span className="severity">{severityLabel(issue.severity)}</span>
+          <div className="review-item-topline">
+            <span className="severity">{severityLabel(issue.severity)}</span>
+            <span className="review-context">
+              {issueContextLabel(issue, slots, requirements)}
+            </span>
+          </div>
           <strong>{issue.display_message}</strong>
-          <small>{issue.type} · missing {issue.missing_count}</small>
+          <small>{issueTypeLabel(issue.type)} · 부족 {issue.missing_count}명</small>
         </div>
       ))}
     </div>
   );
 }
 
-function ProposalList({ proposals }: { proposals: Proposal[] }) {
+function ProposalList({
+  issues,
+  proposals,
+  requirements,
+  slots,
+}: {
+  issues: Issue[];
+  proposals: Proposal[];
+  requirements: Requirement[];
+  slots: Slot[];
+}) {
   if (!proposals.length) {
     return <div className="subtle-box">추천 완화안이 없습니다.</div>;
   }
   return (
-    <div className="item-list">
+    <div className="item-list compact-review-list">
       {proposals.map((proposal) => (
         <div className="proposal-item" key={proposal.id}>
-          <span>{proposal.status === "approved" ? "승인됨" : "추천"}</span>
+          <div className="review-item-topline">
+            <span className="proposal-status">
+              {proposal.status === "approved" ? "승인됨" : "추천"}
+            </span>
+            <span className="review-context">
+              {proposalContextLabel(proposal, issues, slots, requirements)}
+            </span>
+          </div>
           <strong>{proposal.display_summary}</strong>
-          <small>{proposal.type}</small>
+          <small>{proposalTypeLabel(proposal.type)}</small>
         </div>
       ))}
     </div>
@@ -4848,6 +4898,25 @@ function severityLabel(value: string) {
     medium: "주의",
     high: "높음",
     critical: "매우 높음",
+  };
+  return labels[value] ?? value;
+}
+
+function issueTypeLabel(value: string) {
+  const labels: Record<string, string> = {
+    unfilled_requirement: "미배정",
+    time_off_conflict: "휴가/출장 충돌",
+    pair_constraint_conflict: "상극 조합 충돌",
+    max_shifts_exceeded: "주 최대 근무 초과",
+  };
+  return labels[value] ?? value;
+}
+
+function proposalTypeLabel(value: string) {
+  const labels: Record<string, string> = {
+    approve_pair_constraint_override: "상극 조합 예외 승인",
+    approve_time_off_override: "휴가/출장 예외 승인",
+    mark_manual_review: "수동 검토",
   };
   return labels[value] ?? value;
 }

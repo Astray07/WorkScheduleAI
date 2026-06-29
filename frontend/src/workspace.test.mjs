@@ -37,7 +37,9 @@ try {
     { stdio: "inherit" },
   );
 
-  const { workspaceFromSession } = await import(pathToFileURL(join(outDir, "workspace.js")).href);
+  const { shouldSyncScenarioEmployees, workspaceFromSession } = await import(
+    pathToFileURL(join(outDir, "workspace.js")).href
+  );
 
   assert.deepEqual(
     workspaceFromSession(
@@ -54,6 +56,52 @@ try {
         { id: "role_demo_junior", name: "부사수" },
       ],
     },
+  );
+
+  assert.equal(
+    shouldSyncScenarioEmployees(
+      [
+        {
+          employee_code: "E001",
+          name: "김민준",
+          role_names: ["사수"],
+          max_shifts_per_week: 5,
+        },
+      ],
+      [
+        {
+          active: true,
+          employee_code: "E001",
+          name: "Kim",
+          role_names: ["사수"],
+          max_shifts_per_week: 5,
+        },
+      ],
+    ),
+    true,
+  );
+
+  assert.equal(
+    shouldSyncScenarioEmployees(
+      [
+        {
+          employee_code: "E001",
+          name: "김민준",
+          role_names: ["사수"],
+          max_shifts_per_week: 5,
+        },
+      ],
+      [
+        {
+          active: true,
+          employee_code: "E001",
+          name: "김민준",
+          role_names: ["사수"],
+          max_shifts_per_week: 5,
+        },
+      ],
+    ),
+    false,
   );
 } finally {
   rmSync(outDir, { recursive: true, force: true });
