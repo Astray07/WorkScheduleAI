@@ -5,6 +5,7 @@
 ## 제출 문서
 
 - `submission-report.md`: 프로젝트 목표, 구조, 주요 기능, 의사결정, 한계, 향후 개선 방향을 정리한 제출 보고서입니다.
+- `../output/pdf/workscheduleai-submission-report.pdf`: 제출 보고서 PDF 변환본입니다.
 
 ## 계약 문서
 

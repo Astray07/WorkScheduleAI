@@ -21,10 +21,10 @@ WorkScheduleAI의 목표는 인사담당자가 직원, 역할, 휴가, 상극 �
 ```text
 React/Vite frontend
   -> FastAPI API
-      -> PostgreSQL: 조직/직원/제약/결과/확정본/RAG/audit
+      -> PostgreSQL: 조직/직원/제약/결과/확정본/audit
       -> Redis: ScheduleRun job queue
       -> Worker: OR-Tools solver 실행
-      -> RAG grounding: 근거 검색, citation, safety note
+      -> RAG grounding: PostgreSQL 문서 chunk 기반 keyword-first 근거 검색
 ```
 
 API는 사용자 요청을 받고 ScheduleRun을 생성합니다. Redis queue는 생성 작업을 worker로 전달합니다. Worker는 OR-Tools 기반 solver를 실행하고 결과, 이슈, 완화 후보를 DB에 저장합니다. Frontend는 polling으로 상태를 확인하고, 인사담당자가 결과를 검토, 수정, 확정할 수 있는 화면을 제공합니다.
@@ -41,9 +41,10 @@ flowchart TD
     F --> G["OR-Tools CP-SAT Solver"]
     G --> H["배정 결과, ScheduleIssue, RelaxationProposal"]
     H --> D
-    D --> I["RAG Grounding: 규정 근거와 safety note"]
-    D --> B
-    I --> B
+    C --> I["RAG Grounding: keyword-first 규정 근거 검색"]
+    I <--> R[("PostgreSQL: RAG 문서 chunk와 audit")]
+    I --> C
+    C --> B
     B --> J["인사담당자 검토 후 SchedulePublication 확정"]
 ```
 
@@ -73,7 +74,7 @@ flowchart TD
 
 ## 5. RAG 활용 방식
 
-RAG는 근무표를 직접 생성하거나 정책을 자동 변경하지 않습니다. 이 프로젝트에서는 RAG를 "판단 근거를 사람이 이해할 수 있게 보여주는 계층"으로 제한했습니다.
+RAG는 근무표를 직접 생성하거나 정책을 자동 변경하지 않습니다. 현재 구현에서는 PostgreSQL에 저장된 조직별 문서 chunk를 keyword-first로 검색해 "판단 근거를 사람이 이해할 수 있게 보여주는 계층"으로 제한했습니다.
 
 구현 방향은 다음과 같습니다.
 
@@ -87,7 +88,7 @@ RAG는 근무표를 직접 생성하거나 정책을 자동 변경하지 않습�
 
 UI에서는 `RAG`, `chunk`, `confidence` 같은 구현 용어를 줄이고, 인사담당자가 이해하기 쉬운 "판단 근거", "근거 확인됨", "사내 운영 규정", "관련도" 같은 표현으로 바꿨습니다. 시연 대상자는 내부 retrieval 구조보다 "이 판단이 어떤 규정에 근거했는지"를 먼저 봐야 하기 때문입니다.
 
-비용 관점에서도 RAG의 역할을 제한했습니다. 근무표 계산은 solver가 맡고, LLM/RAG는 설명과 근거 제시에만 사용합니다. 토큰을 써서 근무표 전체를 생성하는 구조가 아니라, 인사담당자의 검토 시간을 줄이는 구간에만 토큰을 쓰는 구조입니다.
+비용 관점에서도 현재 구현 범위를 분명히 나눴습니다. 근무표 계산은 solver가 맡고, ScheduleRun 설명은 기본적으로 server template fallback을 사용합니다. 현재 RAG는 keyword-first 근거 검색이며 외부 LLM provider 호출과 token cost tracking은 후속 확장입니다. 따라서 제출 범위의 설득 포인트는 "토큰으로 근무표를 생성한다"가 아니라, 구조화된 제약 계산과 근거 검색으로 인사담당자의 검토 시간을 줄이는 데 있습니다.
 
 ## 6. 근무표 생성 로직과 제약 반영
 
@@ -125,7 +126,13 @@ Google OR-Tools CP-SAT는 constraint programming과 SAT 기반 탐색을 결합�
 
 ## 8. 테스트 및 검증 결과
 
-최근 작업 기록 기준 검증 결과는 다음과 같습니다.
+최근 전체 검증 결과는 다음 환경에서 확인했습니다.
+
+- 검증일: 2026-06-29
+- commit: `9300820`
+- Python: `3.13.5`
+- Node.js: `v24.13.0`
+- npm: `11.8.0`
 
 - `python -m pytest -q`: `365 passed, 2 skipped`
 - frontend `npm test`: `19 passed`
@@ -174,17 +181,17 @@ PostgreSQL은 tenant 데이터, 확정본 snapshot, audit log, RLS, composite FK
 
 인사담당자는 retrieval mode나 chunk ID 자체보다 "어떤 사내 규정 때문에 이 판단이 나왔는지"를 알아야 합니다. 그래서 내부 구현 용어를 줄이고, 판단 근거, 사내 운영 규정, 관련도, 안전 메모처럼 검토자가 바로 이해할 수 있는 표현을 사용했습니다.
 
-### 9.7 왜 토큰 비용을 제한적으로 감수하는가
+### 9.7 왜 토큰 비용은 후속 검증 항목으로 두었는가
 
-인사담당자와 회사 대표가 보는 비용은 LLM token 사용료만이 아닙니다. 근무표 작성 시간, 휴가 반영 누락, 상극 조합 누락, 불공정 배정 민원, 예외 승인 기록 부재도 운영 비용입니다. 이 프로젝트는 solver가 배정 계산을 맡고, LLM/RAG는 충돌 설명과 규정 근거를 사람이 이해하기 쉽게 정리하는 곳에만 씁니다.
+인사담당자와 회사 대표가 보는 비용은 LLM token 사용료만이 아닙니다. 근무표 작성 시간, 휴가 반영 누락, 상극 조합 누락, 불공정 배정 민원, 예외 승인 기록 부재도 운영 비용입니다. 현재 구현은 solver가 배정 계산을 맡고, server template 설명과 keyword-first RAG 근거 검색으로 검토 부담을 줄이는 구조입니다.
 
-토큰 비용은 "근무표를 생성하는 비용"이 아니라 "검토와 설명 시간을 줄이는 비용"으로 보는 편이 맞습니다. 파일럿 단계에서는 LLM 실패 시 fallback 설명을 유지하고, RAG가 solver 정책을 바꾸지 못하게 막았습니다. 운영 단계로 넘어가려면 조직별 LLM 호출 수, token usage, estimated cost, 월간 사용 한도, cache hit rate를 남겨 비용 대비 효과를 확인해야 합니다.
+외부 LLM provider를 연결한다면 토큰 비용은 "근무표를 생성하는 비용"이 아니라 "검토와 설명 시간을 줄이는 비용"으로 검증해야 합니다. 그 단계에서는 조직별 LLM 호출 수, token usage, estimated cost, 월간 사용 한도, cache hit rate를 남겨 실제 절감된 검토 시간과 비교해야 합니다. 파일럿 제출 범위에서는 LLM provider와 cost tracking을 구현된 핵심 기능처럼 설명하지 않는 것이 더 정확합니다.
 
 ### 9.8 왜 LangChain 같은 orchestration 도구를 바로 붙이지 않았는가
 
-LangChain이나 LangSmith 계열 도구는 복잡한 chain 구성, tracing, evaluation, 비용 관측에 도움이 됩니다. 현재 범위에서는 solver 중심 구조와 fallback 설명 경로가 더 중요했습니다. 외부 orchestration 계층을 먼저 붙이면 파일럿 제출 범위에 비해 의존성과 설명 복잡도가 커집니다.
+LangChain이나 LangSmith 계열 도구는 복잡한 chain 구성, tracing, evaluation, 비용 관측에 도움이 됩니다. 현재 범위에서는 solver 중심 구조, server template fallback, keyword-first RAG 근거 검색을 먼저 안정화하는 것이 더 중요했습니다. 외부 orchestration 계층을 먼저 붙이면 파일럿 제출 범위에 비해 의존성과 설명 복잡도가 커집니다.
 
-현재 단계에서는 provider-agnostic한 usage log와 비용 집계를 직접 남기는 편이 더 단순합니다. 후속 단계에서 LLM 호출 경로가 늘어나거나 prompt/evaluation 관리가 복잡해지면 LangChain 또는 유사 도구를 검토합니다.
+후속 단계에서 LLM provider를 실제 연결한다면 먼저 provider-agnostic한 usage log와 비용 집계를 남기는 편이 단순합니다. 이후 LLM 호출 경로가 늘어나거나 prompt/evaluation 관리가 복잡해지면 LangChain 또는 유사 도구를 검토합니다.
 
 ### 9.9 왜 queue ACK/lease/recovery를 보강했는가
 
@@ -201,7 +208,7 @@ Worker가 DB 연결 실패나 tenant context 설정 실패 중에도 ACK하면 R
 - 일반 직원의 휴가/일정 요청 self-service는 부분 기반만 있고 완성 범위가 아닙니다.
 - 알림은 provider contract와 일부 dispatch 흐름이 있으나 운영 재시도, 모니터링, 직원별 destination 관리는 더 필요합니다.
 - RAG는 근거 제시용이며 법률 판단 또는 정책 자동 수정 기능이 아닙니다.
-- LLM token usage, estimated cost, 월간 한도, cache hit rate 추적은 아직 구현되지 않았습니다.
+- LLM provider 연결, token usage, estimated cost, 월간 한도, cache hit rate 추적은 아직 구현되지 않았습니다.
 - 법정 근로시간 자동 보증, 급여 계산, 외부 HR 실시간 연동은 범위 밖입니다.
 - 100명/31일 고제약 운영 데이터 성능은 opt-in benchmark와 후속 hardening 대상입니다.
 
@@ -210,7 +217,7 @@ Worker가 DB 연결 실패나 tenant context 설정 실패 중에도 ACK하면 R
 - Railway staging에서 실제 API, worker, PostgreSQL, Redis, frontend end-to-end smoke 자동화
 - PostgreSQL RLS integration test를 release signoff에 포함
 - pgvector 기반 RAG 검색, 서버 측 embedding 생성/backfill, 장기 citation 평가셋 CI 편입
-- LLM usage audit, token cost 추적, 조직별 월간 사용 한도, cache 전략
+- 후속 LLM provider 연결 시 usage audit, token cost 추적, 조직별 월간 사용 한도, cache 전략
 - 관리자 owner onboarding, 멤버십 matrix, 비밀번호 재설정, 키 회전 운영 절차 구현
 - 직원 self-service 요청과 승인 workflow 고도화
 - notification retry, failure monitoring, Slack/email destination 관리
@@ -222,7 +229,7 @@ Worker가 DB 연결 실패나 tenant context 설정 실패 중에도 ACK하면 R
 
 WorkScheduleAI는 제약 최적화와 RAG 근거 제시를 결합해 인사담당자의 근무표 작성과 검토를 돕는 시스템입니다. 핵심 가치는 근무표를 AI가 일방적으로 확정하는 데 있지 않고, 제약 충돌과 예외 후보를 설명 가능한 형태로 드러내어 사람이 안전하게 판단하도록 돕는 데 있습니다.
 
-비용 관점에서도 같은 원칙을 따릅니다. 토큰은 근무표 계산에 쓰는 핵심 자원이 아니라, 사람이 검토해야 하는 설명과 근거를 줄이기 위한 제한적 비용입니다. 파일럿 이후에는 LLM 사용량과 비용을 계량해 실제 절감된 인사담당자 시간과 비교해야 합니다.
+비용 관점에서도 같은 원칙을 따릅니다. 현재 제출 범위에서 근무표 계산은 토큰이 아니라 solver와 서버 로직이 담당합니다. 후속으로 LLM provider를 연결한다면 사용량과 비용을 계량해 실제 절감된 인사담당자 시간과 비교해야 합니다.
 
 현재 산출물은 제출 시연과 통제된 파일럿 검증에 적합한 수준입니다. 공개 상용 서비스로 확장하려면 실제 Railway staging 검증, PostgreSQL RLS signoff, 인증/온보딩/운영 모니터링 강화를 추가해야 합니다.
 
