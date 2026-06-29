@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from work_schedule_ai.db.models import Base, Organization, ScheduleRun
 from work_schedule_ai.worker import schedule_worker as schedule_worker_module
 from work_schedule_ai.worker.queue import InMemoryScheduleRunQueue
+from work_schedule_ai.worker.queue import ScheduleRunJob
 from work_schedule_ai.worker.schedule_worker import (
     cancel_schedule_run,
     execute_schedule_run,
@@ -177,6 +178,54 @@ def test_process_next_schedule_run_sets_tenant_context_from_job(
     assert tenant_contexts == ["org_1"]
 
 
+def test_process_next_schedule_run_accepts_raw_json_payload_from_stale_queue_parser(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    run = _queued_run()
+    queue = _SingleJobQueue(
+        ScheduleRunJob(
+            schedule_run_id='{"organization_id":"org_1","schedule_run_id":"run_1"}'
+        )
+    )
+    session.add(run)
+    session.commit()
+    tenant_contexts: list[str] = []
+
+    monkeypatch.setattr(
+        schedule_worker_module,
+        "set_tenant_context",
+        lambda _session, organization_id: tenant_contexts.append(organization_id),
+        raising=False,
+    )
+
+    processed = schedule_worker_module.process_next_schedule_run(
+        queue=queue,
+        db_session_factory=lambda: nullcontext(session),
+        dequeue_timeout_seconds=0,
+    )
+
+    assert processed is True
+    assert tenant_contexts == ["org_1"]
+    assert run.status == "succeeded"
+
+
+def test_process_next_schedule_run_skips_missing_run_without_crashing(
+    session: Session,
+    capsys: pytest.CaptureFixture[str],
+):
+    queue = _SingleJobQueue(ScheduleRunJob(schedule_run_id="run_missing"))
+
+    processed = schedule_worker_module.process_next_schedule_run(
+        queue=queue,
+        db_session_factory=lambda: nullcontext(session),
+        dequeue_timeout_seconds=0,
+    )
+
+    assert processed is True
+    assert "ScheduleRun not found: run_missing" in capsys.readouterr().out
+
+
 def test_process_next_schedule_run_returns_false_when_queue_is_empty(
     session: Session,
 ):
@@ -189,6 +238,26 @@ def test_process_next_schedule_run_returns_false_when_queue_is_empty(
     )
 
     assert processed is False
+
+
+class _SingleJobQueue:
+    def __init__(self, job: ScheduleRunJob) -> None:
+        self.job = job
+
+    def enqueue(
+        self,
+        schedule_run_id: str,
+        *,
+        organization_id: str | None = None,
+    ) -> None:
+        del schedule_run_id, organization_id
+        raise NotImplementedError
+
+    def dequeue(self, timeout_seconds: int = 5) -> ScheduleRunJob | None:
+        del timeout_seconds
+        job = self.job
+        self.job = None
+        return job
 
 
 def _queued_run(status: str = "queued") -> ScheduleRun:

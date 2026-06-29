@@ -113,6 +113,17 @@ Freshness check:
 
 If the commits differ, redeploy the worker service or confirm the worker service is attached to the same GitHub branch. A stale worker can still consume Redis jobs successfully, but it may run older solver policy code and produce outdated assignment behavior.
 
+If an old worker consumed JSON queue payloads as raw run ids, deploy a worker
+build that matches the API commit, then requeue stuck `queued` runs from the API
+service runtime:
+
+```powershell
+python -m scripts.requeue_queued_schedule_runs
+```
+
+The default organization is `org_demo_p0`. Override with
+`WORKSCHEDULEAI_REQUEUE_ORGANIZATION_ID` when needed.
+
 ## Database
 
 Add a Railway PostgreSQL service and expose its internal connection URL to the API service as `DATABASE_URL`.

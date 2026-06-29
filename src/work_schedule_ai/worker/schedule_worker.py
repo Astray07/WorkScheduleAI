@@ -1,12 +1,13 @@
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+import json
 
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
 from work_schedule_ai.api.dependencies import set_tenant_context
 from work_schedule_ai.db.models import ScheduleRun, utc_now
-from work_schedule_ai.worker.queue import ScheduleRunQueue
+from work_schedule_ai.worker.queue import ScheduleRunJob, ScheduleRunQueue
 
 ScheduleRunExecutor = Callable[[Session, ScheduleRun], None]
 ScheduleRunSessionFactory = Callable[[], AbstractContextManager[Session]]
@@ -99,16 +100,41 @@ def process_next_schedule_run(
     job = queue.dequeue(timeout_seconds=dequeue_timeout_seconds)
     if job is None:
         return False
+    job = _normalized_job(job)
 
     with db_session_factory() as db_session:
         if job.organization_id is not None:
             set_tenant_context(db_session, job.organization_id)
-        execute_schedule_run(
-            db_session,
-            job.schedule_run_id,
-            executor=executor,
-        )
+        try:
+            execute_schedule_run(
+                db_session,
+                job.schedule_run_id,
+                executor=executor,
+            )
+        except LookupError as exc:
+            print(f"Skipping schedule run job: {exc}", flush=True)
     return True
+
+
+def _normalized_job(job: ScheduleRunJob) -> ScheduleRunJob:
+    try:
+        parsed = json.loads(job.schedule_run_id)
+    except json.JSONDecodeError:
+        return job
+    if not isinstance(parsed, dict):
+        return job
+    schedule_run_id = parsed.get("schedule_run_id")
+    organization_id = parsed.get("organization_id")
+    if not isinstance(schedule_run_id, str):
+        return job
+    return ScheduleRunJob(
+        schedule_run_id=schedule_run_id,
+        organization_id=(
+            job.organization_id
+            if job.organization_id is not None
+            else organization_id if isinstance(organization_id, str) else None
+        ),
+    )
 
 
 def _get_schedule_run(
